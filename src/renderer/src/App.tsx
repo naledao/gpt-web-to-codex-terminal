@@ -1325,9 +1325,7 @@ export default function App(): JSX.Element {
             </span>
             <span className="terminal-pane__cwd" title={ssh?.message}>
               {ssh?.status === 'connected'
-                ? ssh?.remoteExec && ssh.modelCwd
-                  ? `${ssh.target} · 模型目录 ${ssh.modelCwd}`
-                  : ssh.target
+                ? ssh.modelCwd || '目录尚未确定'
                 : ssh?.message}
             </span>
             <button
