@@ -173,11 +173,22 @@ export interface EmbedState {
   conversationId: string | null
 }
 
+/** The machine + working-directory project a conversation belongs to. */
+export interface ConversationProject {
+  id: string
+  machineScope: 'local' | 'ssh'
+  hostId: string
+  machineLabel: string
+  name: string
+  path: string
+}
+
 /** A conversation row persisted in SQLite. */
 export interface Conversation {
   id: string
   url: string
   title: string
+  project: ConversationProject | null
   /** Epoch milliseconds. */
   updatedAt: number
 }

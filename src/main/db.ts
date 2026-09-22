@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type {
@@ -10,10 +11,23 @@ import type {
 } from '../shared/types'
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS projects (
+  id            TEXT PRIMARY KEY,
+  machine_scope TEXT NOT NULL,
+  host_id       TEXT NOT NULL DEFAULT '',
+  machine_label TEXT NOT NULL DEFAULT '',
+  name          TEXT NOT NULL,
+  path          TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  UNIQUE(machine_scope, host_id, path)
+);
+
 CREATE TABLE IF NOT EXISTS conversations (
   id         TEXT PRIMARY KEY,
   url        TEXT NOT NULL,
   title      TEXT NOT NULL DEFAULT '',
+  project_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -69,6 +83,12 @@ interface ConversationRow {
   id: string
   url: string
   title: string
+  project_id: string | null
+  project_machine_scope: string | null
+  project_host_id: string | null
+  project_machine_label: string | null
+  project_name: string | null
+  project_path: string | null
   updated_at: number
 }
 
@@ -125,12 +145,22 @@ export class ConversationStore {
    * install would be missing it and every query touching it would throw.
    */
   private migrate(): void {
-    const columns = this.db.prepare('PRAGMA table_info(ssh_hosts)').all() as unknown as Array<{
+    const sshColumns = this.db.prepare('PRAGMA table_info(ssh_hosts)').all() as unknown as Array<{
       name: string
     }>
-    if (!columns.some((column) => column.name === 'note')) {
+    if (!sshColumns.some((column) => column.name === 'note')) {
       this.db.exec("ALTER TABLE ssh_hosts ADD COLUMN note TEXT NOT NULL DEFAULT ''")
     }
+
+    const conversationColumns = this.db
+      .prepare('PRAGMA table_info(conversations)')
+      .all() as unknown as Array<{ name: string }>
+    if (!conversationColumns.some((column) => column.name === 'project_id')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN project_id TEXT')
+    }
+    this.db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations (project_id, updated_at DESC)'
+    )
   }
 
   /**
@@ -140,25 +170,66 @@ export class ConversationStore {
    * the page has a real title, and the sidebar occasionally renders an empty
    * label for a moment.
    */
-  upsert(conversation: ScrapedConversation, now = Date.now()): boolean {
+  private ensureProject(
+    project: {
+      machineScope: 'local' | 'ssh'
+      hostId: string
+      machineLabel: string
+      name: string
+      path: string
+    },
+    now: number
+  ): string {
     const existing = this.db
-      .prepare('SELECT title FROM conversations WHERE id = ?')
-      .get(conversation.id) as { title: string } | undefined
+      .prepare('SELECT id FROM projects WHERE machine_scope = ? AND host_id = ? AND path = ?')
+      .get(project.machineScope, project.hostId, project.path) as { id: string } | undefined
+
+    if (existing) {
+      this.db
+        .prepare('UPDATE projects SET machine_label = ?, name = ?, updated_at = ? WHERE id = ?')
+        .run(project.machineLabel, project.name, now, existing.id)
+      return existing.id
+    }
+
+    const id = randomUUID()
+    this.db
+      .prepare(
+        'INSERT INTO projects (id, machine_scope, host_id, machine_label, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(id, project.machineScope, project.hostId, project.machineLabel, project.name, project.path, now, now)
+    return id
+  }
+
+  upsert(
+    conversation: ScrapedConversation,
+    project?: {
+      machineScope: 'local' | 'ssh'
+      hostId: string
+      machineLabel: string
+      name: string
+      path: string
+    } | null,
+    now = Date.now()
+  ): boolean {
+    const existing = this.db
+      .prepare('SELECT title, project_id FROM conversations WHERE id = ?')
+      .get(conversation.id) as { title: string; project_id: string | null } | undefined
 
     if (!existing) {
+      const projectId = project ? this.ensureProject(project, now) : null
       this.db
         .prepare(
-          'INSERT INTO conversations (id, url, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+          'INSERT INTO conversations (id, url, title, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
         )
-        .run(conversation.id, conversation.url, conversation.title, now, now)
+        .run(conversation.id, conversation.url, conversation.title, projectId, now, now)
       return true
     }
 
     const title = conversation.title.trim() === '' ? existing.title : conversation.title
-    const unchanged = title === existing.title
+    const projectId = existing.project_id ?? (project ? this.ensureProject(project, now) : null)
     this.db
-      .prepare('UPDATE conversations SET url = ?, title = ?, updated_at = ? WHERE id = ?')
-      .run(conversation.url, title, unchanged ? now : now, conversation.id)
+      .prepare('UPDATE conversations SET url = ?, title = ?, project_id = ?, updated_at = ? WHERE id = ?')
+      .run(conversation.url, title, projectId, now, conversation.id)
     return true
   }
 
@@ -177,13 +248,34 @@ export class ConversationStore {
 
   list(): Conversation[] {
     const rows = this.db
-      .prepare('SELECT id, url, title, updated_at FROM conversations ORDER BY updated_at DESC')
+      .prepare(
+        `SELECT c.id, c.url, c.title, c.project_id, c.updated_at,
+                p.machine_scope AS project_machine_scope,
+                p.host_id AS project_host_id,
+                p.machine_label AS project_machine_label,
+                p.name AS project_name,
+                p.path AS project_path
+           FROM conversations c
+           LEFT JOIN projects p ON p.id = c.project_id
+          ORDER BY c.updated_at DESC`
+      )
       .all() as unknown as ConversationRow[]
 
     return rows.map((row) => ({
       id: row.id,
       url: row.url,
       title: row.title,
+      project:
+        row.project_id && row.project_machine_scope && row.project_name && row.project_path
+          ? {
+              id: row.project_id,
+              machineScope: row.project_machine_scope as 'local' | 'ssh',
+              hostId: row.project_host_id ?? '',
+              machineLabel: row.project_machine_label ?? '',
+              name: row.project_name,
+              path: row.project_path
+            }
+          : null,
       updatedAt: row.updated_at
     }))
   }

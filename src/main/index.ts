@@ -50,6 +50,8 @@ let lastConversationId: string | null = null
 const SETTING_EXECUTION_MODE = 'executionMode'
 const SETTING_EMBED_PROXY = 'embedProxy'
 const SETTING_SSH_PROXY = 'sshProxy'
+const SETTING_LOCAL_MACHINE_ID = 'localMachineId'
+let localMachineId = ''
 /** The note attached to the LOCAL machine; per-host notes live on the host row. */
 const SETTING_LOCAL_NOTES = 'localTerminalNotes'
 
@@ -343,6 +345,25 @@ function broadcastEnvironment(): void {
   mainWindow.webContents.send(IpcChannels.environmentChanged, { ...environment })
 }
 
+function currentConversationProject(): {
+  machineScope: 'local' | 'ssh'
+  hostId: string
+  machineLabel: string
+  name: string
+  path: string
+} | null {
+  const projectPath = environment.workingDirectory.trim()
+  if (projectPath === '') return null
+  const parts = projectPath.split(/[\\/]+/).filter((part) => part !== '')
+  return {
+    machineScope: environmentScope.scope,
+    hostId: environmentScope.scope === 'local' ? localMachineId : environmentScope.hostId,
+    machineLabel: environmentScope.label,
+    name: parts[parts.length - 1] ?? projectPath,
+    path: projectPath
+  }
+}
+
 const embed = new ChatGptEmbed({
   onState: (state) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -376,7 +397,7 @@ const embed = new ChatGptEmbed({
   // Auto-saved whenever the embedded page lands on a /c/<id> URL.
   onConversation: (conversation) => {
     if (!store) return
-    store.upsert(conversation)
+    store.upsert(conversation, currentConversationProject())
     broadcastConversations()
   },
 
@@ -769,6 +790,14 @@ if (!app.requestSingleInstanceLock()) {
       join(app.getPath('userData'), 'conversations.db')
     )
     store = conversationStore
+
+    // A stable id distinguishes projects on this local machine from projects at
+    // the same path on another installation. SSH machines already have saved host ids.
+    localMachineId = conversationStore.getSetting(SETTING_LOCAL_MACHINE_ID) ?? ''
+    if (localMachineId === '') {
+      localMachineId = randomUUID()
+      conversationStore.setSetting(SETTING_LOCAL_MACHINE_ID, localMachineId)
+    }
 
     // Placeholder routes such as /c/WEB were storable before ids were validated
     // by shape; clear any that were already persisted.

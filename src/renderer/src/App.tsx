@@ -981,6 +981,18 @@ export default function App(): JSX.Element {
                   >
                     <span className="conversation__body">
                       <span className="conversation__title">{displayTitle(conversation)}</span>
+                      <span
+                        className="conversation__project"
+                        title={
+                          conversation.project
+                            ? `${conversation.project.machineLabel} · ${conversation.project.path}`
+                            : '尚未绑定项目；打开该对话后会绑定当前机器和工作目录'
+                        }
+                      >
+                        {conversation.project
+                          ? `${conversation.project.machineLabel} · ${conversation.project.name}`
+                          : '未绑定项目'}
+                      </span>
                       <span className="conversation__time">{formatTime(conversation.updatedAt)}</span>
                     </span>
                     <button

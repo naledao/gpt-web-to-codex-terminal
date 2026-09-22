@@ -432,6 +432,13 @@ body {
   font-size: 12.5px;
 }
 
+.conversation__project {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
 .conversation__time {
   color: var(--text-muted);
   font-size: 10.5px;
