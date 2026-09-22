@@ -47,6 +47,9 @@ body {
     'status   status status';
   height: 100%;
 }
+.app--panel-collapsed {
+  grid-template-columns: auto minmax(0, 1fr) 46px;
+}
 
 /* ---------------- top bar ---------------- */
 
@@ -200,6 +203,29 @@ body {
   min-height: 0;
   background: var(--bg-chrome);
   border-left: 1px solid var(--border);
+}
+.panel__collapse-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel--collapsed .panel__collapse-head {
+  flex-direction: column;
+  padding: 8px 0;
+  border-bottom: 0;
+}
+
+.panel--collapsed > :not(.panel__collapse-head) {
+  display: none;
+}
+
+.panel__collapse-button {
+  min-width: 28px;
+  padding: 0 7px;
 }
 
 .panel__head {

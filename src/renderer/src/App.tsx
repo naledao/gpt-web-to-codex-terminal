@@ -127,6 +127,7 @@ export default function App(): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [terminalWidth, setTerminalWidth] = useState(TERMINAL_DEFAULT_WIDTH)
   const [terminalCollapsed, setTerminalCollapsed] = useState(false)
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null)
@@ -820,7 +821,7 @@ export default function App(): JSX.Element {
   )
 
   return (
-    <div className="app" style={{ '--terminal-width': `${terminalWidth}px` } as CSSProperties}>
+    <div className={panelCollapsed ? 'app app--panel-collapsed' : 'app'} style={{ '--terminal-width': `${terminalWidth}px` } as CSSProperties}>
       <header className="topbar">
         <div className="brand">
           <span className="brand__mark">GPT</span>
@@ -897,7 +898,20 @@ export default function App(): JSX.Element {
         </div>
       </main>
 
-      <aside className="panel">
+      <aside className={panelCollapsed ? 'panel panel--collapsed' : 'panel'}>
+        <div className="panel__collapse-head">
+          {panelCollapsed ? null : <span className="panel__title">侧栏</span>}
+          <span className="panel__spacer" />
+          <button
+            type="button"
+            className="panel__sync panel__collapse-button"
+            title={panelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
+            aria-label={panelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
+            onClick={() => setPanelCollapsed((value) => !value)}
+          >
+            {panelCollapsed ? '«' : '»'}
+          </button>
+        </div>
         <div className="terminal-controls">
           <div className="terminal__row">
             <span className="terminal__label">终端模式</span>
