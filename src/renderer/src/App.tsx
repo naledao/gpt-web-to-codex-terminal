@@ -374,7 +374,14 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  const openConversation = useCallback((conversation: Conversation): void => {
+  const openConversation = useCallback(async (conversation: Conversation): Promise<void> => {
+    if (conversation.project?.path) {
+      try {
+        setTerminal(await window.api.setTerminalCwd(conversation.project.path))
+      } catch {
+        /* keep the current directory, but still open the conversation */
+      }
+    }
     window.api.navigateEmbed(conversation.url)
   }, [])
 
@@ -971,11 +978,11 @@ export default function App(): JSX.Element {
                     role="button"
                     tabIndex={0}
                     title={`${displayTitle(conversation)}\n${conversation.url}`}
-                    onClick={() => openConversation(conversation)}
+                    onClick={() => void openConversation(conversation)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault()
-                        openConversation(conversation)
+                        void openConversation(conversation)
                       }
                     }}
                   >
@@ -989,9 +996,7 @@ export default function App(): JSX.Element {
                             : '尚未绑定项目；打开该对话后会绑定当前机器和工作目录'
                         }
                       >
-                        {conversation.project
-                          ? `${conversation.project.machineLabel} · ${conversation.project.name}`
-                          : '未绑定项目'}
+                        {conversation.project ? conversation.project.name : '未绑定项目'}
                       </span>
                       <span className="conversation__time">{formatTime(conversation.updatedAt)}</span>
                     </span>
