@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPT Web to Codex Terminal</title>
+    <!--
+      Dev-friendly default. `script-src 'unsafe-inline'` is required by the
+      react-refresh preamble that @vitejs/plugin-react injects during `npm run dev`,
+      and by Vite's injected <style> tags. It does NOT allow `eval`, so Electron's
+      insecure-CSP warning stays silent. Tighten this for production once you know
+      exactly which origins your app talks to.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,1680 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type {
+  AppInfo,
+  AppSettings,
+  AutomationState,
+  Conversation,
+  EmbedState,
+  EnvironmentInfo,
+  ExecutionMode,
+  ExecutionRecord,
+  ExecutionStatus,
+  InterceptorStatus,
+  SshHost,
+  SshHostDraft,
+  SshState,
+  TerminalNotes,
+  TerminalState
+} from '@shared/types'
+
+const INITIAL_EMBED_STATE: EmbedState = {
+  url: '',
+  title: '',
+  isLoading: true,
+  canGoBack: false,
+  canGoForward: false,
+  conversationId: null
+}
+
+const TERMINAL_MIN_WIDTH = 220
+const TERMINAL_DEFAULT_WIDTH = 400
+
+const STATUS_LABEL: Record<ExecutionStatus, string> = {
+  pending: '待执行',
+  blocked: '需确认',
+  running: '执行中',
+  done: '完成',
+  failed: '失败',
+  timeout: '超时',
+  skipped: '已跳过'
+}
+
+/** Statuses where a click can still start the command. */
+const RUNNABLE: ReadonlySet<ExecutionStatus> = new Set<ExecutionStatus>(['pending', 'blocked'])
+
+/** "Microsoft Windows 11 家庭中文版（10.0.22631，64-bit）" */
+function describeOs(env: EnvironmentInfo): string {
+  const detail = [env.osVersion, env.architecture].filter((part) => part !== '').join('，')
+  if (env.osCaption === '') return env.kind === 'posix' ? '未知的远端系统' : 'Windows'
+  return detail === '' ? env.osCaption : `${env.osCaption}（${detail}）`
+}
+
+function describeShell(env: EnvironmentInfo): string {
+  const parts =
+    env.kind === 'posix'
+      ? [env.shellPath, env.shellVersion]
+      : [env.powerShellExe, env.powerShellVersion, env.powerShellEdition]
+  const text = parts.filter((part) => part.trim() !== '').join(' ')
+  return text === '' ? '未知' : text
+}
+
+/**
+ * Which machine the model's commands are aimed at.
+ *
+ * Worth showing prominently: attaching an SSH session silently redirects every
+ * command the model issues, and the one thing the user must never be wrong about
+ * is which computer is about to run them.
+ */
+function describeTarget(env: EnvironmentInfo): string {
+  if (env.kind !== 'posix') return '本机（Windows）'
+  const host = [env.remoteName, env.remoteTarget].filter((part) => part.trim() !== '').join(' · ')
+  return host === '' ? '远端主机（SSH）' : `远端主机 · ${host}`
+}
+
+function displayTitle(conversation: Conversation): string {
+  if (conversation.title.trim() !== '') return conversation.title
+  return `未命名对话 · ${conversation.id.slice(0, 8)}`
+}
+
+function formatTime(epochMs: number): string {
+  const date = new Date(epochMs)
+  const today = new Date()
+  const sameDay =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+
+  return sameDay
+    ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+}
+
+export default function App(): JSX.Element {
+  const [info, setInfo] = useState<AppInfo | null>(null)
+  const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [interceptor, setInterceptor] = useState<InterceptorStatus | null>(null)
+  const [automation, setAutomation] = useState<AutomationState | null>(null)
+  const [executions, setExecutions] = useState<ExecutionRecord[]>([])
+  const [terminal, setTerminal] = useState<TerminalState | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [address, setAddress] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [terminalWidth, setTerminalWidth] = useState(TERMINAL_DEFAULT_WIDTH)
+  const [terminalCollapsed, setTerminalCollapsed] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null)
+  const [proxyDraft, setProxyDraft] = useState('')
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [commandDraft, setCommandDraft] = useState('')
+  /** Non-null while the working directory is being edited inline. */
+  const [cwdDraft, setCwdDraft] = useState<string | null>(null)
+  const [ssh, setSsh] = useState<SshState | null>(null)
+  const [sshHosts, setSshHosts] = useState<SshHost[]>([])
+  /** The per-machine note editor, shown inside the terminal pane. */
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [notes, setNotes] = useState<TerminalNotes | null>(null)
+  const [notesDraft, setNotesDraft] = useState('')
+  const [notesSaving, setNotesSaving] = useState(false)
+  const [sshDialogOpen, setSshDialogOpen] = useState(false)
+  /** The quick host list, shown inside the terminal pane. */
+  const [sshPickerOpen, setSshPickerOpen] = useState(false)
+  const [sshBusy, setSshBusy] = useState(false)
+  const [sshDraft, setSshDraft] = useState<SshHostDraft>({
+    id: null,
+    name: '',
+    host: '',
+    port: 22,
+    username: 'root',
+    password: '',
+    proxy: ''
+  })
+  const [sshProxyDraft, setSshProxyDraft] = useState('')
+
+  /** While an SSH transcript is on screen it replaces the local terminal. */
+  const sshActive = ssh !== null && ssh.attached
+  /**
+   * True while a host is actually in charge — as opposed to the pane merely still
+   * showing a transcript after a disconnect or a failure. Deciding this in one
+   * place keeps the switcher's "you are here" mark honest.
+   */
+  const sshLive = sshActive && (ssh?.status === 'connected' || ssh?.status === 'connecting')
+  /** True when the machine in charge has a note; the marker on the 说明 button. */
+  const notesSet = (notes?.text ?? '').trim() !== ''
+  const slotRef = useRef<HTMLDivElement>(null)
+  const terminalOutputRef = useRef<HTMLDivElement>(null)
+  /** scope:hostId of the note currently loaded into the editor. */
+  const notesOwnerRef = useRef('')
+
+  const conversationId = embed.conversationId
+  const isAuto = automation?.mode === 'auto'
+
+  const waiting = useMemo(
+    () => executions.filter((record) => RUNNABLE.has(record.status)),
+    [executions]
+  )
+
+  // Runtime info, kept as a working example of a renderer -> main IPC call.
+  useEffect(() => {
+    let cancelled = false
+
+    window.api
+      .getAppInfo()
+      .then((value) => {
+        if (!cancelled) setInfo(value)
+      })
+      .catch(() => {
+        /* the status bar simply stays empty */
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Embed state is pushed from the main process, but the earliest events fire
+  // before React subscribes, so pull the current snapshot first as well.
+  useEffect(() => {
+    let cancelled = false
+
+    window.api
+      .getEmbedState()
+      .then((state) => {
+        if (!cancelled) setEmbed(state)
+      })
+      .catch(() => {
+        /* push updates below will still recover the UI */
+      })
+
+    const unsubscribe = window.api.onEmbedState(setEmbed)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  // Stored conversations: load once, then stay in sync with main's pushes.
+  useEffect(() => {
+    let cancelled = false
+
+    window.api
+      .listConversations()
+      .then((items) => {
+        if (!cancelled) setConversations(items)
+      })
+      .catch(() => {
+        /* the panel simply stays empty */
+      })
+
+    const unsubscribe = window.api.onConversationsChanged(setConversations)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  // Terminal-mode interceptor: same pull-then-subscribe pattern as the embed
+  // state, because the script reports 'installed' before React mounts.
+  useEffect(() => {
+    let cancelled = false
+
+    window.api
+      .getInterceptorStatus()
+      .then((status) => {
+        if (!cancelled) setInterceptor(status)
+      })
+      .catch(() => {
+        /* the block renders a placeholder */
+      })
+
+    const unsubscribe = window.api.onInterceptorEvent(setInterceptor)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  // Automation + terminal.
+  useEffect(() => {
+    let cancelled = false
+
+    void window.api.getAutomationState().then((state) => {
+      if (!cancelled) setAutomation(state)
+    })
+    void window.api.getTerminalState().then((state) => {
+      if (!cancelled) setTerminal(state)
+    })
+
+    const offAutomation = window.api.onAutomationChanged(setAutomation)
+    const offTerminal = window.api.onTerminalChanged(setTerminal)
+    return () => {
+      cancelled = true
+      offAutomation()
+      offTerminal()
+    }
+  }, [])
+
+  // Executions belong to whichever conversation is on screen.
+  const refreshExecutions = useCallback(async (): Promise<void> => {
+    if (!conversationId) {
+      setExecutions([])
+      return
+    }
+    try {
+      setExecutions(await window.api.listExecutions(conversationId))
+    } catch {
+      /* leave the previous list in place */
+    }
+  }, [conversationId])
+
+  useEffect(() => {
+    void refreshExecutions()
+  }, [refreshExecutions])
+
+  useEffect(() => window.api.onExecutionChanged(() => void refreshExecutions()), [refreshExecutions])
+
+  // Mirror the real URL into the address bar, but never while it is being typed.
+  useEffect(() => {
+    if (!editing) setAddress(embed.url)
+  }, [embed.url, editing])
+
+  // Keep the newest terminal output in view. Both transcripts are watched: while
+  // an SSH session is attached the pane renders the SSH one, and the model's own
+  // commands are mirrored into it.
+  useEffect(() => {
+    const element = terminalOutputRef.current
+    if (element) element.scrollTop = element.scrollHeight
+  }, [terminal?.lines, ssh?.lines])
+
+  /**
+   * The embedded page is a NATIVE view, not a DOM node, so it cannot be
+   * positioned by CSS. Measure the placeholder and hand the rectangle to the
+   * main process, which moves the view on top of it.
+   *
+   * getBoundingClientRect() is in CSS pixels relative to the viewport, which is
+   * exactly the coordinate space `WebContentsView.setBounds()` expects (DIPs),
+   * so no devicePixelRatio scaling is needed here.
+   */
+  useEffect(() => {
+    const element = slotRef.current
+    if (!element) return
+
+    const report = (): void => {
+      const rect = element.getBoundingClientRect()
+      window.api.setEmbedBounds({
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      })
+    }
+
+    report()
+    const observer = new ResizeObserver(report)
+    observer.observe(element)
+    window.addEventListener('resize', report)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', report)
+      // Collapsing the rectangle hides the native view on unmount.
+      window.api.setEmbedBounds({ x: 0, y: 0, width: 0, height: 0 })
+    }
+  }, [])
+
+  const submitAddress = useCallback(
+    (event: FormEvent<HTMLFormElement>): void => {
+      event.preventDefault()
+      window.api.navigateEmbed(address)
+      setEditing(false)
+    },
+    [address]
+  )
+
+  const syncConversations = useCallback(async (): Promise<void> => {
+    setSyncing(true)
+    try {
+      setConversations(await window.api.syncConversations())
+    } catch {
+      /* leave the previous list in place */
+    } finally {
+      setSyncing(false)
+    }
+  }, [])
+
+  const openConversation = useCallback((conversation: Conversation): void => {
+    window.api.navigateEmbed(conversation.url)
+  }, [])
+
+  const toggleInterceptor = useCallback(async (): Promise<void> => {
+    if (!interceptor) return
+    try {
+      setInterceptor(await window.api.setInterceptorEnabled(!interceptor.enabled))
+    } catch {
+      /* leave the previous state in place */
+    }
+  }, [interceptor])
+
+  const setMode = useCallback(async (mode: ExecutionMode): Promise<void> => {
+    try {
+      setAutomation(await window.api.setAutomationMode(mode))
+    } catch {
+      /* leave the previous state in place */
+    }
+  }, [])
+
+  /** Escape hatch: re-read the last reply even though it counted as pre-existing. */
+  const checkLastReply = useCallback(async (): Promise<void> => {
+    try {
+      setAutomation(await window.api.checkLastReply())
+      await refreshExecutions()
+    } catch {
+      /* ignore */
+    }
+  }, [refreshExecutions])
+
+  const togglePaused = useCallback(async (): Promise<void> => {
+    if (!automation) return
+    try {
+      setAutomation(await window.api.setAutomationPaused(!automation.paused))
+    } catch {
+      /* leave the previous state in place */
+    }
+  }, [automation])
+
+  const runExecution = useCallback(
+    async (messageId: string): Promise<void> => {
+      try {
+        setExecutions(await window.api.runExecution(messageId))
+      } catch {
+        /* the pushed update will correct the list */
+      }
+    },
+    []
+  )
+
+  const skipExecution = useCallback(async (messageId: string): Promise<void> => {
+    try {
+      setExecutions(await window.api.skipExecution(messageId))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const submitCommand = useCallback(
+    async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+      event.preventDefault()
+      const text = commandDraft
+      setCommandDraft('')
+      try {
+        // One input box, two destinations: whatever the pane is currently showing.
+        if (sshActive) {
+          setSsh(await window.api.sendSshInput(text))
+        } else {
+          setTerminal(await window.api.sendTerminalInput(text))
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+    [commandDraft, sshActive]
+  )
+
+  const connectSsh = useCallback(async (draft: SshHostDraft): Promise<void> => {
+    setSshBusy(true)
+    try {
+      // Resolves with `connecting`; the outcome arrives over onSshChanged.
+      setSsh(await window.api.connectSsh(draft))
+      setSshHosts(await window.api.listSshHosts())
+      setSshDialogOpen(false)
+    } catch {
+      /* the dialog stays open so the input is not lost */
+    } finally {
+      setSshBusy(false)
+    }
+  }, [])
+
+  /**
+   * Jump straight to a saved host from the quick list.
+   *
+   * The point of the list is that switching costs one click: no dialog, and no
+   * having to close the current session first. A host with a stored password
+   * connects immediately; one without opens the form prefilled instead, because
+   * connecting with no password would flip the pane over and only then report
+   * that it needs one — losing the transcript you were reading.
+   */
+  const switchSshHost = useCallback(
+    async (host: SshHost): Promise<void> => {
+      setSshPickerOpen(false)
+      // Already here: reconnecting would drop a working session for nothing.
+      if (sshLive && ssh?.hostId === host.id) return
+
+      if (!host.hasPassword) {
+        setSshDraft({
+          id: host.id,
+          name: host.name,
+          host: host.host,
+          port: host.port,
+          username: host.username,
+          password: '',
+          proxy: host.proxy
+        })
+        setSshDialogOpen(true)
+        return
+      }
+
+      setSshBusy(true)
+      try {
+        setSsh(
+          await window.api.connectSsh({
+            id: host.id,
+            name: host.name,
+            host: host.host,
+            port: host.port,
+            username: host.username,
+            // Empty means "use the password already stored for this host".
+            password: '',
+            proxy: host.proxy
+          })
+        )
+        setSshHosts(await window.api.listSshHosts())
+      } catch {
+        /* the pane's own state reports the failure */
+      } finally {
+        setSshBusy(false)
+      }
+    },
+    [ssh?.hostId, sshLive]
+  )
+
+  const disconnectSsh = useCallback(async (): Promise<void> => {
+    try {
+      setSsh(await window.api.disconnectSsh())
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const dismissSsh = useCallback(async (): Promise<void> => {
+    try {
+      setSsh(await window.api.dismissSsh())
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const removeSshHost = useCallback(async (id: string): Promise<void> => {
+    try {
+      setSshHosts(await window.api.removeSshHost(id))
+      setSshDraft((current) => (current.id === id ? { ...current, id: null } : current))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const resetTerminal = useCallback(async (): Promise<void> => {
+    try {
+      setTerminal(await window.api.resetTerminal())
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  /**
+   * Move the terminal somewhere else.
+   *
+   * Main re-runs the environment probe afterwards, because the working directory
+   * is part of what the model is told — the prompt on screen would otherwise
+   * describe a directory the terminal has already left.
+   */
+  const submitCwd = useCallback(
+    async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+      event.preventDefault()
+      const target = (cwdDraft ?? '').trim()
+      // Closed before awaiting: the input's blur handler must not race with it.
+      setCwdDraft(null)
+      if (target === '') return
+      try {
+        setTerminal(await window.api.setTerminalCwd(target))
+      } catch {
+        /* main leaves the previous directory in place */
+      }
+    },
+    [cwdDraft]
+  )
+
+  // Settings: load once, then mirror into the draft the dialog edits.
+  useEffect(() => {
+    let cancelled = false
+
+    window.api
+      .getSettings()
+      .then((value) => {
+        if (cancelled) return
+        setSettings(value)
+        setProxyDraft(value.embedProxy)
+        setSshProxyDraft(value.sshProxy)
+      })
+      .catch(() => {
+        /* the dialog renders a placeholder */
+      })
+
+    // The probe runs in the background at startup, so re-read it when the dialog
+    // opens rather than only on mount — otherwise the first open shows nothing.
+    window.api
+      .getEnvironment()
+      .then((value) => {
+        if (!cancelled) setEnvironment(value)
+      })
+      .catch(() => {
+        /* the section is simply omitted */
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [settingsOpen])
+
+  // The machine in charge changes while the app runs: the startup probe finishes,
+  // the terminal moves, or an SSH session takes over. Pulling only on mount would
+  // leave the panel describing a machine the model has already left.
+  useEffect(() => window.api.onEnvironmentChanged(setEnvironment), [])
+
+  /**
+   * The embedded page is a NATIVE view: it always paints above the DOM, so an
+   * overlay alone would be hidden behind it. Hide the view while a dialog is up.
+   */
+  useEffect(() => {
+    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen)
+  }, [settingsOpen, sshDialogOpen])
+
+  // SSH state and saved hosts.
+  useEffect(() => {
+    let cancelled = false
+
+    void window.api.getSshState().then((value) => {
+      if (!cancelled) setSsh(value)
+    })
+    void window.api.listSshHosts().then((value) => {
+      if (!cancelled) setSshHosts(value)
+    })
+
+    const unsubscribe = window.api.onSshChanged(setSsh)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  /**
+   * Adopt the note the main process hands over.
+   *
+   * Main pushes on every save AND whenever the machine in charge changes, so the
+   * draft is only replaced when the editor is showing a DIFFERENT machine —
+   * otherwise a routine broadcast would wipe whatever is being typed.
+   */
+  const applyNotes = useCallback((value: TerminalNotes): void => {
+    const owner = `${value.scope}:${value.hostId}`
+    if (owner !== notesOwnerRef.current) {
+      notesOwnerRef.current = owner
+      setNotesDraft(value.text)
+    }
+    setNotes(value)
+  }, [])
+
+  // Per-machine notes: the same value the prompt is built from, resolved in main
+  // against the live backend so the renderer never guesses which machine is which.
+  useEffect(() => {
+    let cancelled = false
+
+    void window.api.getTerminalNotes().then((value) => {
+      if (!cancelled) applyNotes(value)
+    })
+
+    const unsubscribe = window.api.onTerminalNotesChanged(applyNotes)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [applyNotes])
+
+  const saveNotes = useCallback(async (): Promise<void> => {
+    setNotesSaving(true)
+    try {
+      applyNotes(await window.api.setTerminalNotes(notesDraft))
+      setNotesOpen(false)
+    } catch {
+      /* leave the panel open so nothing typed is lost */
+    } finally {
+      setNotesSaving(false)
+    }
+  }, [applyNotes, notesDraft])
+
+  // Escape closes the dialog, like every other dialog on the platform.
+  useEffect(() => {
+    if (!settingsOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setSettingsOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [settingsOpen])
+
+  // …and dismisses the transient panels that live in the terminal column.
+  useEffect(() => {
+    if (!sshPickerOpen && !notesOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setSshPickerOpen(false)
+      setNotesOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [sshPickerOpen, notesOpen])
+
+  const saveSettings = useCallback(async (): Promise<void> => {
+    setSavingSettings(true)
+    try {
+      // Show back what main actually stored — it normalises a bare "host:port"
+      // into a URL, and the user should see that rather than be surprised later.
+      const next = await window.api.updateSettings({
+        embedProxy: proxyDraft,
+        sshProxy: sshProxyDraft
+      })
+      setSettings(next)
+      setProxyDraft(next.embedProxy)
+      setSshProxyDraft(next.sshProxy)
+      setSettingsOpen(false)
+    } catch {
+      /* leave the dialog open so the input is not lost */
+    } finally {
+      setSavingSettings(false)
+    }
+  }, [proxyDraft, sshProxyDraft])
+
+  /** Drag the terminal's right edge to resize the column. */
+  const startResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      event.preventDefault()
+      const startX = event.clientX
+      const startWidth = terminalWidth
+
+      const onMove = (moveEvent: PointerEvent): void => {
+        // The terminal sits on the LEFT, so dragging right makes it wider.
+        const next = startWidth + (moveEvent.clientX - startX)
+        // Leave room for the chat view and the conversation panel.
+        const max = Math.max(TERMINAL_MIN_WIDTH, window.innerWidth - 520)
+        setTerminalWidth(Math.min(Math.max(next, TERMINAL_MIN_WIDTH), max))
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+      }
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [terminalWidth]
+  )
+
+  const removeConversation = useCallback(
+    async (event: MouseEvent, id: string): Promise<void> => {
+      // The row itself navigates; the delete button must not trigger that.
+      event.stopPropagation()
+      try {
+        setConversations(await window.api.removeConversation(id))
+      } catch {
+        /* ignore */
+      }
+    },
+    []
+  )
+
+  return (
+    <div className="app" style={{ '--terminal-width': `${terminalWidth}px` } as CSSProperties}>
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand__mark">GPT</span>
+          <span className="brand__text">Web → Codex Terminal</span>
+        </div>
+
+        <div className="toolbar">
+          <button
+            type="button"
+            title="后退"
+            disabled={!embed.canGoBack}
+            onClick={() => window.api.sendEmbedCommand('back')}
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            title="前进"
+            disabled={!embed.canGoForward}
+            onClick={() => window.api.sendEmbedCommand('forward')}
+          >
+            →
+          </button>
+          <button
+            type="button"
+            title={embed.isLoading ? '停止加载' : '重新加载'}
+            onClick={() => window.api.sendEmbedCommand(embed.isLoading ? 'stop' : 'reload')}
+          >
+            {embed.isLoading ? '✕' : '⟳'}
+          </button>
+          <button type="button" title="回到 ChatGPT 首页" onClick={() => window.api.sendEmbedCommand('home')}>
+            ⌂
+          </button>
+
+          <form className="address" onSubmit={submitAddress}>
+            <input
+              className="address__input"
+              value={address}
+              spellCheck={false}
+              placeholder="https://chatgpt.com/"
+              aria-label="地址"
+              onChange={(event) => setAddress(event.target.value)}
+              onFocus={() => setEditing(true)}
+              onBlur={() => setEditing(false)}
+            />
+          </form>
+
+          <button
+            type="button"
+            title="设置"
+            aria-label="设置"
+            className={settings?.embedProxy ? 'toolbar__settings toolbar__settings--on' : 'toolbar__settings'}
+            onClick={() => setSettingsOpen((value) => !value)}
+          >
+            ⚙
+          </button>
+        </div>
+      </header>
+
+      <main className="stage">
+        {/*
+          The main process sizes the native chatgpt.com view to cover this box
+          exactly, so nothing may overlap it — a native view always paints above
+          the DOM and cannot be rounded or z-ordered.
+        */}
+        <div className="stage__slot" ref={slotRef}>
+          <div className="stage__hint">
+            <p className="stage__hint-title">正在加载 chatgpt.com …</p>
+            <p className="stage__hint-sub">
+              若长时间空白，通常是 Cloudflare 人机校验或该网络无法访问 chatgpt.com。
+            </p>
+          </div>
+        </div>
+      </main>
+
+      <aside className="panel">
+        <div className="terminal-controls">
+          <div className="terminal__row">
+            <span className="terminal__label">终端模式</span>
+            <span className={interceptor?.installed ? 'terminal__dot' : 'terminal__dot terminal__dot--wait'} />
+            <span className="terminal__spacer" />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={interceptor?.enabled ?? false}
+              aria-label="终端模式"
+              disabled={!interceptor}
+              className={interceptor?.enabled ? 'switch switch--on' : 'switch'}
+              onClick={() => void toggleInterceptor()}
+            >
+              <span className="switch__knob" />
+            </button>
+          </div>
+
+          <p className="terminal__hint">
+            {interceptor === null
+              ? '正在读取状态…'
+              : interceptor.enabled
+                ? interceptor.installed
+                  ? '发送前会自动在输入框最前面插入系统提示词'
+                  : '已开启，等待页面加载后生效'
+                : '已关闭：消息按原样发送'}
+          </p>
+
+          <div className="mode" role="radiogroup" aria-label="执行模式">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={automation !== null && !isAuto}
+              className={automation !== null && !isAuto ? 'mode__item mode__item--on' : 'mode__item'}
+              disabled={!automation}
+              onClick={() => void setMode('manual')}
+            >
+              手动执行
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={isAuto === true}
+              className={isAuto ? 'mode__item mode__item--on' : 'mode__item'}
+              disabled={!automation}
+              onClick={() => void setMode('auto')}
+            >
+              自动执行
+            </button>
+          </div>
+
+          <p className="terminal__hint">
+            {automation === null
+              ? '正在读取设置…'
+              : isAuto
+                ? '自动执行：检测到命令立刻在该会话的终端里运行，并把结果发回给模型。'
+                : '手动执行：命令列在下方等你点「运行」，跑完的结果同样会发回给模型。'}
+          </p>
+
+          <div className="terminal__row terminal__row--gap">
+            <button
+              type="button"
+              className={automation?.paused ? 'btn btn--danger' : 'btn'}
+              disabled={!automation}
+              onClick={() => void togglePaused()}
+            >
+              {automation?.paused ? '已暂停 · 恢复' : '暂停'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={!conversationId}
+              title="重新解析上一条回复，用于恢复中断的任务"
+              onClick={() => void checkLastReply()}
+            >
+              检查上一条
+            </button>
+          </div>
+
+          <p className="terminal__hint">
+            打开会话时，屏幕上已有的回复不会被当成新命令执行；要接着跑就点「检查上一条」。
+          </p>
+
+          <div className="terminal__stats">
+            <span className="terminal__count">已注入 {interceptor?.injectedCount ?? 0} 次</span>
+            {waiting.length > 0 ? (
+              <span className="terminal__count terminal__count--warn">{waiting.length} 条待处理</span>
+            ) : null}
+          </div>
+
+          {interceptor?.lastSentText ? (
+            <p className="terminal__last" title={interceptor.lastSentText}>
+              最近发送：{interceptor.lastSentText}
+            </p>
+          ) : null}
+
+          <details className="terminal__details">
+            <summary>查看注入的提示词</summary>
+            <pre className="terminal__prompt">{interceptor?.prefix.trim() || '…'}</pre>
+          </details>
+        </div>
+
+        <div className="panel__head">
+          <span className="panel__title">对话记录</span>
+          <span className="panel__count">{conversations.length}</span>
+          <span className="panel__spacer" />
+          <button
+            type="button"
+            className="panel__sync"
+            title="从 ChatGPT 侧边栏同步"
+            disabled={syncing}
+            onClick={() => void syncConversations()}
+          >
+            {syncing ? '同步中…' : '同步'}
+          </button>
+        </div>
+
+        {conversations.length === 0 ? (
+          <p className="panel__empty">还没有记录。打开一个对话，或点「同步」从侧边栏导入。</p>
+        ) : (
+          <ul className="panel__list">
+            {conversations.map((conversation) => {
+              const active = conversation.id === conversationId
+              return (
+                <li key={conversation.id}>
+                  <div
+                    className={active ? 'conversation conversation--active' : 'conversation'}
+                    role="button"
+                    tabIndex={0}
+                    title={`${displayTitle(conversation)}\n${conversation.url}`}
+                    onClick={() => openConversation(conversation)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        openConversation(conversation)
+                      }
+                    }}
+                  >
+                    <span className="conversation__body">
+                      <span className="conversation__title">{displayTitle(conversation)}</span>
+                      <span className="conversation__time">{formatTime(conversation.updatedAt)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="conversation__remove"
+                      title="从数据库删除"
+                      onClick={(event) => void removeConversation(event, conversation.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </aside>
+
+      <section className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
+        <div className="terminal-pane__head">
+          <span className="panel__title">{sshActive ? 'SSH' : '终端'}</span>
+          <span
+            className={
+              sshActive
+                ? ssh?.status === 'connected'
+                  ? 'terminal__dot'
+                  : ssh?.status === 'error'
+                    ? 'terminal__dot terminal__dot--error'
+                    : 'terminal__dot terminal__dot--wait'
+                : terminal?.alive
+                  ? 'terminal__dot'
+                  : 'terminal__dot terminal__dot--wait'
+            }
+          />
+          <span className="panel__spacer" />
+          {terminalCollapsed ? null : sshActive ? (
+            <>
+              <button
+                type="button"
+                className={sshPickerOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
+                title="切换到另一台已保存的主机"
+                onClick={() => setSshPickerOpen((value) => !value)}
+              >
+                切换
+              </button>
+              <button
+                type="button"
+                className="panel__sync"
+                title="关闭 SSH 面板，回到本地终端"
+                onClick={() => void dismissSsh()}
+              >
+                关闭
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={sshPickerOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
+                title="已保存的主机，点一下直接连接"
+                onClick={() => setSshPickerOpen((value) => !value)}
+              >
+                SSH
+              </button>
+              <button type="button" className="panel__sync" onClick={() => void resetTerminal()}>
+                重置
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="panel__sync"
+            title={terminalCollapsed ? '展开终端' : '折叠终端'}
+            onClick={() => {
+              setTerminalCollapsed((value) => !value)
+              // These live in the pane's flow, so they would simply vanish with it.
+              setSshPickerOpen(false)
+              setNotesOpen(false)
+            }}
+          >
+            {terminalCollapsed ? '»' : '«'}
+          </button>
+        </div>
+
+        {/*
+          The host switcher.
+          It sits in the pane's normal flow rather than floating over it: the pane
+          is to the LEFT of the embedded page, which is a native view that always
+          paints above the DOM, so anything spilling out of this column — a dropdown
+          anchored to the header, say — would be swallowed by it.
+        */}
+        {terminalCollapsed || !sshPickerOpen ? null : (
+          <div className="ssh-switch">
+            <div className="ssh-switch__head">
+              <span className="field__label">已保存的主机</span>
+              <span className="panel__spacer" />
+              <button
+                type="button"
+                className="panel__sync"
+                title="打开连接表单，也可以在这里修改或删除已保存的主机"
+                onClick={() => {
+                  setSshPickerOpen(false)
+                  setSshDialogOpen(true)
+                }}
+              >
+                新建 / 管理
+              </button>
+            </div>
+
+            {sshHosts.length === 0 ? (
+              <p className="ssh-switch__empty">
+                还没有保存的主机。点「新建 / 管理」添加一台 —— 连接成功后会记住，下次点一下就能切回来。
+              </p>
+            ) : (
+              <ul className="ssh-list">
+                {sshHosts.map((saved) => {
+                  const here = sshLive && ssh?.hostId === saved.id
+                  return (
+                    <li key={saved.id} className="ssh-list__item">
+                      <button
+                        type="button"
+                        className={here ? 'ssh-list__pick ssh-list__pick--active' : 'ssh-list__pick'}
+                        disabled={sshBusy}
+                        title={
+                          here
+                            ? `当前就在这里：${saved.name}`
+                            : saved.hasPassword
+                              ? `连接到 ${saved.name}（使用已保存的密码）`
+                              : `打开表单填写密码后连接 ${saved.name}`
+                        }
+                        onClick={() => void switchSshHost(saved)}
+                      >
+                        <span className="ssh-list__name">{here ? `● ${saved.name}` : saved.name}</span>
+                        <span className="ssh-list__target">
+                          {saved.username}@{saved.host}:{saved.port}
+                        </span>
+                        <span
+                          className={saved.hasPassword ? 'ssh-list__lock' : 'ssh-list__lock ssh-list__lock--warn'}
+                        >
+                          {saved.hasPassword ? '一键连接' : '需输密码'}
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+
+            <div className="ssh-switch__foot">
+              {sshLive ? (
+                <button
+                  type="button"
+                  className="panel__sync"
+                  title="结束当前连接，但保留屏幕上的记录"
+                  onClick={() => {
+                    setSshPickerOpen(false)
+                    void disconnectSsh()
+                  }}
+                >
+                  断开当前连接
+                </button>
+              ) : null}
+              <span className="panel__spacer" />
+              <span className="ssh-switch__note">切换会断开当前会话</span>
+            </div>
+          </div>
+        )}
+
+        {terminalCollapsed ? null : sshActive ? (
+          <div className="terminal-pane__meta">
+            <span className="terminal-pane__id">{ssh?.name || 'SSH'}</span>
+            <span
+              className={ssh?.remoteExec ? 'badge badge--remote' : 'badge'}
+              title={
+                ssh?.remoteExec
+                  ? `模型发出的命令在这台主机上执行\n模型 shell 的工作目录：${ssh.modelCwd || '尚未确定'}`
+                  : '命令通道未就绪——模型命令目前仍在本地机器上执行'
+              }
+            >
+              {ssh?.remoteExec ? '模型命令在此执行' : '模型命令仍在本地'}
+            </span>
+            <span className="terminal-pane__cwd" title={ssh?.message}>
+              {ssh?.status === 'connected'
+                ? ssh?.remoteExec && ssh.modelCwd
+                  ? `${ssh.target} · 模型目录 ${ssh.modelCwd}`
+                  : ssh.target
+                : ssh?.message}
+            </span>
+            <button
+              type="button"
+              className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
+              title={`写一段只针对这台机器的说明，会拼在系统提示词后面${notesSet ? '（已设置）' : ''}`}
+              onClick={() => setNotesOpen((value) => !value)}
+            >
+              说明{notesSet ? ' ●' : ''}
+            </button>
+          </div>
+        ) : (
+          <div className="terminal-pane__meta">
+            <span className="terminal-pane__id">
+              {terminal?.scope === 'startup'
+                ? '启动探测'
+                : conversationId
+                  ? conversationId.slice(0, 8)
+                  : '未打开对话'}
+            </span>
+            {cwdDraft !== null ? (
+              <form className="terminal-pane__cwd-form" onSubmit={submitCwd}>
+                <input
+                  className="terminal-pane__cwd-input"
+                  value={cwdDraft}
+                  spellCheck={false}
+                  autoFocus
+                  aria-label="终端目录"
+                  onChange={(event) => setCwdDraft(event.target.value)}
+                  onBlur={() => setCwdDraft(null)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setCwdDraft(null)
+                  }}
+                />
+              </form>
+            ) : (
+              <button
+                type="button"
+                className="terminal-pane__cwd"
+                title={terminal?.cwd ? `${terminal.cwd}\n点击修改目录` : '设置终端目录'}
+                onClick={() => setCwdDraft(terminal?.cwd ?? '')}
+              >
+                {terminal?.cwd || '设置目录…'}
+              </button>
+            )}
+            <button
+              type="button"
+              className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
+              title={`写一段只针对这台机器的说明，会拼在系统提示词后面${notesSet ? '（已设置）' : ''}`}
+              onClick={() => setNotesOpen((value) => !value)}
+            >
+              说明{notesSet ? ' ●' : ''}
+            </button>
+          </div>
+        )}
+
+        {/*
+          The per-machine note editor.
+          In the pane's normal flow, like the host switcher, because the embedded
+          page is a native view that would swallow anything floating over the stage.
+        */}
+        {terminalCollapsed || !notesOpen ? null : (
+          <div className="notes">
+            <div className="notes__head">
+              <span className="field__label">发送给 GPT 的补充说明</span>
+              <span className="panel__spacer" />
+              <span className="notes__owner" title={notes?.label}>
+                {notes?.scope === 'ssh' ? `SSH · ${notes.label}` : '本机'}
+              </span>
+            </div>
+
+            <textarea
+              className="notes__input"
+              value={notesDraft}
+              rows={5}
+              spellCheck={false}
+              placeholder={
+                '只针对这台机器的事实和约定，例如：\n项目在 /srv/app，用 docker compose 部署\n不要动 /data 目录'
+              }
+              aria-label="补充说明"
+              onChange={(event) => setNotesDraft(event.target.value)}
+            />
+
+            <p className="notes__hint">
+              会拼在系统提示词最后，冲突时以它为准。每台机器各存一份，留空 = 不补充。
+            </p>
+
+            <div className="notes__foot">
+              <button
+                type="button"
+                className="panel__sync"
+                disabled={notesSaving || notesDraft === ''}
+                onClick={() => setNotesDraft('')}
+              >
+                清空
+              </button>
+              <span className="panel__spacer" />
+              <button
+                type="button"
+                className="panel__sync"
+                onClick={() => setNotesOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary btn--inline"
+                disabled={notesSaving || notes === null}
+                onClick={() => void saveNotes()}
+              >
+                {notesSaving ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {terminalCollapsed ? null : (
+          <>
+            {waiting.length > 0 ? (
+              <div className="pending">
+                {waiting.map((record) => (
+                  <div key={record.messageId} className="pending__item">
+                    <span className={record.status === 'blocked' ? 'badge badge--warn' : 'badge'}>
+                      {STATUS_LABEL[record.status]}
+                    </span>
+                    <code className="pending__command" title={record.command}>
+                      {record.command || '(空命令)'}
+                    </code>
+                    <span className="panel__spacer" />
+                    <button
+                      type="button"
+                      className="panel__sync"
+                      onClick={() => void runExecution(record.messageId)}
+                    >
+                      运行
+                    </button>
+                    <button
+                      type="button"
+                      className="panel__sync"
+                      onClick={() => void skipExecution(record.messageId)}
+                    >
+                      跳过
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="terminal-pane__output" ref={terminalOutputRef}>
+              {sshActive ? (
+                (ssh?.lines.length ?? 0) === 0 ? (
+                  <p className="terminal-pane__empty">{ssh?.message || '正在连接…'}</p>
+                ) : (
+                  ssh?.lines.map((line, index) => (
+                    <pre key={index} className={`line line--${line.kind}`}>
+                      {line.kind === 'command' ? `$ ${line.text}` : line.text}
+                    </pre>
+                  ))
+                )
+              ) : (terminal?.lines.length ?? 0) === 0 ? (
+                <p className="terminal-pane__empty">
+                  {terminal?.scope === 'startup'
+                    ? '正在探测本机环境（操作系统与架构），结果会写进发给模型的提示词…'
+                    : '还没有输出。启动自动执行后，模型发出的命令会在这里运行。'}
+                </p>
+              ) : (
+                terminal?.lines.map((line, index) => (
+                  <pre key={index} className={`line line--${line.kind}`}>
+                    {line.kind === 'command' ? `> ${line.text}` : line.text}
+                  </pre>
+                ))
+              )}
+            </div>
+
+            <form className="terminal-pane__input" onSubmit={submitCommand}>
+              <span className="terminal-pane__prompt">{sshActive ? '$' : '>'}</span>
+              <input
+                className="address__input"
+                value={commandDraft}
+                spellCheck={false}
+                placeholder={
+                  sshActive
+                    ? ssh?.status === 'connected'
+                      ? '输入命令，回车发送到远程主机'
+                      : '尚未连接'
+                    : terminal?.scope === 'startup'
+                      ? '打开一个对话后，可以在这里直接执行命令'
+                      : '直接在这个会话的终端里执行命令（不经过模型）'
+                }
+                aria-label={sshActive ? 'SSH 命令' : '终端命令'}
+                disabled={sshActive ? ssh?.status !== 'connected' : !conversationId}
+                onChange={(event) => setCommandDraft(event.target.value)}
+              />
+            </form>
+          </>
+        )}
+
+        <div
+          className="terminal-pane__resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整终端宽度"
+          onPointerDown={startResize}
+        />
+      </section>
+
+      <footer className="statusbar">
+        <span className={embed.isLoading ? 'dot dot--busy' : 'dot'} />
+        <span className="statusbar__title" title={embed.url}>
+          {embed.title || embed.url || '未加载'}
+        </span>
+        {conversationId ? (
+          <span className="statusbar__id">已记录 · {conversationId.slice(0, 8)}</span>
+        ) : null}
+        {isAuto ? (
+          <span className="statusbar__mode">
+            {automation?.paused ? '自动执行 · 已暂停' : '自动执行中'}
+          </span>
+        ) : null}
+        {ssh?.remoteExec ? (
+          <span className="statusbar__remote" title={`模型命令在 ${ssh.target} 上执行`}>
+            远端执行 · {ssh.name || ssh.target}
+          </span>
+        ) : null}
+        <span className="statusbar__spacer" />
+        <span className="statusbar__meta">
+          {info
+            ? `Electron ${info.electron} · Chromium ${info.chrome} · ${
+                info.usingDevServer ? 'dev server' : 'bundled'
+              }`
+            : '…'}
+        </span>
+      </footer>
+
+      {settingsOpen ? (
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="设置"
+          // Only a click on the backdrop itself dismisses, not one that started
+          // inside the box and drifted out.
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSettingsOpen(false)
+          }}
+        >
+          <div className="modal__box">
+            <div className="modal__head">
+              <span className="panel__title">设置</span>
+              <span className="panel__spacer" />
+              <button
+                type="button"
+                className="panel__sync"
+                aria-label="关闭"
+                onClick={() => setSettingsOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal__body">
+              <div className="field">
+                <span className="field__label">探测到的环境</span>
+                <div className="env">
+                  {environment === null ? (
+                    <span className="env__pending">读取中…</span>
+                  ) : (
+                    <>
+                      <div className="env__row">
+                        <span className="env__key">执行目标</span>
+                        <span className="env__value">{describeTarget(environment)}</span>
+                      </div>
+                      <div className="env__row">
+                        <span className="env__key">操作系统</span>
+                        <span className="env__value">{describeOs(environment)}</span>
+                      </div>
+                      <div className="env__row">
+                        <span className="env__key">Shell</span>
+                        <span className="env__value">{describeShell(environment)}</span>
+                      </div>
+                      {environment.workingDirectory ? (
+                        <div className="env__row">
+                          <span className="env__key">起始目录</span>
+                          <span className="env__value">{environment.workingDirectory}</span>
+                        </div>
+                      ) : null}
+                      <p className="field__hint">
+                        这些信息会写进发给 ChatGPT 的提示词。它跟着终端实际指向的机器走：
+                        连上 SSH 后换成远端平台，断开后自动换回本机。
+                        {environment.detected ? '' : ' ⚠ 探测失败，当前用的是兜底值。'}
+                      </p>
+                      {environment.kind === 'posix' ? (
+                        <p className="field__hint field__hint--warn">
+                          模型发出的命令现在<strong>在远端主机上执行</strong>，不再经过本机的
+                          PowerShell。断开连接后会立刻切回本机。
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <label className="field">
+                <span className="field__label">ChatGPT 网页代理</span>
+                <input
+                  className="address__input"
+                  value={proxyDraft}
+                  spellCheck={false}
+                  placeholder="http://127.0.0.1:7890　（留空 = 直连）"
+                  onChange={(event) => setProxyDraft(event.target.value)}
+                />
+              </label>
+              <p className="field__hint">
+                以 <code>http://</code> 开头；只写 <code>127.0.0.1:7890</code> 也会自动补上。
+              </p>
+              <p className="field__hint field__hint--warn">
+                这个代理<strong>只作用于嵌入的 chatgpt.com 页面</strong>。应用本身的其他连接不走它
+                —— SSH 走下面那个独立的设置。保存后页面会自动重新加载。
+              </p>
+
+              <label className="field">
+                <span className="field__label">SSH 代理</span>
+                <input
+                  className="address__input"
+                  value={sshProxyDraft}
+                  spellCheck={false}
+                  placeholder="http://127.0.0.1:7897　（留空 = 直连）"
+                  onChange={(event) => setSshProxyDraft(event.target.value)}
+                />
+              </label>
+              <p className="field__hint">
+                SSH 连接的默认代理，和上面那个<strong>互相独立</strong>：一个是网页会话的代理，
+                一个是本应用自己拨号用的。单个主机可以在它的连接表单里覆盖这一项。
+              </p>
+              <p className="field__hint">
+                只支持 <code>http://</code>（HTTP CONNECT）。若代理同时开了 HTTP 端口（Clash 的混合端口就是），填那个即可。
+              </p>
+            </div>
+
+            <div className="modal__foot">
+              <span className="panel__spacer" />
+              <button
+                type="button"
+                className="panel__sync"
+                onClick={() => {
+                  setProxyDraft(settings?.embedProxy ?? '')
+                  setSettingsOpen(false)
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary btn--inline"
+                disabled={savingSettings || settings === null}
+                onClick={() => void saveSettings()}
+              >
+                {savingSettings ? '保存中…' : '保存并重新加载'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {sshDialogOpen ? (
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="SSH 连接"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSshDialogOpen(false)
+          }}
+        >
+          <div className="modal__box">
+            <div className="modal__head">
+              <span className="panel__title">SSH 连接</span>
+              <span className="panel__spacer" />
+              <button
+                type="button"
+                className="panel__sync"
+                aria-label="关闭"
+                onClick={() => setSshDialogOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal__body">
+              {sshHosts.length > 0 ? (
+                <div className="field">
+                  <span className="field__label">已保存的主机（点击填入）</span>
+                  <ul className="ssh-list">
+                    {sshHosts.map((saved) => (
+                      <li key={saved.id} className="ssh-list__item">
+                        <button
+                          type="button"
+                          className="ssh-list__pick"
+                          title={`使用 ${saved.name}`}
+                          onClick={() =>
+                            setSshDraft({
+                              id: saved.id,
+                              name: saved.name,
+                              host: saved.host,
+                              port: saved.port,
+                              username: saved.username,
+                              password: '',
+                              proxy: saved.proxy
+                            })
+                          }
+                        >
+                          <span className="ssh-list__name">{saved.name}</span>
+                          <span className="ssh-list__target">
+                            {saved.username}@{saved.host}:{saved.port}
+                          </span>
+                          {saved.hasPassword ? <span className="ssh-list__lock">已存密码</span> : null}
+                        </button>
+                        <button
+                          type="button"
+                          className="conversation__remove"
+                          title="删除这台主机"
+                          onClick={() => void removeSshHost(saved.id)}
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void connectSsh(sshDraft)
+                }}
+              >
+                <label className="field">
+                  <span className="field__label">显示名称</span>
+                  <input
+                    className="address__input"
+                    value={sshDraft.name}
+                    placeholder="我的服务器"
+                    onChange={(event) => setSshDraft({ ...sshDraft, name: event.target.value })}
+                  />
+                </label>
+
+                <div className="field-row">
+                  <label className="field field--grow">
+                    <span className="field__label">主机 / IP</span>
+                    <input
+                      className="address__input"
+                      value={sshDraft.host}
+                      spellCheck={false}
+                      placeholder="192.168.1.10"
+                      onChange={(event) => setSshDraft({ ...sshDraft, host: event.target.value })}
+                    />
+                  </label>
+                  <label className="field field--port">
+                    <span className="field__label">端口</span>
+                    <input
+                      className="address__input"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={sshDraft.port}
+                      onChange={(event) =>
+                        setSshDraft({ ...sshDraft, port: Number(event.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <label className="field">
+                  <span className="field__label">用户名</span>
+                  <input
+                    className="address__input"
+                    value={sshDraft.username}
+                    spellCheck={false}
+                    onChange={(event) => setSshDraft({ ...sshDraft, username: event.target.value })}
+                  />
+                </label>
+
+                <label className="field">
+                  <span className="field__label">密码</span>
+                  <input
+                    className="address__input"
+                    type="password"
+                    value={sshDraft.password}
+                    placeholder="留空 = 使用这台主机已保存的密码"
+                    onChange={(event) => setSshDraft({ ...sshDraft, password: event.target.value })}
+                  />
+                </label>
+
+                <label className="field">
+                  <span className="field__label">代理（可选）</span>
+                  <input
+                    className="address__input"
+                    value={sshDraft.proxy}
+                    spellCheck={false}
+                    placeholder="留空 = 使用设置里的 SSH 代理"
+                    onChange={(event) => setSshDraft({ ...sshDraft, proxy: event.target.value })}
+                  />
+                </label>
+
+                <p className="field__hint">
+                  密码经系统凭据加密后存入本机数据库；系统不支持加密时**不会保存**，下次连接需重新输入。
+                </p>
+                <p className="field__hint field__hint--warn">
+                  <strong>SSH 和 ChatGPT 网页用的是两个不同的代理设置</strong>，
+                  各有各的用途，互不影响。
+                </p>
+
+                <div className="modal__foot">
+                  <span className="panel__spacer" />
+                  <button
+                    type="button"
+                    className="panel__sync"
+                    onClick={() => setSshDialogOpen(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn--primary btn--inline"
+                    disabled={
+                      sshBusy ||
+                      sshDraft.host.trim() === '' ||
+                      sshDraft.username.trim() === ''
+                    }
+                  >
+                    {sshBusy ? '连接中…' : '连接'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}

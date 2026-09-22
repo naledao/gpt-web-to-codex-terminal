@@ -1,0 +1,44 @@
+appId: com.example.gptweb2codexterminal
+productName: GPT Web to Codex Terminal
+
+directories:
+  buildResources: build
+  output: release
+
+# `out/` is produced by electron-vite. `node_modules` is needed because
+# `externalizeDepsPlugin` deliberately does NOT bundle runtime dependencies —
+# ssh2 and its tree have to be on disk in the packaged app.
+files:
+  - out/**
+  - package.json
+  - node_modules/**
+  - '!**/*.map'
+
+asar: true
+# ssh2's native accelerators (cpu-features/nan) are OPTIONAL and were never built
+# — npm's allow-scripts gate skips them, and the pure-JS path is what runs. So
+# there is nothing to rebuild.
+npmRebuild: false
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+
+linux:
+  target:
+    - AppImage
+  category: Development
