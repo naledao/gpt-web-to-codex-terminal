@@ -14,6 +14,9 @@ export const IpcChannels = {
   embedState: 'embed:state',
   embedGetExternalAuth: 'embed:get-external-auth',
   embedExternalAuth: 'embed:external-auth',
+  embedLoginWithEmail: 'embed:login-with-email',
+  embedImportSession: 'embed:import-session',
+  embedGetAuthState: 'embed:get-auth-state',
   openChatgptExternal: 'app:open-chatgpt-external',
   conversationsList: 'conversations:list',
   conversationsSync: 'conversations:sync',
@@ -58,6 +61,60 @@ export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels]
 
 /** Page the embedded view opens on. */
 export const EMBED_HOME_URL = 'https://chatgpt.com/'
+
+/**
+ * Where "改用邮箱登录" sends the embedded view.
+ *
+ * `auth.openai.com` is inside the embed's allowlist, so this hop stays in the
+ * embedded session — which is the point. Email/OTP is the ONE sign-in route that
+ * can complete inside an embedded user-agent: Google and Apple both refuse it
+ * outright (verified: accounts.google.com answers `/v3/signin/rejected` even with a
+ * patched UA and a corrected Sec-CH-UA brand list), so a provider login can never
+ * establish the session the embedded view needs.
+ */
+export const EMBED_LOGIN_URL = 'https://auth.openai.com/log-in'
+
+/**
+ * The session cookie an imported login is written as.
+ *
+ * ChatGPT runs NextAuth, and the session token is the same bearer credential the
+ * browser sends — it is not bound to Chrome, so a copy of it works from anywhere
+ * that presents it over HTTPS on the right domain.
+ *
+ * `__Secure-` is part of the NAME, not a flag: a cookie by this name is only
+ * accepted when it is also set `Secure`, which is why the import path always sets
+ * `secure: true` and can only ever write over https.
+ */
+export const SESSION_COOKIE_NAME = '__Secure-next-auth.session-token'
+
+/** What the user pastes out of their browser's DevTools. */
+export interface SessionImportDraft {
+  /** Cookie name. Defaults to SESSION_COOKIE_NAME in the UI. */
+  name: string
+  /** Cookie value, verbatim. Held in memory for the length of one call only. */
+  value: string
+}
+
+/** Result of importing a browser session into the embedded partition. */
+export interface SessionImportResult {
+  ok: boolean
+  /** Human-readable outcome, shown in the settings dialog. */
+  message: string
+  /**
+   * Whether the embedded page looks signed in after reloading.
+   *
+   * A cookie can be accepted by the partition and still be expired or revoked
+   * server-side, so this is the only signal that actually means "you are in".
+   */
+  signedIn: boolean
+}
+
+/** Whether the embedded page is currently signed in, as far as the UI can tell. */
+export interface EmbedAuthState {
+  signedIn: boolean
+  /** Cookie names present for chatgpt.com/openai.com — never their values. */
+  cookieNames: string[]
+}
 
 /** Origin used to turn the sidebar's relative `href` values into absolute URLs. */
 export const CHATGPT_ORIGIN = 'https://chatgpt.com'
@@ -810,6 +867,25 @@ export interface AppApi {
   getExternalAuthNotice(): Promise<ExternalAuthNotice | null>
   /** Fires when a third-party OAuth provider is sent to the system browser. */
   onExternalAuth(listener: (notice: ExternalAuthNotice) => void): () => void
+  /**
+   * Point the embedded view at the email/OTP sign-in page.
+   *
+   * The only route that can sign in inside the embed: provider OAuth is refused by
+   * the provider, and the system browser cannot hand its session back.
+   */
+  loginWithEmail(): void
+  /**
+   * Write a session cookie copied out of a normal browser into the embed's
+   * partition, then reload and report whether the page is signed in.
+   *
+   * The escape hatch for accounts that cannot sign in any other way: a ChatGPT
+   * account created with Google has no password, and Google refuses embedded
+   * sign-in — so the only credential that can be moved into this app is the
+   * session token the browser already holds.
+   */
+  importSession(draft: SessionImportDraft): Promise<SessionImportResult>
+  /** Whether the embedded page is signed in (cookie names only, never values). */
+  getEmbedAuthState(): Promise<EmbedAuthState>
   /** Open ChatGPT in the user's normal browser. */
   openChatgptExternal(): void
 

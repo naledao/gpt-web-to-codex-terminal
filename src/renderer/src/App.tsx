@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { SESSION_COOKIE_NAME } from '@shared/types'
 import type {
   AppInfo,
   AppSettings,
@@ -12,6 +13,7 @@ import type {
   ExecutionStatus,
   ExternalAuthNotice,
   InterceptorStatus,
+  SessionImportResult,
   SshHost,
   SshHostDraft,
   SshState,
@@ -135,6 +137,14 @@ export default function App(): JSX.Element {
   const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null)
   const [proxyDraft, setProxyDraft] = useState('')
   const [savingSettings, setSavingSettings] = useState(false)
+  /**
+   * Session-import fields. The value never leaves this component except as the
+   * argument of one IPC call, and is cleared as soon as that call settles.
+   */
+  const [sessionCookieName, setSessionCookieName] = useState(SESSION_COOKIE_NAME)
+  const [sessionCookieValue, setSessionCookieValue] = useState('')
+  const [sessionImport, setSessionImport] = useState<SessionImportResult | null>(null)
+  const [importingSession, setImportingSession] = useState(false)
   const [commandDraft, setCommandDraft] = useState('')
   /** Non-null while the working directory is being edited inline. */
   const [cwdDraft, setCwdDraft] = useState<string | null>(null)
@@ -399,15 +409,51 @@ export default function App(): JSX.Element {
     [address]
   )
 
-  const continueWithEmailAuth = useCallback((): void => {
+  /**
+   * Send the embedded view to the email/OTP sign-in page.
+   *
+   * This used to send the embed home, which is not a sign-in route at all: the
+   * button promised email sign-in and did nothing. Email/OTP is the only route that
+   * can complete inside the embedded user-agent, so it is the one the banner must
+   * actually offer.
+   */
+  const loginWithEmail = useCallback((): void => {
     setExternalAuth(null)
-    window.api.sendEmbedCommand('home')
+    window.api.loginWithEmail()
   }, [])
 
   const openChatgptExternal = useCallback((): void => {
     setExternalAuth(null)
     window.api.openChatgptExternal()
   }, [])
+
+  /**
+   * Hand the pasted token to the main process, then forget it here.
+   *
+   * The field is cleared in `finally` rather than on success: a failed import is
+   * exactly when the user is most likely to paste again, and leaving a live session
+   * token sitting in a DOM input is not worth the convenience.
+   */
+  const submitSessionImport = useCallback(async (): Promise<void> => {
+    setImportingSession(true)
+    setSessionImport(null)
+    try {
+      const result = await window.api.importSession({
+        name: sessionCookieName,
+        value: sessionCookieValue
+      })
+      setSessionImport(result)
+    } catch (error) {
+      setSessionImport({
+        ok: false,
+        message: `导入调用失败：${(error as Error).message}`,
+        signedIn: false
+      })
+    } finally {
+      setSessionCookieValue('')
+      setImportingSession(false)
+    }
+  }, [sessionCookieName, sessionCookieValue])
 
   const externalAuthProviderLabel = externalAuth?.provider === 'apple' ? 'Apple' : 'Google'
 
@@ -1542,10 +1588,10 @@ export default function App(): JSX.Element {
         {externalAuth ? (
           <div className="auth-notice" role="status">
             <span className="auth-notice__text">
-              {externalAuthProviderLabel} 登录已在系统浏览器中打开；内嵌页面不能共享浏览器登录态。
+              {externalAuthProviderLabel} 登录在内嵌页面里被提供方拒绝（“此浏览器或应用可能不安全”），已改在系统浏览器打开。用邮箱/验证码可以直接在这里登录。
             </span>
-            <button type="button" className="auth-notice__button" onClick={continueWithEmailAuth}>
-              使用邮箱/验证码
+            <button type="button" className="auth-notice__button" onClick={loginWithEmail}>
+              改用邮箱登录
             </button>
             <button type="button" className="auth-notice__button" onClick={openChatgptExternal}>
               打开浏览器版 ChatGPT
@@ -1691,8 +1737,81 @@ export default function App(): JSX.Element {
               <p className="field__hint">
                 只支持 <code>http://</code>（HTTP CONNECT）。若代理同时开了 HTTP 端口（Clash 的混合端口就是），填那个即可。
               </p>
+
+              <div className="field">
+                <span className="field__label">从浏览器导入登录态</span>
+                <p className="field__hint">
+                  给<strong>无法在应用内登录</strong>的账号用：用 Google 创建的 ChatGPT
+                  账号没有密码，而 Google 会拒绝一切内嵌浏览器登录（
+                  <code>此浏览器或应用可能不安全</code>），系统浏览器里的登录态又不会自动回流。
+                  唯一能搬进来的是<strong>会话令牌本身</strong>。
+                </p>
+                <p className="field__hint">
+                  在已登录 ChatGPT 的浏览器里：<code>F12</code> → <code>Application</code>（应用）
+                  → <code>Cookies</code> → <code>https://chatgpt.com</code> → 找到
+                  <code>{SESSION_COOKIE_NAME}</code> → 复制它的 <code>Value</code> 一列，粘到下面。
+                  找不到这条就说明该浏览器当前没登录，先登录一次再来。
+                </p>
+                <p className="field__hint field__hint--warn">
+                  这是把<strong>登录凭据</strong>交给本应用：有了它就等于有了你的会话。
+                  只在本机粘贴，导完记得回浏览器删掉刚才的剪贴板内容。Chrome 的
+                  cookie 数据库是 App-Bound Encryption 加密的，任何程序都无法替你自动读取，
+                  所以只能手工复制这一次。
+                </p>
+
+                <label className="field">
+                  <span className="field__label">Cookie 名称</span>
+                  <input
+                    className="address__input"
+                    value={sessionCookieName}
+                    spellCheck={false}
+                    onChange={(event) => setSessionCookieName(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field__label">Cookie 值</span>
+                  <input
+                    className="address__input"
+                    type="password"
+                    value={sessionCookieValue}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="粘贴 Value 一列的内容"
+                    onChange={(event) => setSessionCookieValue(event.target.value)}
+                  />
+                </label>
+
+                <div className="field-row">
+                  <button
+                    type="button"
+                    className="btn btn--primary btn--inline"
+                    disabled={importingSession || sessionCookieValue.trim() === ''}
+                    onClick={() => void submitSessionImport()}
+                  >
+                    {importingSession ? '导入中…' : '导入并重新加载'}
+                  </button>
+                  <span className="panel__spacer" />
+                </div>
+
+                {sessionImport ? (
+                  <p
+                    className={
+                      sessionImport.signedIn
+                        ? 'field__hint'
+                        : 'field__hint field__hint--warn'
+                    }
+                  >
+                    {sessionImport.message}
+                  </p>
+                ) : null}
+              </div>
             </div>
 
+            {/*
+              Outside `.modal__body` on purpose: the body is the scroll container, so
+              a footer inside it scrolls away — and 保存 is the one control the user
+              must be able to reach without hunting for it.
+            */}
             <div className="modal__foot">
               <span className="panel__spacer" />
               <button

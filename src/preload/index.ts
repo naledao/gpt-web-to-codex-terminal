@@ -8,6 +8,7 @@ import type {
   AppSettingsPatch,
   AutomationState,
   Conversation,
+  EmbedAuthState,
   EmbedBounds,
   EmbedCommand,
   EmbedState,
@@ -16,6 +17,8 @@ import type {
   ExecutionRecord,
   ExternalAuthNotice,
   InterceptorStatus,
+  SessionImportDraft,
+  SessionImportResult,
   SshHost,
   SshHostDraft,
   SshState,
@@ -58,6 +61,16 @@ const api: AppApi = {
       ipcRenderer.removeListener(IpcChannels.embedExternalAuth, handler)
     }
   },
+
+  loginWithEmail: (): void => {
+    ipcRenderer.send(IpcChannels.embedLoginWithEmail)
+  },
+
+  importSession: (draft: SessionImportDraft): Promise<SessionImportResult> =>
+    ipcRenderer.invoke(IpcChannels.embedImportSession, draft),
+
+  getEmbedAuthState: (): Promise<EmbedAuthState> =>
+    ipcRenderer.invoke(IpcChannels.embedGetAuthState),
 
   openChatgptExternal: (): void => {
     ipcRenderer.send(IpcChannels.openChatgptExternal)

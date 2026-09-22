@@ -333,6 +333,66 @@ export class ChatGptEmbed {
     this.liveContents()?.reload()
   }
 
+  /**
+   * Reload and resolve once the new document has finished loading.
+   *
+   * Needed after a session import: the cookie has to be in the jar before the page
+   * asks who the user is, so the caller cannot simply fire `reload()` and check
+   * immediately — it would inspect the OLD document and report a signed-out page for
+   * a session that is actually valid.
+   *
+   * Resolves on timeout rather than rejecting: a page that never finishes loading
+   * must not leave the settings dialog stuck, and the caller re-checks anyway.
+   */
+  async reloadAndWait(timeoutMs = 25000): Promise<void> {
+    const contents = this.liveContents()
+    if (!contents) return
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        contents.removeListener('did-finish-load', finish)
+        contents.removeListener('did-fail-load', finish)
+        resolve()
+      }
+      const timer = setTimeout(finish, timeoutMs)
+
+      contents.once('did-finish-load', finish)
+      contents.once('did-fail-load', finish)
+      contents.reload()
+    })
+  }
+
+  /**
+   * Point the view at a URL and resolve once it has loaded.
+   *
+   * Same contract as reloadAndWait, for the same reason.
+   */
+  async loadAndWait(url: string, timeoutMs = 25000): Promise<void> {
+    const contents = this.liveContents()
+    if (!contents) return
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        contents.removeListener('did-finish-load', finish)
+        contents.removeListener('did-fail-load', finish)
+        resolve()
+      }
+      const timer = setTimeout(finish, timeoutMs)
+
+      contents.once('did-finish-load', finish)
+      contents.once('did-fail-load', finish)
+      void contents.loadURL(url).catch(finish)
+    })
+  }
+
   command(command: EmbedCommand): void {
     const contents = this.liveContents()
     if (!contents) return
@@ -366,6 +426,17 @@ export class ChatGptEmbed {
 
   getInterceptorStatus(): InterceptorStatus {
     return { ...this.interceptor }
+  }
+
+  /**
+   * The live web contents, or null when the view is gone.
+   *
+   * Public because session import has to evaluate a probe inside the page, and
+   * duplicating the "is it still alive" check at every call site is how one of them
+   * eventually gets it wrong.
+   */
+  contents(): Electron.WebContents | null {
+    return this.liveContents()
   }
 
   /** Keep the injected script's baseline policy in sync with the execution mode. */

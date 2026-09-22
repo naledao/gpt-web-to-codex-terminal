@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell 
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_HOME_URL,
+  EMBED_LOGIN_URL,
   EMBED_PARTITION,
   FALLBACK_ENVIRONMENT,
   IpcChannels,
@@ -18,6 +19,7 @@ import type {
   Conversation,
   EmbedBounds,
   EmbedCommand,
+  EmbedAuthState,
   EmbedState,
   EnvironmentInfo,
   ExecutionMode,
@@ -27,10 +29,13 @@ import type {
   SshHost,
   SshHostDraft,
   SshState,
+  SessionImportDraft,
+  SessionImportResult,
   TerminalNotes,
   TerminalState
 } from '../shared/types'
 import { ChatGptEmbed } from './embed'
+import { embedAuthState, importSessionToken } from './session-import'
 import { ConversationStore } from './db'
 import { CommandRunner } from './commands'
 import { SshManager } from './ssh'
@@ -547,6 +552,40 @@ function registerIpcHandlers(): void {
     IpcChannels.embedGetExternalAuth,
     (event): ExternalAuthNotice | null => (fromAppWindow(event) ? externalAuthNotice : null)
   )
+
+  /**
+   * Send the embedded view to the email/OTP sign-in page.
+   *
+   * The banner offered this before and only sent the embed home, so the button
+   * promised something no code did. This is the one sign-in route that can finish
+   * inside an embedded user-agent: the view keeps the session it creates, and the
+   * OAuth escape hatch in `embed.ts` cannot (Google rejects embedded sign-in, and
+   * the system browser's cookies never reach `persist:chatgpt`).
+   */
+  ipcMain.on(IpcChannels.embedLoginWithEmail, (event) => {
+    if (fromAppWindow(event)) embed.navigate(EMBED_LOGIN_URL)
+  })
+
+  /**
+   * Import a session token copied out of a normal browser.
+   *
+   * `embed.reloadAndWait()`, not `embed.reload()`: the page must not be inspected
+   * before it has loaded, or a valid session gets reported as a failed import.
+   */
+  ipcMain.handle(
+    IpcChannels.embedImportSession,
+    async (event, draft: SessionImportDraft): Promise<SessionImportResult> => {
+      if (!fromAppWindow(event)) {
+        return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
+      }
+      return importSessionToken(draft, embed.contents(), () => embed.reloadAndWait())
+    }
+  )
+
+  ipcMain.handle(IpcChannels.embedGetAuthState, async (event): Promise<EmbedAuthState> => {
+    if (!fromAppWindow(event)) return { signedIn: false, cookieNames: [] }
+    return embedAuthState(embed.contents())
+  })
 
   ipcMain.on(IpcChannels.openChatgptExternal, (event) => {
     if (fromAppWindow(event)) void shell.openExternal(EMBED_HOME_URL)
