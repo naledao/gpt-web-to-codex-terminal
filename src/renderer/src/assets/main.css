@@ -619,6 +619,11 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.terminal__count--time {
+  margin-left: 5px;
+  background: rgba(88, 166, 255, 0.14);
+  color: #79c0ff;
+}
 .terminal__last {
   margin: 6px 0 0;
   overflow: hidden;

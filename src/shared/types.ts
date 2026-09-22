@@ -602,6 +602,8 @@ export interface ExecutionRecord {
   exitCode: number | null
   output: string
   createdAt: number
+  /** Epoch milliseconds when the command actually started running. */
+  startedAt: number | null
   finishedAt: number | null
 }
 

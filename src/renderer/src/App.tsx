@@ -104,6 +104,15 @@ function formatTime(epochMs: number): string {
     : date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 }
 
+function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
 export default function App(): JSX.Element {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
@@ -113,6 +122,7 @@ export default function App(): JSX.Element {
   const [executions, setExecutions] = useState<ExecutionRecord[]>([])
   const [terminal, setTerminal] = useState<TerminalState | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [durationNow, setDurationNow] = useState(() => Date.now())
   const [address, setAddress] = useState('')
   const [editing, setEditing] = useState(false)
   const [terminalWidth, setTerminalWidth] = useState(TERMINAL_DEFAULT_WIDTH)
@@ -186,6 +196,12 @@ export default function App(): JSX.Element {
     return executions.length > 0 ? executions[executions.length - 1] : null
   }, [executions, waiting])
 
+  useEffect(() => {
+    if (currentExecution?.status !== 'running' || currentExecution.startedAt === null) return
+    setDurationNow(Date.now())
+    const timer = window.setInterval(() => setDurationNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [currentExecution?.messageId, currentExecution?.startedAt, currentExecution?.status])
   // Runtime info, kept as a working example of a renderer -> main IPC call.
   useEffect(() => {
     let cancelled = false
@@ -969,6 +985,11 @@ export default function App(): JSX.Element {
             <span className="terminal__count">已注入 {interceptor?.injectedCount ?? 0} 次</span>
             {waiting.length > 0 ? (
               <span className="terminal__count terminal__count--warn">{waiting.length} 条待处理</span>
+            ) : null}
+            {currentExecution?.startedAt != null ? (
+              <span className="terminal__count terminal__count--time">
+                任务耗时 {formatDuration((currentExecution.finishedAt ?? durationNow) - currentExecution.startedAt)}
+              </span>
             ) : null}
           </div>
 

@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS executions (
   exit_code       INTEGER,
   output          TEXT NOT NULL DEFAULT '',
   created_at      INTEGER NOT NULL,
+  started_at     INTEGER,
   finished_at     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_executions_conversation
@@ -101,6 +102,7 @@ interface ExecutionRow {
   exit_code: number | null
   output: string
   created_at: number
+  started_at: number | null
   finished_at: number | null
 }
 
@@ -115,6 +117,7 @@ function toExecutionRecord(row: ExecutionRow): ExecutionRecord {
     exitCode: row.exit_code,
     output: row.output,
     createdAt: row.created_at,
+    startedAt: row.started_at,
     finishedAt: row.finished_at
   }
 }
@@ -152,6 +155,12 @@ export class ConversationStore {
       this.db.exec("ALTER TABLE ssh_hosts ADD COLUMN note TEXT NOT NULL DEFAULT ''")
     }
 
+    const executionColumns = this.db
+      .prepare('PRAGMA table_info(executions)')
+      .all() as unknown as Array<{ name: string }>
+    if (!executionColumns.some((column) => column.name === 'started_at')) {
+      this.db.exec('ALTER TABLE executions ADD COLUMN started_at INTEGER')
+    }
     const conversationColumns = this.db
       .prepare('PRAGMA table_info(conversations)')
       .all() as unknown as Array<{ name: string }>
@@ -392,6 +401,12 @@ export class ConversationStore {
   }
 
   setExecutionStatus(messageId: string, status: ExecutionStatus): void {
+    if (status === 'running') {
+      this.db
+        .prepare('UPDATE executions SET status = ?, started_at = COALESCE(started_at, ?) WHERE message_id = ?')
+        .run(status, Date.now(), messageId)
+      return
+    }
     this.db.prepare('UPDATE executions SET status = ? WHERE message_id = ?').run(status, messageId)
   }
 
