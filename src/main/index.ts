@@ -310,8 +310,6 @@ const FALLBACK_AUTOMATION: AutomationState = {
 }
 
 const FALLBACK_TERMINAL_STATE: TerminalState = {
-  scope: 'startup',
-  conversationId: null,
   alive: false,
   cwd: '',
   lines: []
@@ -369,9 +367,9 @@ const embed = new ChatGptEmbed({
         void embed.armCommandBaseline()
       }
 
-      // The terminal pane is per conversation; without this it would keep
-      // showing the previous conversation's output.
-      runner?.publishTerminal()
+      // NOTE: nothing to do about the terminal here. It belongs to the machine,
+      // not to the conversation, so moving between chats changes neither its
+      // scrollback nor its working directory.
     }
   },
 

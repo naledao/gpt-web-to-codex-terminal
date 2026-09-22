@@ -592,18 +592,17 @@ export interface TerminalLine {
   text: string
 }
 
-/** Snapshot of the conversation's shell session, pushed to the renderer. */
+/**
+ * Snapshot of the local shell session, pushed to the renderer.
+ *
+ * There is exactly ONE local terminal for the whole app — not one per
+ * conversation. It is a window onto a machine, and the machine does not change
+ * when you click a different chat: per-conversation shells made sending the first
+ * message of a new chat clear the screen and move the model to the home
+ * directory, while the prompt still claimed the directory the user had chosen.
+ * That is why this carries no conversation id: it does not belong to one.
+ */
 export interface TerminalState {
-  /**
-   * Whose terminal this is.
-   *
-   * Before any conversation is open the pane shows the app's own startup probe
-   * instead of an empty placeholder — that is what makes "the app opens a
-   * terminal at startup and asks it what machine this is" something the user can
-   * actually see.
-   */
-  scope: 'startup' | 'conversation'
-  conversationId: string | null
   /** True while the shell can accept commands. */
   alive: boolean
   /** Current working directory reported by the shell, when known. */

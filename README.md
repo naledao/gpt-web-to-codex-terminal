@@ -168,6 +168,29 @@ Two details matter:
 client-side route changes; the script re-installs itself on every full page load
 and guards against duplicate listeners.
 
+### Scrolling to the newest message
+
+A programmatic send does not make ChatGPT scroll the way a real click does: the
+message the app just injected, and the reply that follows it, land below the fold and
+you have to scroll down by hand every time. So after a **confirmed** send (never after
+a failed one) the script sets the thread's scroll position itself, and re-asserts it
+over the next 1.2 seconds while the new turn renders.
+
+Two details that are easy to get wrong:
+
+- **The scroll container is found by behaviour, not by selector.** ChatGPT's class
+  names are hashed and change without notice. The code walks up from the newest turn to
+  the first ancestor that genuinely overflows vertically and has `overflow-y: auto` or
+  `scroll`; only if that fails does it scan for the tallest scroller on the page.
+- **The scroll is instant, not smooth.** The thread is styled with smooth scrolling,
+  and an animated scroll competes with the re-render that immediately follows a send —
+  it gets cancelled part-way and settles short, which looks exactly like not having
+  scrolled at all.
+
+It deliberately stops after that brief window rather than following the reply to the
+end: past that point you may well be reading something further up, and being yanked
+back down would be worse than the original problem.
+
 ### Reporting back to the app
 
 The embedded page has no preload and therefore no IPC bridge, so the script
@@ -182,7 +205,7 @@ because the page's own counter resets on reload.
 ## Terminal automation
 
 Terminal mode can drive a full loop: the model asks for a command, the app runs
-it in that conversation's own shell, and the output is handed back to the model.
+it in the terminal, and the output is handed back to the model.
 
 ```
 you type a goal
@@ -193,7 +216,7 @@ main process
   -> dedupe by assistant message id, check the danger list
   -> store the row, push it to the UI
   -> run it in the persistent shell for that backend
-       local   : PowerShell, one long-lived process per conversation
+       local   : PowerShell, one long-lived process for the whole app
        remote  : bash -s on the SSH host, once a session is attached
   -> hand stdout/stderr back to the model, WITHOUT the system prompt
 model replies with the next command ...
@@ -203,6 +226,22 @@ model replies with the next command ...
 Set the mode to **自动执行** in the right-hand panel to close the loop; the default
 is **手动执行**, where every command waits for a click. Attaching an SSH session moves
 the loop to that host and swaps the prompt to match — see [SSH](#ssh).
+
+### One terminal, not one per conversation
+
+The left pane is a window onto a **machine**, not onto a chat. Opening a conversation,
+starting a new one, or switching between them changes nothing about it: the scrollback
+stays, the working directory stays, and variables set three commands ago are still
+there.
+
+That is deliberate. Shells used to be per conversation, which meant the first message
+of a new chat — the moment ChatGPT creates the conversation and the URL gains an id —
+cleared the pane and started the next shell in your home directory, while the prompt
+still told the model it was in the directory you had picked. The terminal now belongs
+to whichever machine is in charge (this one, or an attached SSH host), and the prompt
+describes that machine because it is the same shell the commands run in.
+
+**重置** is the only thing that clears it.
 
 ### Why the backend is PowerShell, and why commands go in base64
 

@@ -31,6 +31,8 @@
     'button[aria-label="发送消息"]'
   ]
   const ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]'
+  /** Any turn, either role — used to locate the thread's scroll container. */
+  const MESSAGE_SELECTOR = '[data-message-author-role]'
   const MESSAGE_ID_ATTR = 'data-message-id'
   const LOG_TAG = '[cmd-terminal] '
 
@@ -89,6 +91,89 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * Keeping the newest message in view
+   * ------------------------------------------------------------------ */
+
+  /**
+   * The thread's scroll container.
+   *
+   * ChatGPT's class names are hashed and change without notice, so this is found
+   * by BEHAVIOUR rather than by selector: the nearest ancestor that actually
+   * overflows vertically. Walking up from the newest turn is tried first because
+   * it is cheap and lands on the right element; the full scan is only a fallback
+   * for the case where that chain has nothing scrollable in it.
+   */
+  const findScroller = () => {
+    const nodes = document.querySelectorAll(MESSAGE_SELECTOR)
+    let element = nodes.length > 0 ? nodes[nodes.length - 1].parentElement : null
+
+    while (element) {
+      const style = getComputedStyle(element)
+      const scrolls = /(auto|scroll)/.test(style.overflowY)
+      if (scrolls && element.scrollHeight > element.clientHeight + 4) return element
+      element = element.parentElement
+    }
+
+    let best = null
+    const all = document.querySelectorAll('div')
+    for (let i = 0; i < all.length; i += 1) {
+      const candidate = all[i]
+      if (candidate.scrollHeight <= candidate.clientHeight + 4) continue
+      if (!/(auto|scroll)/.test(getComputedStyle(candidate).overflowY)) continue
+      // `>=`, not `>`: querySelectorAll returns document order, so on a tie the
+      // later element is the INNER one. Between a wrapper and the thread inside
+      // it, the thread is the one whose bottom actually matters.
+      if (best === null || candidate.scrollHeight >= best.scrollHeight) best = candidate
+    }
+    return best
+  }
+
+  /**
+   * Put the newest message back in view.
+   *
+   * A programmatic send does not make ChatGPT scroll the way a real click does:
+   * the message we just injected, and the reply that follows it, land below the
+   * fold and the user has to scroll by hand every single time. Its own
+   * "stick to the bottom" heuristic is what the synthetic editing pipeline
+   * appears to disturb, so the position is set outright instead of being
+   * requested.
+   *
+   * `behavior: 'instant'` is deliberate. The thread is styled with smooth
+   * scrolling, and an animated scroll here competes with the re-render that
+   * immediately follows the send — the animation is cancelled part-way and
+   * settles short, which is the same symptom in a new costume.
+   */
+  const scrollToBottom = () => {
+    const target = findScroller()
+    if (!target) return false
+    const top = target.scrollHeight
+    try {
+      target.scrollTo({ top: top, behavior: 'instant' })
+    } catch (_) {
+      target.scrollTop = top
+    }
+    return true
+  }
+
+  /**
+   * Re-assert the position for a moment after a send.
+   *
+   * The thread keeps growing as the new turn renders and again when the reply
+   * starts, so a single scroll lands short. The window is short and fixed rather
+   * than running until the reply finishes: past that point the user may be
+   * reading something further up, and dragging them back would be worse than the
+   * problem being fixed.
+   */
+  const SCROLL_SETTLE_MS = [0, 120, 350, 700, 1200]
+
+  const scheduleScrollToBottom = () => {
+    for (const delay of SCROLL_SETTLE_MS) {
+      if (delay === 0) scrollToBottom()
+      else setTimeout(scrollToBottom, delay)
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
    * Composer plumbing
    * ------------------------------------------------------------------ */
 
@@ -133,6 +218,8 @@
         // Mark the reply that is on screen right now as already handled, so it
         // cannot be mistaken for the answer.
         state.lastCommandMessageId = lastAssistantId()
+        // The send landed, so the new turn is about to render below the fold.
+        scheduleScrollToBottom()
       }
       report(
         ok

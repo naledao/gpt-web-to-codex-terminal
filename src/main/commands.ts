@@ -92,19 +92,6 @@ const OUTPUT_TAIL = 2000
 const MAX_TERMINAL_LINES = 400
 const TERMINAL_PUSH_INTERVAL_MS = 150
 
-/**
- * Bounds the per-conversation state (shell objects and their scrollback). Without
- * a cap, browsing a dozen conversations would keep a dozen of them alive forever.
- */
-const MAX_LIVE_SHELLS = 4
-
-/**
- * Key for the terminal the app uses before any conversation is open.
- *
- * A leading `__` cannot collide with a conversation id, which is always a UUID.
- */
-const STARTUP_KEY = '__startup__'
-
 export interface CommandRunnerDeps {
   store: ConversationStore
   /** Current conversation id, or null when the page is not on a conversation. */
@@ -238,19 +225,23 @@ function posixQuote(value: string): string {
 
 export class CommandRunner {
   /**
-   * Local shells, one per conversation.
+   * The one local PowerShell session.
    *
-   * Deliberately holds only LOCAL shells: the remote backend belongs to the SSH
-   * manager, which owns its lifetime, and putting it here would mean this class
-   * could dispose a session the user is still looking at.
+   * There is exactly ONE, for the whole app — never one per conversation. The
+   * terminal is a window onto a machine, and the machine does not change when you
+   * click a different chat. Per-conversation shells made sending the first
+   * message of a new chat wipe the screen, and start the model in the home
+   * directory while the prompt still claimed the directory the user had chosen.
+   *
+   * Deliberately holds only the LOCAL shell: the remote backend belongs to the
+   * SSH manager, which owns its lifetime, and keeping it here would let this
+   * class dispose a session the user is still looking at.
    */
-  private readonly shells = new Map<string, ExecutionShell>()
-  private readonly lines = new Map<string, TerminalLine[]>()
-  private readonly pushTimers = new Map<string, NodeJS.Timeout>()
+  private localShell: ConversationShell | null = null
+  private lines: TerminalLine[] = []
+  private pushTimer: NodeJS.Timeout | null = null
   /** Message ids currently executing, so a double click cannot run one twice. */
   private readonly inFlight = new Set<string>()
-  /** When each conversation's shell was last used, for LRU reaping. */
-  private readonly shellLastUsed = new Map<string, number>()
 
   private automation: AutomationState = {
     // Manual by default: nothing runs on its own until the user asks for it.
@@ -297,11 +288,6 @@ export class CommandRunner {
     return this.getAutomation()
   }
 
-  /** Re-publish the terminal for whichever conversation is current now. */
-  publishTerminal(): void {
-    this.deps.onTerminalChanged(this.getTerminalState())
-  }
-
   /**
    * The page saw a command it could not parse.
    *
@@ -310,11 +296,8 @@ export class CommandRunner {
    * presented itself — the terminal simply stayed empty.
    */
   noteParseFailure(text: string): void {
-    const conversationId = this.deps.currentConversationId()
-    if (!conversationId) return
-
     const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 160)
-    this.appendLine(conversationId, {
+    this.appendLine({
       kind: 'error',
       text: `模型回复里有命令，但 JSON 无法解析（多半是引号没转义），已跳过：${snippet}`
     })
@@ -334,7 +317,7 @@ export class CommandRunner {
       .pop()
 
     if (newest) {
-      this.appendLine(conversationId, { kind: 'notice', text: '已恢复：继续执行最新一条待处理命令' })
+      this.appendLine({ kind: 'notice', text: '已恢复：继续执行最新一条待处理命令' })
       void this.execute(newest.messageId)
     }
   }
@@ -370,7 +353,7 @@ export class CommandRunner {
     // immediately "任务完成".
     if (parsed.command.trim() === '') {
       this.deps.store.setExecutionStatus(parsed.messageId, 'skipped')
-      this.appendLine(conversationId, { kind: 'notice', text: '模型报告任务完成（command 为空）' })
+      this.appendLine({ kind: 'notice', text: '模型报告任务完成（command 为空）' })
       this.broadcastExecutions(conversationId)
       return
     }
@@ -378,7 +361,7 @@ export class CommandRunner {
     const autoRun = this.automation.mode === 'auto' && !this.automation.paused
 
     if (MARKDOWN_MANGLED_RE.test(parsed.command)) {
-      this.appendLine(conversationId, {
+      this.appendLine({
         kind: 'error',
         text:
           '⚠ 命令里的 $_ 疑似被 ChatGPT 的 Markdown 渲染当成斜体吃掉了（$_ 变成了 $），' +
@@ -386,7 +369,7 @@ export class CommandRunner {
       })
     }
 
-    this.appendLine(conversationId, {
+    this.appendLine({
       kind: danger ? 'error' : 'notice',
       text: danger
         ? // The matched FRAGMENT matters: reporting only the rule name makes a hit
@@ -434,7 +417,7 @@ export class CommandRunner {
     if (!record) return
     if (record.status !== 'pending' && record.status !== 'blocked') return
     this.deps.store.setExecutionStatus(messageId, 'skipped')
-    this.appendLine(record.conversationId, { kind: 'notice', text: '已跳过该命令' })
+    this.appendLine({ kind: 'notice', text: '已跳过该命令' })
     this.broadcastExecutions(record.conversationId)
   }
 
@@ -463,10 +446,10 @@ export class CommandRunner {
   private async runRecord(record: ExecutionRecord): Promise<void> {
     const conversationId = record.conversationId
     const messageId = record.messageId
-    const shell = this.ensureShell(conversationId)
+    const shell = this.ensureShell()
 
     this.deps.store.setExecutionStatus(messageId, 'running')
-    this.appendLine(conversationId, { kind: 'command', text: record.command })
+    this.appendLine({ kind: 'command', text: record.command })
     this.broadcastExecutions(conversationId)
 
     const result = await shell.run(record.command)
@@ -484,8 +467,8 @@ export class CommandRunner {
       finishedAt: Date.now()
     })
 
-    this.appendLine(conversationId, summariseResult(result))
-    this.flushTerminal(conversationId)
+    this.appendLine(summariseResult(result))
+    this.flushTerminal()
     this.broadcastExecutions(conversationId)
 
     // A command that never ran has no result to hand back.
@@ -503,40 +486,30 @@ export class CommandRunner {
     const message = buildResultMessage(record.command, result)
     const outcome = await this.deps.sendRawToPage(message)
     if (outcome === 'ok') {
-      this.appendLine(conversationId, { kind: 'notice', text: '已把执行结果发回给模型' })
+      this.appendLine({ kind: 'notice', text: '已把执行结果发回给模型' })
     } else if (outcome === 'busy') {
-      this.appendLine(conversationId, {
+      this.appendLine({
         kind: 'error',
         text: '输入框里有内容，结果未回传（避免覆盖你正在输入的文字）——清空输入框后可在待处理条里重试'
       })
     } else if (outcome === 'stuck') {
-      this.appendLine(conversationId, {
+      this.appendLine({
         kind: 'error',
         text: '结果已写入输入框但没能提交（ChatGPT 可能正在生成回复）——输入框里还留着内容，等它答完手动点发送即可'
       })
     } else {
-      this.appendLine(conversationId, { kind: 'error', text: `结果回传失败：${outcome}` })
+      this.appendLine({ kind: 'error', text: `结果回传失败：${outcome}` })
     }
-    this.flushTerminal(conversationId)
+    this.flushTerminal()
   }
 
   /* ---------------- terminal ---------------- */
 
   getTerminalState(): TerminalState {
-    const current = this.deps.currentConversationId()
-    // Before a conversation is open, the pane shows what the app itself ran at
-    // startup rather than an empty placeholder. A leading `__` cannot collide
-    // with a conversation id, which is always a UUID.
-    const scope: TerminalState['scope'] = current === null ? 'startup' : 'conversation'
-    const key = current ?? STARTUP_KEY
-    const shell = this.shells.get(key)
-
     return {
-      scope,
-      conversationId: current,
-      alive: shell?.alive ?? false,
-      cwd: shell?.cwd ?? '',
-      lines: [...(this.lines.get(key) ?? [])]
+      alive: this.localShell?.alive ?? false,
+      cwd: this.localShell?.cwd ?? '',
+      lines: [...this.lines]
     }
   }
 
@@ -554,16 +527,15 @@ export class CommandRunner {
    * local parser would produce a confident description of the wrong machine.
    */
   async runEnvironmentProbe(): Promise<{ kind: EnvironmentKind; result: ShellResult }> {
-    const key = this.currentKey()
-    const shell = this.ensureShell(key)
-    this.appendLine(key, {
+    const shell = this.ensureShell()
+    this.appendLine({
       kind: 'notice',
       text: shell.kind === 'posix' ? '探测远端主机环境' : '探测本机环境'
     })
-    this.appendLine(key, { kind: 'command', text: shell.probeCommand })
+    this.appendLine({ kind: 'command', text: shell.probeCommand })
     const result = await shell.run(shell.probeCommand)
-    this.appendLine(key, summariseResult(result))
-    this.flushTerminal(key)
+    this.appendLine(summariseResult(result))
+    this.flushTerminal()
     return { kind: shell.kind, result }
   }
 
@@ -575,11 +547,10 @@ export class CommandRunner {
    * previously sent prompt wrong.
    */
   async setTerminalCwd(path: string): Promise<TerminalState> {
-    const key = this.currentKey()
     const target = path.trim()
     if (target === '') return this.getTerminalState()
 
-    const shell = this.ensureShell(key)
+    const shell = this.ensureShell()
     // Two dialects, two ways of saying the same thing. Guessing here would send
     // `Set-Location` to a Linux box and `cd` to PowerShell.
     const command =
@@ -587,140 +558,101 @@ export class CommandRunner {
         ? `cd ${posixQuote(target)}`
         : `Set-Location -LiteralPath '${target.replace(/'/g, "''")}'`
 
-    this.appendLine(key, { kind: 'command', text: command })
+    this.appendLine({ kind: 'command', text: command })
 
     const result = await shell.run(command)
     this.appendLine(
-      key,
       result.exitCode === 0 && !result.rejected && !result.sessionLost
         ? { kind: 'notice', text: `目录已切换到 ${shell.cwd || target}` }
         : summariseResult(result)
     )
-    this.flushTerminal(key)
+    this.flushTerminal()
     return this.getTerminalState()
   }
 
-  /** The startup terminal until a conversation is open, then that conversation's. */
-  private currentKey(): string {
-    return this.deps.currentConversationId() ?? STARTUP_KEY
-  }
-
-  /** Type a command straight into this conversation's shell, bypassing the model. */
+  /**
+   * Type a command straight into the terminal, bypassing the model.
+   *
+   * Needs no conversation: the terminal belongs to the machine, so it is usable
+   * (and useful) before a single chat has been opened.
+   */
   async sendTerminalInput(text: string): Promise<void> {
-    const conversationId = this.deps.currentConversationId()
     const command = text.trim()
-    if (!conversationId || command === '') return
+    if (command === '') return
 
-    const shell = this.ensureShell(conversationId)
-    this.appendLine(conversationId, { kind: 'command', text: command })
+    const shell = this.ensureShell()
+    this.appendLine({ kind: 'command', text: command })
     const result = await shell.run(command)
-    this.appendLine(conversationId, summariseResult(result))
-    this.flushTerminal(conversationId)
+    this.appendLine(summariseResult(result))
+    this.flushTerminal()
   }
 
   resetTerminal(): void {
-    const conversationId = this.deps.currentConversationId()
-    if (!conversationId) return
     // dispose(), not kill(): dropping the reference without tearing the shell
-    // down would leave a running command orphaned.
-    this.shells.get(conversationId)?.dispose()
-    this.shells.delete(conversationId)
-    this.shellLastUsed.delete(conversationId)
-    this.appendLine(conversationId, { kind: 'notice', text: '终端已重置' })
-    this.flushTerminal(conversationId)
+    // down would leave a running command orphaned. Dropping it first also stops
+    // the dying session's onExit from posting "会话已结束" over the reset notice.
+    const shell = this.localShell
+    this.localShell = null
+    shell?.dispose()
+
+    this.lines = []
+    this.appendLine({ kind: 'notice', text: '终端已重置' })
+    this.flushTerminal()
   }
 
   disposeAll(): void {
-    for (const shell of this.shells.values()) shell.dispose()
-    this.shells.clear()
-    this.shellLastUsed.clear()
+    const shell = this.localShell
+    this.localShell = null
+    shell?.dispose()
+
     this.inFlight.clear()
-    this.lines.clear()
-    for (const timer of this.pushTimers.values()) clearTimeout(timer)
-    this.pushTimers.clear()
+    this.lines = []
+    if (this.pushTimer) {
+      clearTimeout(this.pushTimer)
+      this.pushTimer = null
+    }
   }
 
   /* ---------------- internals ---------------- */
 
-  private ensureShell(conversationId: string): ExecutionShell {
+  private ensureShell(): ExecutionShell {
     /*
-     * An attached SSH session takes over EVERY conversation's commands, not just
-     * the one on screen.
+     * The machine decides, not the chat.
      *
-     * That is the only coherent reading of "the terminal is now on the remote
-     * host": the model is told it is driving that machine, and which ChatGPT tab
-     * the instruction came from has nothing to do with where it should run.
+     * An attached SSH session takes over every conversation's commands, and the
+     * local terminal serves every conversation too — for the same reason. The
+     * model is told which machine it is driving, and which ChatGPT tab the
+     * instruction came from has nothing to do with where it should run.
      */
     const remote = this.deps.remoteShell()
     if (remote) return remote
 
-    const existing = this.shells.get(conversationId)
-    if (existing) {
-      this.shellLastUsed.set(conversationId, Date.now())
-      return existing
-    }
-
-    this.reapShells(conversationId)
-
-    const shell = new ConversationShell({
-      onOutput: (chunk) => this.appendOutput(conversationId, chunk),
-      onExit: () => {
-        this.appendLine(conversationId, {
-          kind: 'notice',
-          text: 'PowerShell 会话已结束，下一条命令会自动重开'
-        })
-      }
-    })
-    this.shells.set(conversationId, shell)
-    this.shellLastUsed.set(conversationId, Date.now())
-    return shell
-  }
-
-  /**
-   * Kill the least recently used idle shells until there is room for another.
-   *
-   * A shell that is mid-command is never reaped; the cap is allowed to be
-   * exceeded rather than interrupting someone's running command.
-   */
-  private reapShells(keepConversationId: string): void {
-    while (this.shells.size >= MAX_LIVE_SHELLS) {
-      let oldestId: string | null = null
-      let oldestAt = Number.POSITIVE_INFINITY
-
-      for (const [id, shell] of this.shells) {
-        if (id === keepConversationId || shell.running) continue
-        const usedAt = this.shellLastUsed.get(id) ?? 0
-        if (usedAt < oldestAt) {
-          oldestAt = usedAt
-          oldestId = id
+    if (!this.localShell) {
+      // Captured so the exit handler can tell "my session died" from "the user
+      // reset the terminal and this is the old session reporting in".
+      const created = new ConversationShell({
+        onOutput: (chunk) => this.appendOutput(chunk),
+        onExit: () => {
+          if (this.localShell !== created) return
+          this.appendLine({
+            kind: 'notice',
+            text: 'PowerShell 会话已结束，下一条命令会自动重开'
+          })
         }
-      }
-
-      if (oldestId === null) return
-
-      // dispose(), not kill(): the shell is about to be forgotten, so this is the
-      // last chance to tear down anything it still owns.
-      this.shells.get(oldestId)?.dispose()
-      this.shells.delete(oldestId)
-      this.shellLastUsed.delete(oldestId)
+      })
+      this.localShell = created
     }
+
+    return this.localShell
   }
 
-  private getLines(conversationId: string): TerminalLine[] {
-    let list = this.lines.get(conversationId)
-    if (!list) {
-      list = []
-      this.lines.set(conversationId, list)
+  private appendLine(line: TerminalLine): void {
+    this.lines.push(line)
+    if (this.lines.length > MAX_TERMINAL_LINES) {
+      this.lines.splice(0, this.lines.length - MAX_TERMINAL_LINES)
     }
-    return list
-  }
-
-  private appendLine(conversationId: string, line: TerminalLine): void {
-    const list = this.getLines(conversationId)
-    list.push(line)
-    if (list.length > MAX_TERMINAL_LINES) list.splice(0, list.length - MAX_TERMINAL_LINES)
     this.mirror(line)
-    this.flushTerminal(conversationId)
+    this.flushTerminal()
   }
 
   /**
@@ -738,35 +670,34 @@ export class CommandRunner {
   }
 
   /** Streaming output lands in the trailing output line instead of a new one. */
-  private appendOutput(conversationId: string, chunk: string): void {
+  private appendOutput(chunk: string): void {
     const text = chunk.replace(/\r/g, '')
     if (text === '') return
-    const list = this.getLines(conversationId)
-    const last = list[list.length - 1]
+    const last = this.lines[this.lines.length - 1]
     if (last && last.kind === 'output') last.text += text
-    else list.push({ kind: 'output', text })
-    if (list.length > MAX_TERMINAL_LINES) list.splice(0, list.length - MAX_TERMINAL_LINES)
+    else this.lines.push({ kind: 'output', text })
+    if (this.lines.length > MAX_TERMINAL_LINES) {
+      this.lines.splice(0, this.lines.length - MAX_TERMINAL_LINES)
+    }
     if (this.deps.remoteShell() !== null) this.deps.onRemoteOutput(text)
-    this.scheduleTerminalPush(conversationId)
+    this.scheduleTerminalPush()
   }
 
   /** Coalesce the high-frequency streaming updates into one push per tick. */
-  private scheduleTerminalPush(conversationId: string): void {
-    if (this.pushTimers.has(conversationId)) return
-    const timer = setTimeout(() => {
-      this.pushTimers.delete(conversationId)
+  private scheduleTerminalPush(): void {
+    if (this.pushTimer) return
+    this.pushTimer = setTimeout(() => {
+      this.pushTimer = null
       this.deps.onTerminalChanged(this.getTerminalState())
     }, TERMINAL_PUSH_INTERVAL_MS)
-    this.pushTimers.set(conversationId, timer)
   }
 
-  private flushTerminal(conversationId: string): void {
-    const timer = this.pushTimers.get(conversationId)
-    if (timer) {
-      clearTimeout(timer)
-      this.pushTimers.delete(conversationId)
+  /** Drop a pending coalesced push so the change goes out now. */
+  private flushTerminal(): void {
+    if (this.pushTimer) {
+      clearTimeout(this.pushTimer)
+      this.pushTimer = null
     }
-    void conversationId
     this.deps.onTerminalChanged(this.getTerminalState())
   }
 

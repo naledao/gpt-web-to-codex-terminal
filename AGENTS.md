@@ -277,7 +277,8 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
 
 ## 终端自动化（会真的在用户机器上执行命令）
 
-- **执行后端是 Windows PowerShell，而且一个会话一个常驻进程**（不是每条命令一个进程）。
+- **执行后端是 Windows PowerShell，而且整个应用只有一条常驻会话进程**
+  （不是每条命令一个进程，也不是每个对话一个）。
   启动时 `spawn(powershell, ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
   '-EncodedCommand', base64_utf16le(包装脚本)])`，包装脚本是个 `while` 循环一直从 stdin 读命令。
   **这样变量、函数、模块、`pushd`、cwd 全部跨命令保留**，和真终端一致 ——
@@ -406,9 +407,18 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
   **注意：这并不等于启动时安全** —— auto 模式下 `handleDetected` 对新检测到的命令一律执行，
   所以启动后页面上恢复出来的那条旧命令**仍然会被执行**。这是刻意的取舍（见上面 auto 无闸门那条），
   不要误以为 `restoreMode` 提供了保护。
-- `MAX_LIVE_SHELLS` 的 LRU 回收现在是**真·资源回收**：一个会话一个常驻 PowerShell 进程，
-  不回收就会攒下一堆 PowerShell。回收时**跳过正在跑命令的 shell**。
-  `alive` = 会话进程还活着；`running` = 有命令在跑。
+- **整个应用只有一个本地终端，绝不按对话分家。** 它是一台机器的窗口，而机器不会因为你点了另一个
+  聊天就换掉。曾经是"一个对话一个 shell"，后果是两个：
+  - 发新对话的第一条消息会**创建**对话 → key 变了 → 面板清屏（用户看到终端"刷新了"）。
+  - 新 shell 的初始目录写死 `homedir()`，而切对话**不重新探测**，
+    于是提示词里写着用户选的目录、shell 其实在 `C:\Users\...` —— **提示词和实现打架**。
+  改成全局一个之后两个问题一起消失：发消息不再动终端，`cwd` 也永远和提示词一致。
+  `ensureShell()` 的判据只有"远端接管了没有"，**不要再引入对话 id 做 key**。
+  （远端本来就是全局的 —— 之前本地按对话、远端全局，两边逻辑不一致本身也是味道。）
+- **`resetTerminal()` 要先摘引用再 dispose。** 老的会话进程死掉时 `onExit` 会回调，
+  不先摘掉引用的话它会往刚重置的日志里插一句"会话已结束"。
+  `onExit` 里用 `this.localShell !== created` 判断，就是为了区分"我的会话死了"和
+  "用户重置了终端，这是旧会话在报丧"。
 - `OUTPUT_FORMAT_SECTION`（`shared/types.ts`）里的 JSON 示例**必须保持合法**（`"description":""`）。
   主进程现在会解析模型回复，示例写成畸形的话模型会照抄，解析直接失败。
   这一段是 Windows 版和 POSIX 版**共用**的，改一次两边都变。
@@ -430,9 +440,12 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
   - 版本相关的规则必须跟着探测结果走：`&&`/`||` 是 PowerShell 7 才有的，
     5.1 上写了直接语法错误。版本读不到时用 **exe 名字**兜底判断（`pwsh*` 说明是 7+），
     **不要因为探测失败就一律当成 5.1**。
-  - **探测必须跑在用户看得见的终端里**（`runner.runEnvironmentProbe()`，走 `currentKey()`
-    那个会话）。**不要图省事改成一次性 spawn** —— 用户的原始需求就是"启动时打开一个终端
+  - **探测必须跑在用户看得见的终端里**（`runner.runEnvironmentProbe()`，走 `ensureShell()`
+    返回的那个后端）。**不要图省事改成一次性 spawn** —— 用户的原始需求就是"启动时打开一个终端
     并用它探测"，隐形的探测等于没做，这条已经踩过一次。
+  - 探测和命令走的是**同一个 shell**（本地就那一个全局的），所以探测报的 `起始目录`
+    和模型实际落脚的地方天然一致 —— **不要再引入第二个 shell 去做探测**，
+    那正是"提示词说在 A、实际在 B"的来源。
   - **探测不能阻塞启动**（`void probeEnvironment()`）。窗口不等 PowerShell 起来；
     渲染层挂载时会主动拉一次终端状态，所以早于订阅产生的输出也不会丢。
   - **`workingDirectory` 是环境的一部分。** 用户能改终端目录，改完要在同一条链路上重新探测：
@@ -484,3 +497,17 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
 - **判断"发出去了"只能看输入框有没有清空，不能看点击是否成功。** ChatGPT 在上一条回复还没结束时
   会忽略发送点击，文字就留在框里、看起来像发出去了。`submitWithRetry` 点击后回查、没清空就重试，
   并把真实结果（`ok`/`stuck`）返回给主进程再告诉用户。不要退化成"点了就当成功"。
+- **发出去之后必须自己把对话滚到底，不能指望 ChatGPT 自己滚。**
+  程序化发送（`execCommand` + 点按钮）不会触发它给真实点击准备的那套滚动，
+  结果新消息和回复都停在屏幕下方，**用户每一条消息都要手动滚一次**。
+  - `findScroller()` 是**按行为找**的：ChatGPT 的类名是哈希的，靠选择器定位迟早失效。
+    从最新一条消息往上找第一个"真的溢出且 `overflow-y` 是 auto/scroll"的祖先；
+    找不到才退化成全量扫描（挑 `scrollHeight` 最大的那个）。
+  - 全量扫描里是 `>=` 而不是 `>`：`querySelectorAll` 返回文档序，
+    **祖先一定排在子孙前面**，所以并列时取后面的那个就是取内层的 ——
+    外层包装和内层线程一样高时，要滚的是线程。
+  - **必须 `behavior: 'instant'`。** 线程是平滑滚动的，动画会和发送后的重排打架，
+    被中途取消、停在半路 —— 表现出来还是"没到底"，只是换了个样子。
+  - 滚动只在**确认发送成功**后触发（`finish(true)`），失败不滚。
+    并且是**有限次的补滚**（0/120/350/700/1200ms），不是一直滚到回复结束：
+    过了那一秒用户很可能正在往上翻，把他拽回来比原来的问题更糟。

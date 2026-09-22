@@ -1149,13 +1149,7 @@ export default function App(): JSX.Element {
           </div>
         ) : (
           <div className="terminal-pane__meta">
-            <span className="terminal-pane__id">
-              {terminal?.scope === 'startup'
-                ? '启动探测'
-                : conversationId
-                  ? conversationId.slice(0, 8)
-                  : '未打开对话'}
-            </span>
+            <span className="terminal-pane__id">本机</span>
             {cwdDraft !== null ? (
               <form className="terminal-pane__cwd-form" onSubmit={submitCwd}>
                 <input
@@ -1297,9 +1291,7 @@ export default function App(): JSX.Element {
                 )
               ) : (terminal?.lines.length ?? 0) === 0 ? (
                 <p className="terminal-pane__empty">
-                  {terminal?.scope === 'startup'
-                    ? '正在探测本机环境（操作系统与架构），结果会写进发给模型的提示词…'
-                    : '还没有输出。启动自动执行后，模型发出的命令会在这里运行。'}
+                  还没有输出。在下面直接输入命令，或让模型在这里执行。
                 </p>
               ) : (
                 terminal?.lines.map((line, index) => (
@@ -1321,12 +1313,10 @@ export default function App(): JSX.Element {
                     ? ssh?.status === 'connected'
                       ? '输入命令，回车发送到远程主机'
                       : '尚未连接'
-                    : terminal?.scope === 'startup'
-                      ? '打开一个对话后，可以在这里直接执行命令'
-                      : '直接在这个会话的终端里执行命令（不经过模型）'
+                    : '直接在本机执行命令（不经过模型）'
                 }
                 aria-label={sshActive ? 'SSH 命令' : '终端命令'}
-                disabled={sshActive ? ssh?.status !== 'connected' : !conversationId}
+                disabled={sshActive ? ssh?.status !== 'connected' : false}
                 onChange={(event) => setCommandDraft(event.target.value)}
               />
             </form>
