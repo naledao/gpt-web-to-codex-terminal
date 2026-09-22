@@ -14,6 +14,7 @@ import type {
   EnvironmentInfo,
   ExecutionMode,
   ExecutionRecord,
+  ExternalAuthNotice,
   InterceptorStatus,
   SshHost,
   SshHostDraft,
@@ -46,6 +47,21 @@ const api: AppApi = {
   },
 
   getEmbedState: (): Promise<EmbedState> => ipcRenderer.invoke(IpcChannels.embedGetState),
+
+  getExternalAuthNotice: (): Promise<ExternalAuthNotice | null> =>
+    ipcRenderer.invoke(IpcChannels.embedGetExternalAuth),
+
+  onExternalAuth: (listener: (notice: ExternalAuthNotice) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, notice: ExternalAuthNotice): void => listener(notice)
+    ipcRenderer.on(IpcChannels.embedExternalAuth, handler)
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.embedExternalAuth, handler)
+    }
+  },
+
+  openChatgptExternal: (): void => {
+    ipcRenderer.send(IpcChannels.openChatgptExternal)
+  },
 
   listConversations: (): Promise<Conversation[]> =>
     ipcRenderer.invoke(IpcChannels.conversationsList),

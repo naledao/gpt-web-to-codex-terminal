@@ -12,6 +12,9 @@ export const IpcChannels = {
   embedNavigate: 'embed:navigate',
   embedGetState: 'embed:get-state',
   embedState: 'embed:state',
+  embedGetExternalAuth: 'embed:get-external-auth',
+  embedExternalAuth: 'embed:external-auth',
+  openChatgptExternal: 'app:open-chatgpt-external',
   conversationsList: 'conversations:list',
   conversationsSync: 'conversations:sync',
   conversationsRemove: 'conversations:remove',
@@ -162,6 +165,14 @@ export interface EmbedBounds {
 }
 
 export type EmbedCommand = 'back' | 'forward' | 'reload' | 'stop' | 'home'
+
+export type ExternalAuthProvider = 'google' | 'apple'
+
+/** A third-party OAuth page was redirected out of the embedded session. */
+export interface ExternalAuthNotice {
+  provider: ExternalAuthProvider
+  openedAt: number
+}
 
 /** Snapshot of the embedded view, pushed from main to the renderer. */
 export interface EmbedState {
@@ -795,6 +806,12 @@ export interface AppApi {
   getEmbedState(): Promise<EmbedState>
   /** Subscribe to embed state; returns an unsubscribe function. */
   onEmbedState(listener: (state: EmbedState) => void): () => void
+  /** Snapshot of the last OAuth provider opened in the system browser. */
+  getExternalAuthNotice(): Promise<ExternalAuthNotice | null>
+  /** Fires when a third-party OAuth provider is sent to the system browser. */
+  onExternalAuth(listener: (notice: ExternalAuthNotice) => void): () => void
+  /** Open ChatGPT in the user's normal browser. */
+  openChatgptExternal(): void
 
   /** All stored conversations, newest first. */
   listConversations(): Promise<Conversation[]>

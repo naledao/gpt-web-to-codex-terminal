@@ -13,6 +13,8 @@ import type {
   EmbedBounds,
   EmbedCommand,
   EmbedState,
+  ExternalAuthNotice,
+  ExternalAuthProvider,
   InterceptorPageEvent,
   InterceptorStatus,
   ParsedCommand,
@@ -68,6 +70,28 @@ function normalizeUrl(input: string): string | null {
 }
 
 /**
+ * Keep authentication providers out of the embedded user-agent.
+ *
+ * OAuth commonly reaches the provider through a server-side redirect rather
+ * than a user navigation, so this policy is shared by `will-navigate`,
+ * `will-redirect`, and the main-frame branch of `will-frame-navigate`.
+ */
+function isAllowedNavigation(url: string): boolean {
+  return ALLOWED_NAVIGATION.test(url)
+}
+
+function externalAuthProvider(url: string): ExternalAuthProvider | null {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase()
+    if (hostname === 'accounts.google.com') return 'google'
+    if (hostname === 'appleid.apple.com') return 'apple'
+  } catch {
+    // Invalid URLs are handled by the normal external-navigation path.
+  }
+  return null
+}
+
+/**
  * Runs inside the embedded page (main world).
  *
  * Each sidebar entry is rendered as:
@@ -113,6 +137,8 @@ interface ScrapeResult {
 /** Callbacks the embed raises towards the main process. */
 export interface EmbedHandlers {
   onState(state: EmbedState): void
+  /** A third-party OAuth provider was opened in the system browser. */
+  onExternalAuth(notice: ExternalAuthNotice): void
   /** A conversation the page just navigated to (auto-saved). */
   onConversation(conversation: ScrapedConversation): void
   /** Results of a background sidebar scrape. */
@@ -198,19 +224,54 @@ export class ChatGptEmbed {
     const contents = view.webContents
     contents.setUserAgent(process.env.EMBED_USER_AGENT ?? chromeLikeUserAgent())
 
+    // Keep the view pinned to OpenAI properties; everything else is external.
+    // This is also what makes third-party OAuth (accounts.google.com) open in
+    // the system browser, since Google blocks embedded sign-in. OAuth flows
+    // often arrive as a 30x redirect, so `will-navigate` alone is not enough.
+    const openExternalUrl = (url: string): void => {
+      const provider = externalAuthProvider(url)
+      if (provider) this.handlers.onExternalAuth({ provider, openedAt: Date.now() })
+
+      try {
+        const parsed = new URL(url)
+        console.info(`[embed] opening external navigation: ${parsed.origin}${parsed.pathname}`)
+      } catch {
+        console.info('[embed] opening external navigation')
+      }
+
+      void shell.openExternal(url).catch((error) => {
+        console.warn('[embed] external navigation failed:', (error as Error).message)
+      })
+    }
+
     // Anything the page tries to open in a new window goes to the real browser.
     contents.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(url)
+      openExternalUrl(url)
       return { action: 'deny' }
     })
 
-    // Keep the view pinned to OpenAI properties; everything else is external.
-    // This is also what makes third-party OAuth (accounts.google.com) open in
-    // the system browser, since Google blocks embedded sign-in.
+    const openExternalNavigation = (event: Electron.Event, url: string): void => {
+      if (isAllowedNavigation(url)) return
+
+      event.preventDefault()
+      openExternalUrl(url)
+    }
+
     contents.on('will-navigate', (event, url) => {
-      if (!ALLOWED_NAVIGATION.test(url)) {
-        event.preventDefault()
-        void shell.openExternal(url)
+      openExternalNavigation(event, url)
+    })
+
+    contents.on('will-redirect', (event, url) => {
+      openExternalNavigation(event, url)
+    })
+
+    contents.on('will-frame-navigate', (details) => {
+      if (details.isMainFrame) {
+        openExternalNavigation(details, details.url)
+      } else if (!isAllowedNavigation(details.url)) {
+        // Do not let an embedded third-party frame start an OAuth flow. It has
+        // no usable route back to the app and Google will reject the webview.
+        details.preventDefault()
       }
     })
 

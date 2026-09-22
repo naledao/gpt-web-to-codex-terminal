@@ -15,15 +15,17 @@ npm install
 npm run dev
 ```
 
-`npm run dev` starts the Vite dev server for the renderer and launches Electron against
-it — edit any file under `src/renderer/` and the window hot-reloads. Changes to
+The dev command first makes sure Electron's platform binary is installed (using the
+mirror configured in `.npmrc`), then starts the Vite dev server for the renderer and
+launches Electron against it — edit any file under `src/renderer/` and the window
+hot-reloads. Changes to
 `src/main/` or `src/preload/` restart the Electron process automatically.
 
 ## Scripts
 
 | Script                 | What it does                                                        |
 | ---------------------- | ------------------------------------------------------------------- |
-| `npm run dev`          | Dev mode: Vite dev server + Electron with HMR                        |
+| `npm run dev`          | Ensure Electron is installed, then run Vite + Electron with HMR       |
 | `npm run electron:install` | Pre-fetch the Electron binary (mirror-aware)                     |
 | `npm run build`        | Typecheck, then bundle main/preload/renderer into `out/`             |
 | `npm run preview`      | Run Electron against the built `out/` (production behaviour)         |
@@ -89,8 +91,15 @@ Consequences worth knowing before extending the UI:
 - `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, and **no
   preload** — the third-party page gets no access to `window.api`.
 - Navigation is pinned to OpenAI-owned domains; anything else is opened in the
-  system browser. This is also what sends third-party OAuth (Google/Apple) to the
-  real browser, since those providers block embedded sign-in.
+  system browser. This policy covers normal navigations, server redirects, and
+  main-frame navigation events, so third-party OAuth (Google/Apple) does not stay
+  inside the embedded user-agent. Those providers block embedded sign-in.
+- The embedded ChatGPT session has its own cookie jar. Opening an OAuth provider
+  in the system browser is the policy-compliant escape hatch, but it does not copy
+  the system browser's cookies back into `persist:chatgpt`; if the provider does
+  not return through a supported desktop-app callback, use ChatGPT's email/OTP
+  sign-in or the normal browser version of ChatGPT. The status bar shows these
+  alternatives after an external OAuth redirect is opened.
 - The embed IPC channels are only accepted from the app's own window, so the
   embedded page cannot drive its own native view.
 - A stock Electron user agent advertises `Electron/44.4.3`, which Cloudflare's bot
@@ -740,9 +749,10 @@ If your network can reach `github.com`, delete `.npmrc` (or just those two lines
 > If a future npm drops them, set the variables yourself instead:
 > `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`
 
-Electron 44 no longer downloads its binary in a `postinstall` hook; the `electron` package
-fetches it lazily on the first `require('electron')` — i.e. on your first `npm run dev`.
-So run `npm run electron:install` once up front if you would rather not wait mid-`dev`.
+Electron 44 no longer downloads its binary in a `postinstall` hook. The `dev`,
+`dev:watch`, and `preview` scripts therefore run `npm run electron:install` first;
+the command exits immediately when the binary is already present. You can also run
+`npm run electron:install` manually to pre-fetch it before starting another script.
 
 ## Troubleshooting
 

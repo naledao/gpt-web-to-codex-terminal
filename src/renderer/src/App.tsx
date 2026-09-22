@@ -10,6 +10,7 @@ import type {
   ExecutionMode,
   ExecutionRecord,
   ExecutionStatus,
+  ExternalAuthNotice,
   InterceptorStatus,
   SshHost,
   SshHostDraft,
@@ -116,6 +117,7 @@ function formatDuration(milliseconds: number): string {
 export default function App(): JSX.Element {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
+  const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [interceptor, setInterceptor] = useState<InterceptorStatus | null>(null)
   const [automation, setAutomation] = useState<AutomationState | null>(null)
@@ -218,6 +220,23 @@ export default function App(): JSX.Element {
 
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // Third-party OAuth must run in the system browser. Pull the last notice once
+  // as well as subscribing so a redirect that happened before React mounted is
+  // still explained to the user.
+  useEffect(() => {
+    let cancelled = false
+
+    void window.api.getExternalAuthNotice().then((notice) => {
+      if (!cancelled && notice) setExternalAuth(notice)
+    })
+
+    const unsubscribe = window.api.onExternalAuth(setExternalAuth)
+    return () => {
+      cancelled = true
+      unsubscribe()
     }
   }, [])
 
@@ -379,6 +398,18 @@ export default function App(): JSX.Element {
     },
     [address]
   )
+
+  const continueWithEmailAuth = useCallback((): void => {
+    setExternalAuth(null)
+    window.api.sendEmbedCommand('home')
+  }, [])
+
+  const openChatgptExternal = useCallback((): void => {
+    setExternalAuth(null)
+    window.api.openChatgptExternal()
+  }, [])
+
+  const externalAuthProviderLabel = externalAuth?.provider === 'apple' ? 'Apple' : 'Google'
 
   const conversationFolders = useMemo(() => {
     const folders = new Map<
@@ -1508,6 +1539,28 @@ export default function App(): JSX.Element {
       </section>
 
       <footer className="statusbar">
+        {externalAuth ? (
+          <div className="auth-notice" role="status">
+            <span className="auth-notice__text">
+              {externalAuthProviderLabel} 登录已在系统浏览器中打开；内嵌页面不能共享浏览器登录态。
+            </span>
+            <button type="button" className="auth-notice__button" onClick={continueWithEmailAuth}>
+              使用邮箱/验证码
+            </button>
+            <button type="button" className="auth-notice__button" onClick={openChatgptExternal}>
+              打开浏览器版 ChatGPT
+            </button>
+            <button
+              type="button"
+              className="auth-notice__close"
+              aria-label="关闭登录提示"
+              title="关闭登录提示"
+              onClick={() => setExternalAuth(null)}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
         <span className={embed.isLoading ? 'dot dot--busy' : 'dot'} />
         <span className="statusbar__title" title={embed.url}>
           {embed.title || embed.url || '未加载'}

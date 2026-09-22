@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
+  EMBED_HOME_URL,
   EMBED_PARTITION,
   FALLBACK_ENVIRONMENT,
   IpcChannels,
@@ -21,6 +22,7 @@ import type {
   EnvironmentInfo,
   ExecutionMode,
   ExecutionRecord,
+  ExternalAuthNotice,
   InterceptorStatus,
   SshHost,
   SshHostDraft,
@@ -43,6 +45,7 @@ const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
 let store: ConversationStore | null = null
 let runner: CommandRunner | null = null
+let externalAuthNotice: ExternalAuthNotice | null = null
 
 /** Last conversation the embedded page reported, used to detect navigation. */
 let lastConversationId: string | null = null
@@ -334,6 +337,12 @@ function broadcastInterceptor(status: InterceptorStatus): void {
   mainWindow.webContents.send(IpcChannels.interceptorEvent, status)
 }
 
+function broadcastExternalAuth(notice: ExternalAuthNotice): void {
+  externalAuthNotice = notice
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send(IpcChannels.embedExternalAuth, notice)
+}
+
 /**
  * Push the current environment description to the renderer.
  *
@@ -399,6 +408,8 @@ const embed = new ChatGptEmbed({
       // scrollback nor its working directory.
     }
   },
+
+  onExternalAuth: broadcastExternalAuth,
 
   // Auto-saved whenever the embedded page lands on a /c/<id> URL.
   onConversation: (conversation) => {
@@ -530,6 +541,15 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannels.embedGetState, (event): EmbedState => {
     return fromAppWindow(event) ? embed.getState() : EMPTY_EMBED_STATE
+  })
+
+  ipcMain.handle(
+    IpcChannels.embedGetExternalAuth,
+    (event): ExternalAuthNotice | null => (fromAppWindow(event) ? externalAuthNotice : null)
+  )
+
+  ipcMain.on(IpcChannels.openChatgptExternal, (event) => {
+    if (fromAppWindow(event)) void shell.openExternal(EMBED_HOME_URL)
   })
 
   ipcMain.handle(IpcChannels.conversationsList, (event): Conversation[] => {
