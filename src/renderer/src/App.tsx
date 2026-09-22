@@ -803,6 +803,7 @@ export default function App(): JSX.Element {
               className="address__input"
               value={address}
               spellCheck={false}
+              readOnly
               placeholder="https://chatgpt.com/"
               aria-label="地址"
               onChange={(event) => setAddress(event.target.value)}
