@@ -244,7 +244,6 @@ describes that machine because it is the same shell the commands run in.
 **重置** is the only thing that clears it.
 
 ### The current step
-
 Above the output the terminal pane keeps a standing call-out of the command the loop
 is on — the model's own one-line description of it, the command itself, its status and
 its exit code:
@@ -361,6 +360,32 @@ In **both** modes the result is handed back to the model, and in both modes the
 danger list still stops a command and waits for a click.
 
 **暂停** is the global stop: nothing runs and nothing is sent while it is on.
+
+### When the model stops to ask
+
+The loop has exactly two ways to end: the model reports the task done, or it asks a
+question. Both are the same mechanism — a reply in plain text with **no JSON**, which
+the parser reads as "no command" and simply stops.
+
+The prompt uses the second one for a specific case: **if the tool this step needs is
+not installed on the machine, the model is told to stop and ask** rather than run
+`apt-get install` / `winget install` on its own, and rather than quietly substituting a
+worse approach:
+
+```
+【缺工具时】
+如果这一步需要的工具**这台机器上没有装**，先停下来问用户，不要擅自安装，
+也不要为了绕开它去拼一个更差的替代方案：
+直接正常回复用户（**不输出 JSON**），说明缺哪个工具、这一步为什么需要它、你打算怎么装，
+然后等用户回答。用户同意之后再安装、再继续任务。
+```
+
+It is a labelled section rather than a line appended to 【输出格式】, because it is a
+behaviour rule and has to be acted on, not skimmed.
+
+If you would rather it just install what it needs on a machine you own, say so in that
+machine's **说明** — the 用户补充 section is declared to outrank the generic rules, so
+that is the intended override and no extra switch is needed.
 
 ### Why opening an old conversation does not run anything
 

@@ -315,6 +315,26 @@ const OUTPUT_FORMAT_SECTION = [
   '说明你做了什么、结果如何、以及需要用户注意的地方。'
 ].join('\n')
 
+/**
+ * Shared by both dialects: what to do when the machine lacks a tool the task needs.
+ *
+ * It rides on the mechanism the output section already established — answer in
+ * plain text with no JSON, and the loop stops and hands control back to the user.
+ * What this adds is the DECISION: ask instead of installing unasked, and instead
+ * of quietly substituting a worse approach for the tool that is missing.
+ *
+ * It lives in its own labelled section rather than being tacked onto 【输出格式】
+ * because the model has to act on it, and a rule buried at the end of a long
+ * section about something else is a rule that gets skimmed past.
+ */
+const MISSING_TOOL_SECTION = [
+  '【缺工具时】',
+  '如果这一步需要的工具**这台机器上没有装**，先停下来问用户，不要擅自安装，',
+  '也不要为了绕开它去拼一个更差的替代方案：',
+  '直接正常回复用户（**不输出 JSON**），说明缺哪个工具、这一步为什么需要它、你打算怎么装，',
+  '然后等用户回答。用户同意之后再安装、再继续任务。'
+].join('\n')
+
 /** The parts of the prompt only true of a Windows PowerShell session. */
 function buildWindowsPrompt(env: EnvironmentInfo): string {
   const osName = env.osCaption.trim() === '' ? 'Windows' : env.osCaption.trim()
@@ -345,6 +365,8 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
     '你是一个 PowerShell 终端助手。用户把目标发给你，你每次只输出一条命令来推进它。',
     '',
     OUTPUT_FORMAT_SECTION,
+    '',
+    MISSING_TOOL_SECTION,
     '',
     '【执行环境】',
     `- 操作系统：${osName}${osDetail === '' ? '' : `（${osDetail}）`}`,
@@ -401,6 +423,8 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
     '你是一个 Linux 终端助手。用户把目标发给你，你每次只输出一条命令来推进它。',
     '',
     OUTPUT_FORMAT_SECTION,
+    '',
+    MISSING_TOOL_SECTION,
     '',
     '【执行环境】',
     /*
