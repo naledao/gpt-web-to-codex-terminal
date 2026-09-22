@@ -327,23 +327,34 @@ const OUTPUT_FORMAT_SECTION = [
 ].join('\n')
 
 /**
- * Shared by both dialects: what to do when the machine lacks a tool the task needs.
+ * Shared by both dialects: when the model should stop and ask instead of acting.
  *
  * It rides on the mechanism the output section already established — answer in
  * plain text with no JSON, and the loop stops and hands control back to the user.
- * What this adds is the DECISION: ask instead of installing unasked, and instead
- * of quietly substituting a worse approach for the tool that is missing.
+ *
+ * One section rather than one per case, because these are instances of a single
+ * rule, and a model that has the rule generalises to cases nobody wrote down. The
+ * two named here are the common ones and the expensive ones to get wrong: an
+ * underspecified task (guessing burns a round trip, usually more) and a tool that
+ * is not installed (installing unasked changes the user's machine).
  *
  * It lives in its own labelled section rather than being tacked onto 【输出格式】
  * because the model has to act on it, and a rule buried at the end of a long
  * section about something else is a rule that gets skimmed past.
+ *
+ * The "look it up first" line is not decoration. Framed as a bare permission, this
+ * reads as "ask whenever anything is unknown" — and a model that asks about things
+ * it could have checked itself is worse than one that never asks, because the loop
+ * exists precisely to save the user that round trip.
  */
-const MISSING_TOOL_SECTION = [
-  '【缺工具时】',
-  '如果这一步需要的工具**这台机器上没有装**，先停下来问用户，不要擅自安装，',
-  '也不要为了绕开它去拼一个更差的替代方案：',
-  '直接正常回复用户（**不输出 JSON**），说明缺哪个工具、这一步为什么需要它、你打算怎么装，',
-  '然后等用户回答。用户同意之后再安装、再继续任务。'
+const ASK_USER_SECTION = [
+  '【不确定时】',
+  '拿不准就**停下来问用户** —— 这不是失败，是正常的一步。典型情况：任务本身没说清',
+  '（目标模糊、有明显不同的几种做法、缺一个只有用户知道的信息），或者这一步需要的工具',
+  '这台机器上没有装（**不要擅自安装**，也不要为了绕开它去拼一个更差的替代方案）。',
+  '但**自己能查清楚的不要问**：先看文件、读代码、跑一条只读命令确认，再决定要不要问。',
+  '问的时候直接正常回复用户（**不输出 JSON**），说清你在纠结什么、有哪几种选择、你倾向哪个',
+  '以及为什么，然后等用户回答；得到答复后继续输出 JSON 推进任务。'
 ].join('\n')
 
 /** The parts of the prompt only true of a Windows PowerShell session. */
@@ -377,7 +388,7 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
     '',
     OUTPUT_FORMAT_SECTION,
     '',
-    MISSING_TOOL_SECTION,
+    ASK_USER_SECTION,
     '',
     '【执行环境】',
     `- 操作系统：${osName}${osDetail === '' ? '' : `（${osDetail}）`}`,
@@ -435,7 +446,7 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
     '',
     OUTPUT_FORMAT_SECTION,
     '',
-    MISSING_TOOL_SECTION,
+    ASK_USER_SECTION,
     '',
     '【执行环境】',
     /*

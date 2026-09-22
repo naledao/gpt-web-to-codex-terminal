@@ -367,18 +367,29 @@ The loop has exactly two ways to end: the model reports the task done, or it ask
 question. Both are the same mechanism — a reply in plain text with **no JSON**, which
 the parser reads as "no command" and simply stops.
 
-The prompt uses the second one for a specific case: **if the tool this step needs is
-not installed on the machine, the model is told to stop and ask** rather than run
-`apt-get install` / `winget install` on its own, and rather than quietly substituting a
-worse approach:
+The prompt uses the second one for two cases:
 
 ```
-【缺工具时】
-如果这一步需要的工具**这台机器上没有装**，先停下来问用户，不要擅自安装，
-也不要为了绕开它去拼一个更差的替代方案：
-直接正常回复用户（**不输出 JSON**），说明缺哪个工具、这一步为什么需要它、你打算怎么装，
-然后等用户回答。用户同意之后再安装、再继续任务。
+【不确定时】
+拿不准就**停下来问用户** —— 这不是失败，是正常的一步。典型情况：任务本身没说清
+（目标模糊、有明显不同的几种做法、缺一个只有用户知道的信息），或者这一步需要的工具
+这台机器上没有装（**不要擅自安装**，也不要为了绕开它去拼一个更差的替代方案）。
+但**自己能查清楚的不要问**：先看文件、读代码、跑一条只读命令确认，再决定要不要问。
+问的时候直接正常回复用户（**不输出 JSON**），说清你在纠结什么、有哪几种选择、你倾向哪个
+以及为什么，然后等用户回答；得到答复后继续输出 JSON 推进任务。
 ```
+
+- **An underspecified task.** Guessing burns a round trip and usually more.
+- **A tool that is not installed.** Installing unasked changes your machine, and quietly
+  substituting a worse approach is worse still — that is exactly how the
+  `Format-Table -AutoSize` timeout above came about, from reaching for
+  `Get-ChildItem | Select-String` because `rg` was missing.
+
+**The third line is the one that keeps this useful.** Framed as a bare permission, "you
+may ask" reads as "ask whenever anything is unknown" — and a model that asks about
+things it could have checked itself is worse than one that never asks, because the loop
+exists precisely to save you that round trip. So the permission and the "look it up
+first" guard ship together.
 
 It is a labelled section rather than a line appended to 【输出格式】, because it is a
 behaviour rule and has to be acted on, not skimmed.

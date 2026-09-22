@@ -59,6 +59,29 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
 本机无法访问 GitHub，`.npmrc` 已把 Electron 二进制指向 npmmirror。
 注意镜像只在 npm 上下文生效（`@electron/get` 优先读 `npm_config_electron_mirror`）。
 
+### 绝对不要用 PowerShell 读写源文件
+
+**`Get-Content ... | Set-Content ...` 这种原地改文件的方式，一次都不能用。**
+Windows PowerShell 5.1 的 `Get-Content` 对**没有 BOM 的 UTF-8 文件是按 ANSI（本机 GBK）解码**的，
+`Set-Content -Encoding UTF8` 再把已经乱掉的字符串写回去 —— 一来一回：
+
+- **所有中文全毁**（`【输出格式】` → `銆愯緭鍑烘牸寮忋€?`）。
+- **而且是有损的**：某些字节对会被当成一个 GBK 双字节字符，**把紧跟其后的引号一起吃掉**；
+  解码不了的字节直接变成 `?`。所以**没法反解回去**，不是"重新解码一次"就能救的。
+- 报出来的错还很误导：`TS1002: Unterminated string literal`、`TS1005: ',' expected` ——
+  看起来像引号写错了，真正的原因在编码。
+
+`src/shared/types.ts` 就这样被毁过一次。救回来的唯一原因是**那次改动之前刚好提交过**，
+`git checkout -- src/shared/types.ts` 就回到干净版本、再重新施加改动。
+
+- 改文件用编辑工具（`edit` / `write`），它们按 UTF-8 读写。
+- 需要批量替换时**也别拿 PowerShell 当中转**；宁可多改几次，或者用编辑工具的
+  `replace_all`。
+- 想在 pwsh 里确认中文在不在，用 `Select-String <pattern> -SimpleMatch` **只读**地查，
+  别把内容取出来再写回去。
+- 推论：**改完就该提交。** 没有那次 commit，这个文件只能从 `out/` 的打包产物里一点点拼回来
+  —— 而 esbuild 会剥掉注释，等于把这一整套设计说明全丢了。
+
 ## 代码约定
 
 - 三个进程：`src/main`（Node）、`src/preload`（contextBridge）、`src/renderer`（沙箱网页）。
@@ -464,13 +487,19 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
     模型偶尔还会吐 `{"command":""}`）。保留它，但不要再在提示词里教这种写法。
   - **纯文字回复绝不能让 `parse-failed` 报警。** 那条诊断的触发条件是「含 `"command":`
     且花括号配平却解析不出来」，正常回复不含 `"command":`，所以安静通过 —— 别把这个条件放宽。
-- **【缺工具时】这一节靠的就是上面那套"纯文字回复 = 循环停下"的机制。**
-  它让模型在"这台机器没装它要用的工具"时**停下来问用户**，而不是自己擅自
-  `apt-get install` / `winget install`，也不是悄悄换一个更差的替代方案。
+- **【不确定时】这一节靠的就是上面那套"纯文字回复 = 循环停下"的机制。**
+  它让模型**拿不准时停下来问用户**，典型两种情况：任务本身没说清，或者这一步需要的工具
+  这台机器上没装。
   - 这是**行为规则，不是格式规则**，所以要单独成一个带标题的小节（两版提示词共用
-    `MISSING_TOOL_SECTION`），别塞进 【输出格式】 的尾巴 —— 埋在别的主题底下等于让人略过。
+    `ASK_USER_SECTION`），别塞进 【输出格式】 的尾巴 —— 埋在别的主题底下等于让人略过。
   - 它**不改任何代码**：模型发一条不带 JSON 的回复，`handleDetected` 自然什么都不做，
     循环就停在用户面前。**别为了这个功能加闸门或状态机**，那会把已有的机制重复实现一遍。
+  - **缺工具**那条是从原来的 【缺工具时】 并进来的，不是删掉：**"不要擅自安装、也不要
+    为了绕开它去拼一个更差的替代方案"必须留着**，后者尤其重要 —— 模型发现 `rg` 没有就去
+    拼一个 `Get-ChildItem | Select-String`，正是超时那条事故的来源。
+  - **`但**自己能查清楚的不要问**` 这句不能删。** 只写"可以问"的话，读起来就是
+    "anything unknown → 问"，而一个连文件里有没有都要问的模型比一个从不问的模型更糟：
+    这条循环存在的意义就是替用户省掉那次往返。**加"可以问"的权限时，必须同时加"先自己查"。**
   - 用户想让某台机器例外（"缺什么直接装"）时，**用「说明」那块的 【用户补充】** ——
     它已经声明了优先级高于通用约定，不需要再开一个开关。
   - 改提示词时**两版都要有**：Windows 和 POSIX 各插一次，测试要断言两边都在、
