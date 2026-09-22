@@ -172,6 +172,7 @@ async function probeEnvironment(): Promise<EnvironmentInfo> {
     embed.setPromptPrefix(buildTerminalPrefix(info))
     broadcastEnvironment()
     broadcastTerminalNotes()
+    broadcastConversations()
     console.info(
       `[env] ${info.detected ? 'detected' : 'FALLBACK'}: ${info.kind} ${info.osCaption} ` +
         `${info.osVersion} ${info.architecture}` +
@@ -325,7 +326,7 @@ function broadcastAutomation(state: AutomationState): void {
 /** Send the current conversation list to the renderer. */
 function broadcastConversations(): void {
   if (!store || !mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(IpcChannels.conversationsChanged, store.list())
+  mainWindow.webContents.send(IpcChannels.conversationsChanged, currentMachineConversations())
 }
 
 function broadcastInterceptor(status: InterceptorStatus): void {
@@ -345,6 +346,11 @@ function broadcastEnvironment(): void {
   mainWindow.webContents.send(IpcChannels.environmentChanged, { ...environment })
 }
 
+function currentMachineConversations(): Conversation[] {
+  if (!store) return []
+  const hostId = environmentScope.scope === 'local' ? localMachineId : environmentScope.hostId
+  return store.list(environmentScope.scope, hostId)
+}
 function currentConversationProject(): {
   machineScope: 'local' | 'ssh'
   hostId: string
@@ -426,7 +432,7 @@ async function refreshFromSidebar(): Promise<Conversation[]> {
   if (!store) return []
   const scraped = await embed.scrapeConversations()
   if (scraped.length > 0) store.upsertMany(scraped)
-  return store.list()
+  return currentMachineConversations()
 }
 
 function createWindow(): void {
@@ -525,7 +531,7 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IpcChannels.conversationsList, (event): Conversation[] => {
-    return fromAppWindow(event) && store ? store.list() : []
+    return fromAppWindow(event) ? currentMachineConversations() : []
   })
 
   ipcMain.handle(IpcChannels.conversationsSync, async (event): Promise<Conversation[]> => {
@@ -536,7 +542,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.conversationsRemove, (event, id: string): Conversation[] => {
     if (!fromAppWindow(event) || !store) return []
     store.remove(String(id))
-    return store.list()
+    return currentMachineConversations()
   })
 
   ipcMain.handle(IpcChannels.interceptorGetState, (event): InterceptorStatus => {

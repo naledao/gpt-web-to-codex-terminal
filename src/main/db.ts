@@ -246,7 +246,7 @@ export class ConversationStore {
     return inserted
   }
 
-  list(): Conversation[] {
+  list(machineScope?: 'local' | 'ssh', hostId?: string): Conversation[] {
     const rows = this.db
       .prepare(
         `SELECT c.id, c.url, c.title, c.project_id, c.updated_at,
@@ -257,9 +257,10 @@ export class ConversationStore {
                 p.path AS project_path
            FROM conversations c
            LEFT JOIN projects p ON p.id = c.project_id
+          WHERE (? IS NULL OR (p.machine_scope = ? AND p.host_id = ?))
           ORDER BY c.updated_at DESC`
       )
-      .all() as unknown as ConversationRow[]
+      .all(machineScope ?? null, machineScope ?? null, hostId ?? '') as unknown as ConversationRow[]
 
     return rows.map((row) => ({
       id: row.id,
