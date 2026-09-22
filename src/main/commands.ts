@@ -180,6 +180,7 @@ function summariseResult(result: ShellResult): TerminalLine {
   // `rejected` means it never ran at all — show the reason rather than a
   // meaningless "退出码 未知".
   if (result.rejected) return { kind: 'error', text: result.output.trim() || '命令未执行' }
+  if (result.interrupted) return { kind: 'notice', text: '命令已中断' }
   if (result.sessionLost) {
     return {
       kind: 'error',
@@ -201,6 +202,9 @@ function summariseResult(result: ShellResult): TerminalLine {
 function describeOutcome(result: ShellResult): string {
   if (result.rejected) {
     return `未执行：${result.output.trim() || '终端当前不可用'}`
+  }
+  if (result.interrupted) {
+    return '已中断'
   }
   if (result.sessionLost) {
     return '执行中终端会话意外结束（命令可能调用了 exit 或让会话崩溃），已自动重开会话'
@@ -266,6 +270,12 @@ export class CommandRunner {
   private pushTimer: NodeJS.Timeout | null = null
   /** Message ids currently executing, so a double click cannot run one twice. */
   private readonly inFlight = new Set<string>()
+  /** The exact backend whose run() promise is currently in flight. */
+  private activeShell: ExecutionShell | null = null
+  /** Distinguishes consecutive runs that reuse the same persistent shell object. */
+  private activeRunId = 0
+  /** Monotonic request id: if several commands arrive together, only the newest starts. */
+  private executionRequest = 0
 
   private automation: AutomationState = {
     // Manual by default: nothing runs on its own until the user asks for it.
@@ -459,30 +469,39 @@ export class CommandRunner {
     if (!record) return
     if (record.status !== 'pending' && record.status !== 'blocked') return
 
+    const request = (this.executionRequest += 1)
     this.inFlight.add(messageId)
 
     try {
-      await this.runRecord(record)
+      await this.runRecord(record, request)
     } finally {
       this.inFlight.delete(messageId)
     }
   }
 
-  private async runRecord(record: ExecutionRecord): Promise<void> {
+  private async runRecord(record: ExecutionRecord, request: number): Promise<void> {
     const conversationId = record.conversationId
     const messageId = record.messageId
-    const shell = this.ensureShell()
+    const shell = await this.prepareExecutionShell()
+    if (!shell) return
+    if (request !== this.executionRequest) {
+      this.deps.store.setExecutionStatus(messageId, 'skipped')
+      this.broadcastExecutions(conversationId)
+      return
+    }
 
     this.deps.store.setExecutionStatus(messageId, 'running')
     this.appendLine({ kind: 'command', text: record.command })
     this.broadcastExecutions(conversationId)
 
-    const result = await shell.run(record.command)
+    const result = await this.runOnShell(shell, record.command)
 
     this.deps.store.finishExecution(messageId, {
       status: result.rejected
         ? 'skipped'
-        : result.timedOut
+        : result.interrupted
+          ? 'interrupted'
+          : result.timedOut
           ? 'timeout'
           : result.exitCode === 0 && !result.sessionLost
             ? 'done'
@@ -497,7 +516,7 @@ export class CommandRunner {
     this.broadcastExecutions(conversationId)
 
     // A command that never ran has no result to hand back.
-    if (result.rejected) return
+    if (result.rejected || result.interrupted) return
 
     // Hand the output back whenever the loop is not explicitly stopped.
     //
@@ -558,7 +577,7 @@ export class CommandRunner {
       text: shell.kind === 'posix' ? '探测远端主机环境' : '探测本机环境'
     })
     this.appendLine({ kind: 'command', text: shell.probeCommand })
-    const result = await shell.run(shell.probeCommand)
+    const result = await this.runOnShell(shell, shell.probeCommand)
     this.appendLine(summariseResult(result))
     this.flushTerminal()
     return { kind: shell.kind, result }
@@ -585,7 +604,7 @@ export class CommandRunner {
 
     this.appendLine({ kind: 'command', text: command })
 
-    const result = await shell.run(command)
+    const result = await this.runOnShell(shell, command)
     this.appendLine(
       result.exitCode === 0 && !result.rejected && !result.sessionLost
         ? { kind: 'notice', text: `目录已切换到 ${shell.cwd || target}` }
@@ -607,10 +626,23 @@ export class CommandRunner {
 
     const shell = this.ensureShell()
     this.appendLine({ kind: 'command', text: command })
-    const result = await shell.run(command)
+    const result = await this.runOnShell(shell, command)
     this.appendLine(summariseResult(result))
     this.flushTerminal()
   }
+
+  /** Stop the current command without clearing the transcript. */
+  async interruptTerminal(): Promise<void> {
+    const shell = this.activeShell
+    if (!shell || !shell.running) {
+      this.appendLine({ kind: 'notice', text: '当前没有正在执行的命令' })
+      this.flushTerminal()
+      return
+    }
+
+    await shell.interrupt()
+  }
+
 
   resetTerminal(): void {
     // dispose(), not kill(): dropping the reference without tearing the shell
@@ -639,6 +671,80 @@ export class CommandRunner {
   }
 
   /* ---------------- internals ---------------- */
+
+  /** Track the backend currently executing so it can be interrupted immediately. */
+  private async runOnShell(shell: ExecutionShell, command: string): Promise<ShellResult> {
+    // Never let a second helper call overwrite the identity of the command that
+    // is actually in flight; that would make the 中断 button lose its target.
+    if (this.activeShell) {
+      return {
+        output: '终端正忙，忽略了这条命令。',
+        exitCode: null,
+        timedOut: false,
+        interrupted: false,
+        rejected: true,
+        sessionLost: false,
+        cwd: shell.cwd
+      }
+    }
+
+    const runId = (this.activeRunId += 1)
+    this.activeShell = shell
+    try {
+      return await shell.run(command)
+    } finally {
+      // A local PowerShell restart reuses the same ConversationShell object.
+      // Compare the run id as well, otherwise the old interrupted run can clear
+      // activeShell after its replacement has already started on that same object.
+      if (this.activeRunId === runId) this.activeShell = null
+    }
+  }
+
+  /** Give a newly requested stored command priority over the command in flight. */
+  private async prepareExecutionShell(): Promise<ExecutionShell | null> {
+    const active = this.activeShell
+    if (!active || !active.running) {
+      const remote = this.deps.remoteShell()
+      // During a deliberate SSH interrupt main deliberately keeps the old, now
+      // closed backend reference until SshManager has opened its replacement.
+      // Wait here rather than treating that short gap as permission to run local.
+      if (remote && !remote.alive) return this.waitForRemoteReplacement(remote)
+      return this.ensureShell()
+    }
+
+    const wasRemote = active.kind === 'posix'
+    const interrupted = await active.interrupt()
+    if (!interrupted) return this.ensureShell()
+    // interrupt() waits for the backend to close; it is safe to release the old
+    // identity now even if its awaiting caller has not reached finally yet.
+    if (this.activeShell === active) this.activeShell = null
+
+    this.appendLine({ kind: 'notice', text: '检测到新指令，已中断当前命令' })
+    this.flushTerminal()
+
+    if (!wasRemote) return this.ensureShell()
+
+    // Interrupting an SSH command closes only its exec channel. SshManager
+    // immediately reopens that channel; wait for it so the replacement command
+    // can never fall through to the local PowerShell shell by accident.
+    return this.waitForRemoteReplacement(active)
+  }
+
+  private async waitForRemoteReplacement(previous: ExecutionShell): Promise<ExecutionShell | null> {
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      const next = this.deps.remoteShell()
+      if (next && next !== previous && next.alive && !next.running) return next
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    }
+
+    this.appendLine({
+      kind: 'error',
+      text: '远端命令会话中断后没有及时重建，新指令保持待执行，避免误跑到本机。'
+    })
+    this.flushTerminal()
+    return null
+  }
 
   private ensureShell(): ExecutionShell {
     /*

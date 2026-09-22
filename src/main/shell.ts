@@ -118,6 +118,8 @@ export interface ShellResult {
    * long-running.
    */
   timedOut: false | 'idle' | 'ceiling'
+  /** True when the user or a newer command deliberately stopped this run. */
+  interrupted: boolean
   /** True when the command never ran at all (busy, spawn failure). */
   rejected: boolean
   /**
@@ -182,6 +184,8 @@ export interface ExecutionShell {
   /** Working directory after the last command; it persists between commands. */
   readonly cwd: string
   run(command: string): Promise<ShellResult>
+  /** Stop the command currently in flight. Returns false when there was nothing to stop. */
+  interrupt(): Promise<boolean>
   dispose(): void
 }
 
@@ -192,6 +196,7 @@ interface PendingRun {
   idleTimer: NodeJS.Timeout
   ceilingTimer: NodeJS.Timeout
   timedOut: false | 'idle' | 'ceiling'
+  interrupted: boolean
 }
 
 export interface ConversationShellOptions {
@@ -272,7 +277,7 @@ export class ConversationShell implements ExecutionShell {
 
     const cleaned = command.replace(/[\r\n]+$/, '')
     if (cleaned.trim() === '') {
-      return { output: '', exitCode: 0, timedOut: false, rejected: false, sessionLost: false, cwd: this.currentCwd }
+      return { output: '', exitCode: 0, timedOut: false, interrupted: false, rejected: false, sessionLost: false, cwd: this.currentCwd }
     }
 
     const ready = await this.ensureSession()
@@ -301,7 +306,7 @@ export class ConversationShell implements ExecutionShell {
       }, MAX_RUNTIME_MS)
 
       // Set before writing: the reply can arrive before write() returns.
-      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false }
+      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false, interrupted: false }
 
       try {
         stdin.write(`${Buffer.from(cleaned, 'utf16le').toString('base64')}\n`)
@@ -310,6 +315,30 @@ export class ConversationShell implements ExecutionShell {
         resolve(this.reject('写入终端失败。'))
       }
     })
+  }
+
+  async interrupt(): Promise<boolean> {
+    const child = this.child
+    if (!child || !this.pending) return false
+
+    // Mark before killing so handleExit can distinguish a deliberate interrupt
+    // from an unexpected session loss and settle run() with the right status.
+    this.pending.interrupted = true
+
+    const closed = new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      child.once('close', finish)
+      child.once('error', finish)
+    })
+
+    this.killChild(child)
+    await closed
+    return true
   }
 
   dispose(): void {
@@ -332,6 +361,7 @@ export class ConversationShell implements ExecutionShell {
       output: message,
       exitCode: null,
       timedOut: false,
+      interrupted: false,
       rejected: true,
       sessionLost: false,
       cwd: this.currentCwd
@@ -349,6 +379,7 @@ export class ConversationShell implements ExecutionShell {
       output: partial === '' ? reason : `${partial}\n${reason}`,
       exitCode: null,
       timedOut: false,
+      interrupted: false,
       rejected: false,
       sessionLost: true,
       cwd: this.currentCwd
@@ -456,14 +487,15 @@ export class ConversationShell implements ExecutionShell {
 
     if (this.pending) {
       const pending = this.pending
-      deliberate = pending.timedOut !== false
+      deliberate = pending.timedOut !== false || pending.interrupted
       this.clearPending()
       pending.resolve({
         output: pending.output.trimEnd(),
         exitCode: null,
         timedOut: pending.timedOut,
+        interrupted: pending.interrupted,
         rejected: false,
-        sessionLost: pending.timedOut === false,
+        sessionLost: pending.timedOut === false && !pending.interrupted,
         cwd: this.currentCwd
       })
     }
@@ -510,6 +542,7 @@ export class ConversationShell implements ExecutionShell {
           output: pending.output.trimEnd(),
           exitCode: Number(match[2]),
           timedOut: false,
+          interrupted: false,
           rejected: false,
           sessionLost: false,
           cwd: this.currentCwd

@@ -192,6 +192,7 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   sendTerminalInput: (text: string): Promise<TerminalState> =>
     ipcRenderer.invoke(IpcChannels.terminalInput, text),
 
+  interruptTerminal: (): Promise<TerminalState> => ipcRenderer.invoke(IpcChannels.terminalInterrupt),
   resetTerminal: (): Promise<TerminalState> => ipcRenderer.invoke(IpcChannels.terminalReset),
 
   setTerminalCwd: (path: string): Promise<TerminalState> =>

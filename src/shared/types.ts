@@ -41,6 +41,7 @@ export const IpcChannels = {
   executionChanged: 'execution:changed',
   terminalGetState: 'terminal:get-state',
   terminalInput: 'terminal:input',
+  terminalInterrupt: 'terminal:interrupt',
   terminalReset: 'terminal:reset',
   terminalSetCwd: 'terminal:set-cwd',
   terminalChanged: 'terminal:changed',
@@ -659,6 +660,7 @@ export type ExecutionStatus =
   | 'pending'
   | 'blocked'
   | 'running'
+  | 'interrupted'
   | 'done'
   | 'failed'
   | 'timeout'
@@ -941,6 +943,8 @@ export interface AppApi {
   getTerminalState(): Promise<TerminalState>
   /** Type a command straight into the conversation's shell. */
   sendTerminalInput(text: string): Promise<TerminalState>
+  /** Stop the command currently running in the execution shell. */
+  interruptTerminal(): Promise<TerminalState>
   /** Kill the shell and start a fresh one. */
   resetTerminal(): Promise<TerminalState>
   /**

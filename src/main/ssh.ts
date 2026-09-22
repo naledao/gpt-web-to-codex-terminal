@@ -19,6 +19,11 @@ const MAX_EXEC_ATTEMPTS = 3
 /** Coalesce bursts of mirrored output into one push per tick. */
 const MIRROR_PUSH_INTERVAL_MS = 150
 
+/** Quote one path for the POSIX command used to reopen a killed exec channel. */
+function posixQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
 /** Everything needed to open one connection. */
 export interface SshTarget {
   hostId: string
@@ -336,7 +341,7 @@ export class SshManager {
    * "delete the old build directory" landing on the user's own PC because the
    * remote channel never came up is not a failure mode worth being subtle about.
    */
-  private openExecChannel(client: Client): void {
+  private openExecChannel(client: Client, resumeCwd = ''): void {
     this.execAttempts += 1
     if (this.execAttempts > MAX_EXEC_ATTEMPTS) {
       this.pushLine('error', '命令会话反复断开，已放弃重开。模型命令将继续在本地机器上执行。')
@@ -344,7 +349,10 @@ export class SshManager {
       return
     }
 
-    client.exec(REMOTE_SHELL_COMMAND, (error, stream) => {
+    const command =
+      resumeCwd === '' ? REMOTE_SHELL_COMMAND : `cd ${posixQuote(resumeCwd)} && ${REMOTE_SHELL_COMMAND}`
+
+    client.exec(command, (error, stream) => {
       if (error) {
         this.pushLine('error', `无法在远端启动命令会话：${error.message}——模型命令将继续在本地执行`)
         this.emit()
@@ -363,16 +371,24 @@ export class SshManager {
 
       const shell = new RemoteShell(stream, {
         onOutput: (chunk) => this.pushModelOutput(chunk),
-        onClosed: () => {
+        onClosed: (interrupted) => {
+          // Deliberate command interruption is not a flaky-channel retry.
+          // Cancel the attempt consumed by the channel we intentionally killed,
+          // so repeated interrupts can always reopen the remote execution shell.
+          if (interrupted && this.execAttempts > 0) this.execAttempts -= 1
           if (this.exec === shell) this.exec = null
           if (this.client === client && this.state.status === 'connected') {
             this.pushLine('notice', '命令会话已断开，正在重开…')
-            this.openExecChannel(client)
+            this.openExecChannel(client, interrupted ? shell.cwd : '')
           }
-          this.emit()
+          // During a deliberate interrupt do not publish the transient null exec
+          // backend. Main would otherwise briefly route/probe against LOCAL while
+          // the SSH execution channel is being reopened.
+          if (!interrupted) this.emit()
         }
       })
 
+      if (resumeCwd !== '') shell.noteCwd(resumeCwd)
       this.exec = shell
       this.pushLine('notice', '已接管：模型命令将在这台主机上执行')
       this.emit()

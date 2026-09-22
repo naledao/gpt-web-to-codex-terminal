@@ -156,6 +156,11 @@ async function probeEnvironment(): Promise<EnvironmentInfo> {
   if (!runner || !store) return { ...environment }
   try {
     const { kind, result } = await runner.runEnvironmentProbe()
+    // A probe can itself be preempted by a newly arriving model command. Never
+    // turn an interrupted/rejected probe into a fake environment description.
+    if (result.rejected || result.interrupted || result.timedOut || result.sessionLost) {
+      return { ...environment }
+    }
 
     // One snapshot, used for both the description and the scope — see
     // environmentScope for why they must not be resolved separately.
@@ -698,6 +703,12 @@ function registerIpcHandlers(): void {
     return runner.getTerminalState()
   })
 
+  ipcMain.handle(IpcChannels.terminalInterrupt, async (event): Promise<TerminalState> => {
+    if (!fromAppWindow(event) || !runner) return FALLBACK_TERMINAL_STATE
+    await runner.interruptTerminal()
+    return runner.getTerminalState()
+  })
+
   ipcMain.handle(IpcChannels.terminalReset, (event): TerminalState => {
     if (!fromAppWindow(event) || !runner) return FALLBACK_TERMINAL_STATE
     runner.resetTerminal()
@@ -954,8 +965,13 @@ if (!app.requestSingleInstanceLock()) {
        */
       const next = ssh?.execShell() ?? null
       if (next !== remoteShell) {
+        const previous = remoteShell
         remoteShell = next
-        void probeEnvironment()
+        // A deliberate command interrupt replaces one live exec channel with
+        // another on the SAME SSH host. Re-probing there would race the replacement
+        // command for the shell; attach/detach still changes null <-> non-null and
+        // therefore still rebuilds the environment/prompt.
+        if (previous === null || next === null) void probeEnvironment()
       }
     })
 

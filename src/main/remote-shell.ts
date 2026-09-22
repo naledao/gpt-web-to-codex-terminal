@@ -12,6 +12,7 @@ interface PendingRun {
   idleTimer: NodeJS.Timeout
   ceilingTimer: NodeJS.Timeout
   timedOut: false | 'idle' | 'ceiling'
+  interrupted: boolean
 }
 
 /**
@@ -83,7 +84,7 @@ export class RemoteShell implements ExecutionShell {
       /** Called with decoded output as it arrives, for live display. */
       onOutput?: (chunk: string) => void
       /** Called when the channel goes away; the manager decides whether to reopen. */
-      onClosed?: () => void
+      onClosed?: (interrupted: boolean) => void
     } = {}
   ) {
     stream.on('data', (chunk: Buffer) => this.handleData(chunk))
@@ -121,6 +122,7 @@ export class RemoteShell implements ExecutionShell {
         output: '',
         exitCode: 0,
         timedOut: false,
+        interrupted: false,
         rejected: false,
         sessionLost: false,
         cwd: this.currentCwd
@@ -140,7 +142,7 @@ export class RemoteShell implements ExecutionShell {
         this.terminate()
       }, MAX_RUNTIME_MS)
 
-      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false }
+      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false, interrupted: false }
 
       try {
         this.stream.write(buildEnvelope(this.token, seq, cleaned))
@@ -149,6 +151,16 @@ export class RemoteShell implements ExecutionShell {
         resolve(this.reject('写入远端终端失败。'))
       }
     })
+  }
+
+  async interrupt(): Promise<boolean> {
+    if (!this.pending || this.closed || this.disposed) return false
+
+    this.pending.interrupted = true
+    const closed = new Promise<void>((resolve) => this.stream.once('close', () => resolve()))
+    this.terminate()
+    await closed
+    return true
   }
 
   dispose(): void {
@@ -171,6 +183,7 @@ export class RemoteShell implements ExecutionShell {
       output: message,
       exitCode: null,
       timedOut: false,
+      interrupted: false,
       rejected: true,
       sessionLost: false,
       cwd: this.currentCwd
@@ -195,6 +208,7 @@ export class RemoteShell implements ExecutionShell {
       output: partial === '' ? reason : `${partial}\n${reason}`,
       exitCode: null,
       timedOut: false,
+      interrupted: false,
       rejected: false,
       sessionLost: true,
       cwd: this.currentCwd
@@ -226,21 +240,23 @@ export class RemoteShell implements ExecutionShell {
     this.closed = true
 
     const pending = this.pending
+    const interrupted = pending?.interrupted ?? false
     if (pending) {
       this.clearPending()
       pending.resolve({
         output: pending.output.trimEnd(),
         exitCode: null,
         timedOut: pending.timedOut,
+        interrupted: pending.interrupted,
         rejected: false,
         // A channel that vanishes mid-command is a lost session, not a timeout —
         // unless a timer killed it, in which case the timer already said why.
-        sessionLost: pending.timedOut === false,
+        sessionLost: pending.timedOut === false && !pending.interrupted,
         cwd: this.currentCwd
       })
     }
 
-    if (!this.disposed) this.options.onClosed?.()
+    if (!this.disposed) this.options.onClosed?.(interrupted)
   }
 
   /**
@@ -274,6 +290,7 @@ export class RemoteShell implements ExecutionShell {
           output: pending.output.trimEnd(),
           exitCode: Number(match[2]),
           timedOut: false,
+          interrupted: false,
           rejected: false,
           sessionLost: false,
           cwd: this.currentCwd

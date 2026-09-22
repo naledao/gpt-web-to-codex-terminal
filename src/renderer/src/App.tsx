@@ -37,6 +37,7 @@ const STATUS_LABEL: Record<ExecutionStatus, string> = {
   pending: '待执行',
   blocked: '需确认',
   running: '执行中',
+  interrupted: '已中断',
   done: '完成',
   failed: '失败',
   timeout: '超时',
@@ -56,6 +57,7 @@ function statusTone(status: ExecutionStatus): string {
   if (status === 'running') return 'badge badge--running'
   if (status === 'done') return 'badge badge--ok'
   if (status === 'failed' || status === 'timeout') return 'badge badge--bad'
+  if (status === 'interrupted') return 'badge badge--warn'
   if (status === 'blocked') return 'badge badge--warn'
   return 'badge'
 }
@@ -679,6 +681,11 @@ export default function App(): JSX.Element {
     }
   }, [])
 
+  const interruptTerminal = useCallback(async (): Promise<void> => {
+    const next = await window.api.interruptTerminal()
+    setTerminal(next)
+  }, [])
+
   const resetTerminal = useCallback(async (): Promise<void> => {
     try {
       setTerminal(await window.api.resetTerminal())
@@ -1202,6 +1209,16 @@ export default function App(): JSX.Element {
             }
           />
           <span className="panel__spacer" />
+          {terminalCollapsed ? null : (
+            <button
+              type="button"
+              className="panel__sync"
+              title="中断当前正在执行的命令"
+              onClick={() => void interruptTerminal()}
+            >
+              中断
+            </button>
+          )}
           {terminalCollapsed ? null : sshActive ? (
             <>
               <button
