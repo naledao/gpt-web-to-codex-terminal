@@ -210,11 +210,11 @@ export default function App(): JSX.Element {
   }, [executions, waiting])
 
   useEffect(() => {
-    if (currentExecution?.status !== 'running' || currentExecution.startedAt === null) return
+    if (interceptor?.taskStartedAt == null || interceptor.taskFinishedAt != null) return
     setDurationNow(Date.now())
     const timer = window.setInterval(() => setDurationNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [currentExecution?.messageId, currentExecution?.startedAt, currentExecution?.status])
+  }, [interceptor?.taskStartedAt, interceptor?.taskFinishedAt])
   // Runtime info, kept as a working example of a renderer -> main IPC call.
   useEffect(() => {
     let cancelled = false
@@ -1077,9 +1077,9 @@ export default function App(): JSX.Element {
             {waiting.length > 0 ? (
               <span className="terminal__count terminal__count--warn">{waiting.length} 条待处理</span>
             ) : null}
-            {currentExecution?.startedAt != null ? (
+            {interceptor?.taskStartedAt != null ? (
               <span className="terminal__count terminal__count--time">
-                任务耗时 {formatDuration((currentExecution.finishedAt ?? durationNow) - currentExecution.startedAt)}
+                任务耗时 {formatDuration((interceptor.taskFinishedAt ?? durationNow) - interceptor.taskStartedAt)}
               </span>
             ) : null}
           </div>

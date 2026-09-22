@@ -618,6 +618,10 @@ export interface InterceptorStatus {
   installed: boolean
   injectedCount: number
   lastSentText: string | null
+  /** Epoch milliseconds when the current user goal was successfully sent. */
+  taskStartedAt: number | null
+  /** Epoch milliseconds when the final non-command assistant reply settled. */
+  taskFinishedAt: number | null
   prefix: string
 }
 
@@ -628,6 +632,7 @@ export interface InterceptorPageEvent {
     | 'configured'
     | 'injected'
     | 'sent'
+    | 'task-finished'
     | 'send-failed'
     | 'inject-failed'
     | 'command'

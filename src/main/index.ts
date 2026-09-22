@@ -312,6 +312,8 @@ const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
   installed: false,
   injectedCount: 0,
   lastSentText: null,
+  taskStartedAt: null,
+  taskFinishedAt: null,
   prefix: ''
 }
 

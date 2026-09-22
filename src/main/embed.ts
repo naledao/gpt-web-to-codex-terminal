@@ -173,6 +173,8 @@ export class ChatGptEmbed {
     installed: false,
     injectedCount: 0,
     lastSentText: null,
+    taskStartedAt: null,
+    taskFinishedAt: null,
     // A safe default until main has probed the machine and calls
     // setPromptPrefix(); see buildTerminalPrompt().
     prefix: buildTerminalPrefix(FALLBACK_ENVIRONMENT)
@@ -662,6 +664,13 @@ export class ChatGptEmbed {
         break
       case 'sent':
         this.interceptor.lastSentText = payload.text ?? null
+        this.interceptor.taskStartedAt = Date.now()
+        this.interceptor.taskFinishedAt = null
+        break
+      case 'task-finished':
+        if (this.interceptor.taskStartedAt !== null && this.interceptor.taskFinishedAt === null) {
+          this.interceptor.taskFinishedAt = Date.now()
+        }
         break
       case 'command':
         if (payload.messageId && typeof payload.command === 'string') {

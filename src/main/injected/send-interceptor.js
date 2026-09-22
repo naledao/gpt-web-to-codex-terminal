@@ -525,7 +525,17 @@
       if (finished && state.lastUnparsedMessageId !== messageId && /"command"\s*:/.test(text)) {
         state.lastUnparsedMessageId = messageId
         report({ event: 'parse-failed', text: text.slice(0, 300) })
+        return
       }
+
+      // A settled non-command reply is the final answer for this goal.
+      // Require the send button to be back so a pause while streaming cannot stop the timer early.
+      if (text.trim() && state.awaitingReplySince !== 0 && findSendButton()) {
+        state.lastCommandMessageId = messageId
+        state.awaitingReplySince = 0
+        report({ event: 'task-finished', messageId })
+      }
+
       return
     }
 
