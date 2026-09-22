@@ -1061,8 +1061,23 @@ body {
   background: rgba(0, 0, 0, 0.55);
 }
 
+/*
+ * A dialog is a column with a bounded height, and only the middle scrolls.
+ *
+ * The settings dialog now carries a long session-import block, so growing to fit
+ * the content pushed the buttons off-screen on a short window. Capping the box and
+ * letting `.modal__body` scroll keeps the title, the close button and 保存 always
+ * reachable. `min-height: 0` on the body is load-bearing: a flex item defaults to
+ * `min-height: auto` and would refuse to shrink below its content, so the body
+ * would overflow the box instead of scrolling inside it.
+ */
 .modal__box {
+  display: flex;
+  flex-direction: column;
   width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  /* Keep the frame taller than its own head+foot even in a squashed window. */
+  min-height: min(360px, calc(100vh - 48px));
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-chrome);
@@ -1075,6 +1090,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
+  /* The head and foot are the parts that must not move; only the body gives. */
+  flex: none;
 }
 
 .modal__head {
@@ -1086,11 +1103,44 @@ body {
 }
 
 .modal__body {
+  /* `1 1 auto` + `min-height: 0`: take the leftover height, then scroll inside it. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 16px 14px;
+}
+
+/* Both scroll containers need the same slim scrollbar (see the form rule below). */
+.modal__body::-webkit-scrollbar,
+.modal__body > form::-webkit-scrollbar {
+  width: 10px;
+}
+
+.modal__body::-webkit-scrollbar-thumb,
+.modal__body > form::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-clip: content-box;
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+.modal__body::-webkit-scrollbar-thumb:hover,
+.modal__body > form::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.3);
 }
 
 .field {
   display: block;
+}
+
+/*
+ * Fields nested inside a field (the session-import block) need their own rhythm:
+ * `.modal__body > form > .field` only reaches direct children, so without this the
+ * two inputs would sit flush against the explanatory text above them.
+ */
+.field .field {
+  margin-top: 12px;
 }
 
 /* Read-only report of what the startup probe found. */
@@ -1342,10 +1392,29 @@ body {
   width: 88px;
 }
 
-/* The dialog body has its own padding; bleed the footer back to the edges. */
-.modal__body .modal__foot {
-  margin: 16px -14px -16px;
-  border-top: 1px solid var(--border);
+/*
+ * The footer is a direct child of `.modal__box` in the settings dialog, and the body
+ * is the only scroll container — so 保存 stays put while the settings list scrolls.
+ *
+ * The SSH dialog cannot use that shape: its 连接 button is `type="submit"` and must
+ * live inside the form, and a footer inside a scroll container scrolls away. There
+ * the FORM becomes the scroll container and the footer is exempted from it — same
+ * result, without `form="…"` attribute indirection.
+ *
+ * No negative margins here: `.modal__body` keeps its padding and the form simply
+ * fills it. Bleeding the form to the edges would make its content scroll behind the
+ * body's rounded corners.
+ */
+.modal__body > form {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.modal__body > form > .modal__foot {
+  flex: none;
+  margin-top: 16px;
 }
 
 .modal__body > form > .field {
