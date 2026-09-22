@@ -1586,8 +1586,13 @@ export default function App(): JSX.Element {
         <span className="statusbar__title" title={embed.url}>
           {embed.title || embed.url || '未加载'}
         </span>
-        {conversationId ? (
-          <span className="statusbar__id">已记录 · {conversationId.slice(0, 8)}</span>
+        {(ssh?.remoteExec ? ssh.modelCwd : terminal?.cwd) ? (
+          <span
+            className="statusbar__id"
+            title={ssh?.remoteExec ? ssh.modelCwd : terminal?.cwd}
+          >
+            {ssh?.remoteExec ? ssh.modelCwd : terminal?.cwd}
+          </span>
         ) : null}
         {isAuto ? (
           <span className="statusbar__mode">
