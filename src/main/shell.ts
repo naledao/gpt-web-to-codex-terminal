@@ -129,8 +129,27 @@ export interface ShellResult {
   cwd: string
 }
 
-/** Kill a command that has produced NO output for this long — it is stuck. */
-export const IDLE_TIMEOUT_MS = 120_000
+/**
+ * Kill a command that has produced NO output for this long.
+ *
+ * Six minutes rather than two, because silence does not actually mean stuck — it
+ * only means nothing has been flushed. A pipeline whose last stage needs all of
+ * its input before emitting anything (`Format-Table -AutoSize`, `Sort-Object`,
+ * `Group-Object`, `Measure-Object`) is silent **by construction**, and there is no
+ * way to un-buffer it from outside: `$PSDefaultParameterValues` does not override
+ * an explicitly passed `-AutoSize`, and the buffering happens inside the user's
+ * own pipeline where the wrapper cannot reach it.
+ *
+ * The case that set this number: `Get-ChildItem -Recurse -File | Select-String … |
+ * Format-Table -AutoSize` over this repo takes ~115s standalone and more than
+ * 120s through the wrapper, and emits its first byte only at the very end. Two
+ * minutes killed it with zero output captured.
+ *
+ * Raising the number does not make a stuck command safe — it just costs more time
+ * before the loop recovers. 重置 kills the session (and the whole process tree)
+ * immediately, and that remains the way to stop something you know is stuck.
+ */
+export const IDLE_TIMEOUT_MS = 6 * 60_000
 
 /** Absolute ceiling, so a command that streams forever still ends eventually. */
 export const MAX_RUNTIME_MS = 30 * 60_000
@@ -425,8 +444,19 @@ export class ConversationShell implements ExecutionShell {
     this.readyResolve?.(false)
     this.readyResolve = null
 
+    /*
+     * A session killed by OUR OWN timeout is not news.
+     *
+     * The timeout message already says the session was terminated and that the
+     * next command reopens it. Announcing "PowerShell 会话已结束" first makes a
+     * deliberate kill read like a crash, and it lands in the terminal above the
+     * explanation that would have made sense of it.
+     */
+    let deliberate = false
+
     if (this.pending) {
       const pending = this.pending
+      deliberate = pending.timedOut !== false
       this.clearPending()
       pending.resolve({
         output: pending.output.trimEnd(),
@@ -438,7 +468,7 @@ export class ConversationShell implements ExecutionShell {
       })
     }
 
-    if (wasAlive) this.options.onExit?.()
+    if (wasAlive && !deliberate) this.options.onExit?.()
   }
 
   private handleData(chunk: Buffer): void {

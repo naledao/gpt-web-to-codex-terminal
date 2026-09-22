@@ -407,9 +407,9 @@ Auto-executing model output on a real machine is genuinely risky, so:
   afterwards. Both Windows and Linux forms are listed, because the model writes
   whichever one the prompt asked for.
 - **暂停** stops the loop without disarming; **手动执行** makes every command wait.
-- **Idle timeout** — a command that produces no output for two minutes is treated as
-  stuck and killed (a command waiting on stdin looks exactly like this), with a
-  thirty-minute absolute ceiling for something that streams forever.
+- **Idle timeout** — a command that produces no output for six minutes is treated as
+  stuck and killed, with a thirty-minute absolute ceiling for something that streams
+  forever. See [why silence is ambiguous](#why-silence-is-ambiguous) below.
 - Every execution is written to the `executions` table, keyed by ChatGPT's assistant
   message id, so a command that already ran is never run again — across restarts.
 
@@ -418,6 +418,43 @@ that runs and fails produces output that goes back to the model, which corrects 
 while blocking produces nothing to correct. 手动执行 and 暂停 are the brakes. The
 consequence is stated plainly: opening an old conversation in auto mode runs whatever
 command sits in its last reply.
+
+### Why silence is ambiguous
+
+There is no PTY, so "has produced no output for six minutes" is the only signal
+available for "this command is stuck". Two very different situations produce it:
+
+1. **It is waiting for input that will never come.** Standard input is empty, so
+   `Read-Host`, a `read`, or a password prompt sits there forever.
+2. **It is working, and the output is buffered.** `Format-Table` — especially
+   `-AutoSize` — `Format-List`, `Format-Wide`, `Sort-Object` and `Group-Object` all have
+   to consume their **entire** input before emitting the first line.
+
+The second is not hypothetical. Run against this repo, this was killed with **zero
+bytes captured** in its execution record:
+
+```powershell
+Get-ChildItem -Recurse -File | Select-String -Pattern '...' | Format-Table -AutoSize
+```
+
+It matched 32,448 lines (11,093 files inside `node_modules`) and the first of them
+appeared only when the whole pipeline finished. Measured on the same data: without
+formatting the first line arrives at 0.56s, with `Format-Table -AutoSize` all five rows
+land together at 1.82s.
+
+**This cannot be un-buffered from outside.** `$PSDefaultParameterValues['Format-Table:AutoSize']
+= $false` does not override an explicitly passed `-AutoSize` (measured — both buffered),
+and the buffering happens inside your own pipeline where the wrapper cannot reach.
+
+So the timeout was widened from two minutes to **six**, and the timeout message names
+both causes rather than asserting the interactive one: a model told only "it wanted
+input" will rewrite a command that was working. The prompt also asks it not to write
+buffering pipelines in the first place (Windows 命令规范 #5, POSIX #6), and to exclude
+`node_modules` / `.git` / `out` from whole-repo searches.
+
+Widening it costs nothing more than patience when a command really is stuck — **重置**
+kills the session and its entire process tree immediately, and that remains the way to
+stop something you already know is stuck.
 
 ### Known limits
 

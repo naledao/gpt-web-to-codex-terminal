@@ -134,21 +134,43 @@ function formatExitCode(code: number | null): string {
   return String(code)
 }
 
+/** Whole minutes read better than a six-digit second count once the window is wide. */
+function humanDuration(ms: number): string {
+  const seconds = Math.round(ms / 1000)
+  if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60} 分钟`
+  return `${seconds} 秒`
+}
+
 /**
  * Why a command was killed, in words.
  *
- * The two cases are not interchangeable: an idle kill means the command was
- * waiting for input that never comes (the model should stop writing interactive
- * commands), while the ceiling means it really was that long (the model should
- * split the work up). Saying only "超时" teaches it nothing.
+ * The two timeouts are not interchangeable: an idle kill means nothing came out,
+ * the ceiling means it really was that long. Saying only "超时" teaches the model
+ * nothing.
+ *
+ * The idle case names BOTH causes on purpose. From here they are the same thing —
+ * silence — and naming only the interactive one is worse than saying nothing,
+ * because the model reads this and rewrites its command. A real case: a
+ * `Get-ChildItem -Recurse -File | Select-String … | Format-Table -AutoSize` over a
+ * repo emits its FIRST line only after several minutes, so it is indistinguishable
+ * from a hang. The model would have "fixed" a command that was working.
  */
 function describeTimeout(kind: 'idle' | 'ceiling'): string {
-  const idleSeconds = Math.round(IDLE_TIMEOUT_MS / 1000)
+  const idleWindow = humanDuration(IDLE_TIMEOUT_MS)
   const maxMinutes = Math.round(MAX_RUNTIME_MS / 60_000)
 
-  return kind === 'idle'
-    ? `命令连续 ${idleSeconds} 秒没有任何输出，已判定为卡住并终止（标准输入是空的，需要交互输入的命令一定会这样）`
-    : `命令运行超过 ${maxMinutes} 分钟上限，已强制终止`
+  if (kind === 'ceiling') {
+    return `命令运行超过 ${maxMinutes} 分钟上限，已强制终止（任务太大，请拆成几步再做）`
+  }
+
+  return [
+    `命令连续 ${idleWindow}没有任何输出，已判定为卡住并终止了会话（下一条命令会自动重开）。`,
+    '两种可能，对照你写的命令判断：',
+    '① 它在等交互输入 —— 标准输入是空的，read / Read-Host / 需要密码的提示都会这样；',
+    '② 它在干活，只是输出被缓冲了 —— Format-Table（尤其 -AutoSize）/ Format-List /',
+    '   Format-Wide / Sort-Object / Group-Object 都要收齐**全部**输入才吐第一行。',
+    '如果是 ②：去掉末尾的 Format-*，或先缩小范围（排除 node_modules / .git / out），或拆小任务。'
+  ].join('\n')
 }
 
 /** The one-line summary shown in the terminal after a run finishes. */

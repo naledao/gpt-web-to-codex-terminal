@@ -311,7 +311,7 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
   - 试过但**无效**的假设（别再走一遍）：`$Host.UI.RawUI` 显式设尺寸、`$ProgressPreference`、
     去掉 `-NonInteractive`、表格宽度查询 —— 都不是原因。
 - **超时靠「空闲」判定，不是固定时长。** 两个计时器：
-  - `IDLE_TIMEOUT_MS`（2 分钟**没有任何输出**）→ 判定卡住并终止。**任何输出都会重置它。**
+  - `IDLE_TIMEOUT_MS`（**6 分钟**没有任何输出）→ 判定卡住并终止。**任何输出都会重置它。**
   - `MAX_RUNTIME_MS`（30 分钟绝对上限）→ 防"一直有输出但永不结束"。
   - 原来的固定 60 秒是错的：`npm install`、编译这类**正常且一直在推进**的任务远超 60 秒，
     却会被误杀。改成看输出之后，干活的命令不会被杀，卡住的才会。
@@ -319,6 +319,28 @@ TypeError: Cannot read properties of undefined (reading 'isPackaged')
   - `timedOut` 的类型是 `false | 'idle' | 'ceiling'`（不是 boolean，真值判断仍然可用）。
     **两种情况必须给模型不同的解释**：idle → "标准输入是空的，不要写需要交互输入的命令"；
     ceiling → "把任务拆小"。只说"超时"什么都教不了它。
+  - **idle 的解释必须同时列出「等输入」和「输出被缓冲」两种原因，不能只写前者。**
+    踩过的实例：`Get-ChildItem -Recurse -File | Select-String … | Format-Table -AutoSize`
+    扫本仓库，`executions` 表里的记录是 `out=0B`、`120.1s`、`timeout` ——
+    **整整 120 秒一个字节都没收到**。原因是 `Format-Table`（尤其 `-AutoSize`）
+    要收齐全部输入才吐第一行；实测同一份数据，不格式化时第一行 0.56s 就出来、
+    带 `-AutoSize` 时五行全部压到 1.82s。
+    - **只报"需要交互输入"比不报还糟**：模型会照着这个解释去"修正"一条本来能用的命令。
+    - 所以 idle 消息里要写明两种可能、说明为什么缓冲看起来像卡住、并给出出路
+      （去掉末尾的 `Format-*` / 缩小范围排除 `node_modules` / 拆小任务）。
+    - **提示词里也要拦一手**（Windows 的 【命令规范】第 5 条、POSIX 的第 6 条）：
+    不动手预防的话，模型下一轮还会写出同样的管道。
+    - **缓冲没法从外面解开，别再试了**：`$PSDefaultParameterValues['Format-Table:AutoSize'] = $false`
+      **覆盖不了显式传进去的 `-AutoSize`**（实测两次都是 1.56~1.66s 才吐），
+      而且缓冲发生在用户自己的管道内部，包装脚本够不着。
+    - 所以 `IDLE_TIMEOUT_MS` 从 2 分钟放宽到 **6 分钟**：沉默本来就 ≠ 卡住，
+      2 分钟是在错误假设下定出来的。放宽的代价只是"真卡住时多等一会儿"，
+      而用户随时可以点**「重置」**立刻结束（`resetTerminal` → `dispose` → `taskkill /T /F`，
+      整棵进程树一起走）。**那个按钮是这条超时真正的兜底，别把它去掉。**
+  - **自己超时杀掉的会话，不要再报一句「PowerShell 会话已结束」。**
+    `handleExit` 里用 `pending.timedOut !== false` 判断这是不是我们主动杀的；
+    是的话就**不要**触发 `onExit`。否则终端里会先冒出一句"会话已结束"、
+    再跟一句超时解释 —— 主动的 kill 看起来像崩溃，而解释还排在它后面。
 - **优先 `pwsh.exe`（PowerShell 7），回退 `powershell.exe`（5.1）。**
   7 默认 UTF-8 且支持 `&&`，但 7 不是 Windows 自带，所以两者都可能遇到。
   **不要假设是哪一个** —— 探测到的版本决定提示词里 `&&`/`||` 那条规则怎么写
