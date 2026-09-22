@@ -1086,7 +1086,7 @@ export default function App(): JSX.Element {
 
           {interceptor?.lastSentText ? (
             <p className="terminal__last" title={interceptor.lastSentText}>
-              最近发送：{interceptor.lastSentText}
+              当前的目标：{interceptor.lastSentText}
             </p>
           ) : null}
 
