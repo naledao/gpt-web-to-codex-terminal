@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: windows-release-main
+  cancel-in-progress: false
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -15,6 +19,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -22,18 +28,24 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Bump patch version
+        id: version
+        shell: pwsh
+        run: |
+          npm version patch --no-git-tag-version
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to v$version [skip ci]"
+          git push origin HEAD:main
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build Windows installer
         run: npm run dist:win
-
-      - name: Read package version
-        id: version
-        shell: pwsh
-        run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Create GitHub Release and upload installer
         shell: pwsh
@@ -41,11 +53,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           RUN_NUMBER: ${{ github.run_number }}
-          COMMIT_SHA: ${{ github.sha }}
         run: |
-          $tag = "v$env:VERSION-build.$env:RUN_NUMBER"
+          $tag = "v$env:VERSION"
           $title = "GPT Web to Codex Terminal v$env:VERSION (build $env:RUN_NUMBER)"
-          git tag $tag $env:COMMIT_SHA
+          git tag $tag HEAD
           git push origin $tag
           gh release create $tag `
             --title $title `
