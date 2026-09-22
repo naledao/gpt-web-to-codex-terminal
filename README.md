@@ -243,6 +243,33 @@ describes that machine because it is the same shell the commands run in.
 
 **重置** is the only thing that clears it.
 
+### The current step
+
+Above the output the terminal pane keeps a standing call-out of the command the loop
+is on — the model's own one-line description of it, the command itself, its status and
+its exit code:
+
+```
+[执行中]  检查 ffmpeg 是否安装                    退出码 —
+> where.exe ffmpeg
+```
+
+The description was already being stored with every command and shown nowhere; the
+command itself existed only as one line in the scrollback, so answering "what is it
+doing right now, and why" meant reading back up through the terminal to find it.
+
+What it shows, in order of preference:
+
+| | |
+| --- | --- |
+| a **running** command | that is literally the one executing |
+| else the **newest waiting** one | that is what the next 运行 click would start |
+| else the **last finished** one | so the block does not go blank the moment a command ends |
+
+The running case is the one worth stating: if you click 运行 on an older waiting
+command while a newer one is still queued, the block follows what is *actually*
+running, not the newest row in the table.
+
 ### Why the backend is PowerShell, and why commands go in base64
 
 An earlier version of this app drove `cmd.exe`. It was abandoned for a concrete,

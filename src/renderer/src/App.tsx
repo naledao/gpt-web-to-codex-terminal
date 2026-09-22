@@ -43,6 +43,20 @@ const STATUS_LABEL: Record<ExecutionStatus, string> = {
 /** Statuses where a click can still start the command. */
 const RUNNABLE: ReadonlySet<ExecutionStatus> = new Set<ExecutionStatus>(['pending', 'blocked'])
 
+/**
+ * Colour a status badge by what it means rather than by which status it is.
+ *
+ * `blocked` is amber like a warning because that is all it is in auto mode — the
+ * audit list warns, it does not stop anything.
+ */
+function statusTone(status: ExecutionStatus): string {
+  if (status === 'running') return 'badge badge--running'
+  if (status === 'done') return 'badge badge--ok'
+  if (status === 'failed' || status === 'timeout') return 'badge badge--bad'
+  if (status === 'blocked') return 'badge badge--warn'
+  return 'badge'
+}
+
 /** "Microsoft Windows 11 家庭中文版（10.0.22631，64-bit）" */
 function describeOs(env: EnvironmentInfo): string {
   const detail = [env.osVersion, env.architecture].filter((part) => part !== '').join('，')
@@ -155,6 +169,22 @@ export default function App(): JSX.Element {
     () => executions.filter((record) => RUNNABLE.has(record.status)),
     [executions]
   )
+
+  /**
+   * The step the loop is on, for the call-out above the output.
+   *
+   * Running wins, because that is literally "the currently executing command".
+   * Otherwise it is the newest command still waiting — that is the one the next
+   * 运行 click would start — and only when there is nothing outstanding does it
+   * fall back to the last completed one, so the block does not go blank the moment
+   * a command finishes.
+   */
+  const currentExecution = useMemo(() => {
+    const running = executions.find((record) => record.status === 'running')
+    if (running) return running
+    if (waiting.length > 0) return waiting[waiting.length - 1]
+    return executions.length > 0 ? executions[executions.length - 1] : null
+  }, [executions, waiting])
 
   // Runtime info, kept as a working example of a renderer -> main IPC call.
   useEffect(() => {
@@ -1248,6 +1278,34 @@ export default function App(): JSX.Element {
 
         {terminalCollapsed ? null : (
           <>
+            {/*
+              The step the loop is on, on its own.
+
+              The description was already being stored on every command and shown
+              nowhere, and the command itself only existed as one line inside the
+              scrollback — so "what is it doing right now, and why" meant reading
+              back up through the terminal to find it.
+            */}
+            {currentExecution ? (
+              <div className="current">
+                <div className="current__head">
+                  <span className={statusTone(currentExecution.status)}>
+                    {STATUS_LABEL[currentExecution.status]}
+                  </span>
+                  <span
+                    className="current__desc"
+                    title={currentExecution.description || undefined}
+                  >
+                    {currentExecution.description || '（模型没有给出说明）'}
+                  </span>
+                  {currentExecution.exitCode !== null ? (
+                    <span className="current__code">退出码 {currentExecution.exitCode}</span>
+                  ) : null}
+                </div>
+                <pre className="current__command">{currentExecution.command || '（空命令）'}</pre>
+              </div>
+            ) : null}
+
             {waiting.length > 0 ? (
               <div className="pending">
                 {waiting.map((record) => (
@@ -1255,7 +1313,14 @@ export default function App(): JSX.Element {
                     <span className={record.status === 'blocked' ? 'badge badge--warn' : 'badge'}>
                       {STATUS_LABEL[record.status]}
                     </span>
-                    <code className="pending__command" title={record.command}>
+                    <code
+                      className="pending__command"
+                      title={
+                        record.description
+                          ? `${record.description}\n\n${record.command}`
+                          : record.command
+                      }
+                    >
                       {record.command || '(空命令)'}
                     </code>
                     <span className="panel__spacer" />
