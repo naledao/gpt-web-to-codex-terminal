@@ -53,8 +53,11 @@ const api: AppApi = {
   syncConversations: (): Promise<Conversation[]> =>
     ipcRenderer.invoke(IpcChannels.conversationsSync),
 
-  removeConversation: (id: string): Promise<Conversation[]> =>
+removeConversation: (id: string): Promise<Conversation[]> =>
     ipcRenderer.invoke(IpcChannels.conversationsRemove, id),
+
+  moveConversation: (id: string, projectId: string): Promise<Conversation[]> =>
+    ipcRenderer.invoke(IpcChannels.conversationsMove, id, projectId),
 
   onConversationsChanged: (listener: (items: Conversation[]) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, items: Conversation[]): void => listener(items)

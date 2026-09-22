@@ -15,6 +15,7 @@ export const IpcChannels = {
   conversationsList: 'conversations:list',
   conversationsSync: 'conversations:sync',
   conversationsRemove: 'conversations:remove',
+  conversationsMove: 'conversations:move',
   conversationsChanged: 'conversations:changed',
   interceptorGetState: 'interceptor:get-state',
   interceptorSetEnabled: 'interceptor:set-enabled',
@@ -798,6 +799,8 @@ export interface AppApi {
   /** Scrape the page's sidebar and merge it into the database. */
   syncConversations(): Promise<Conversation[]>
   removeConversation(id: string): Promise<Conversation[]>
+  /** Move a conversation into another project folder on the current machine. */
+  moveConversation(id: string, projectId: string): Promise<Conversation[]>
   /** Fires whenever the stored set changes (auto-saved or synced). */
   onConversationsChanged(listener: (items: Conversation[]) => void): () => void
 

@@ -281,6 +281,34 @@ export class ConversationStore {
     }))
   }
 
+  moveToProject(
+    conversationId: string,
+    projectId: string,
+    machineScope: 'local' | 'ssh',
+    hostId: string,
+    now = Date.now()
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE conversations
+            SET project_id = ?, updated_at = ?
+          WHERE id = ?
+            AND EXISTS (
+              SELECT 1 FROM projects source
+               WHERE source.id = conversations.project_id
+                 AND source.machine_scope = ?
+                 AND source.host_id = ?
+            )
+            AND EXISTS (
+              SELECT 1 FROM projects target
+               WHERE target.id = ?
+                 AND target.machine_scope = ?
+                 AND target.host_id = ?
+            )`
+      )
+      .run(projectId, now, conversationId, machineScope, hostId, projectId, machineScope, hostId)
+    return Number(result.changes) > 0
+  }
   remove(id: string): void {
     this.db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
   }

@@ -545,6 +545,15 @@ function registerIpcHandlers(): void {
     return currentMachineConversations()
   })
 
+  ipcMain.handle(
+    IpcChannels.conversationsMove,
+    (event, id: string, projectId: string): Conversation[] => {
+      if (!fromAppWindow(event) || !store) return []
+      const hostId = environmentScope.scope === 'local' ? localMachineId : environmentScope.hostId
+      store.moveToProject(String(id), String(projectId), environmentScope.scope, hostId)
+      return currentMachineConversations()
+    }
+  )
   ipcMain.handle(IpcChannels.interceptorGetState, (event): InterceptorStatus => {
     return fromAppWindow(event) ? embed.getInterceptorStatus() : FALLBACK_INTERCEPTOR_STATE
   })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type {
   AppInfo,
   AppSettings,
@@ -363,6 +363,24 @@ export default function App(): JSX.Element {
     [address]
   )
 
+  const conversationFolders = useMemo(() => {
+    const folders = new Map<
+      string,
+      { project: Conversation['project']; conversations: Conversation[] }
+    >()
+
+    for (const conversation of conversations) {
+      const key = conversation.project?.id ?? '__unbound__'
+      const folder = folders.get(key)
+      if (folder) {
+        folder.conversations.push(conversation)
+      } else {
+        folders.set(key, { project: conversation.project, conversations: [conversation] })
+      }
+    }
+
+    return Array.from(folders.values())
+  }, [conversations])
   const syncConversations = useCallback(async (): Promise<void> => {
     setSyncing(true)
     try {
@@ -385,6 +403,22 @@ export default function App(): JSX.Element {
     window.api.navigateEmbed(conversation.url)
   }, [])
 
+  const moveConversationToProject = useCallback(
+    async (event: ReactDragEvent<HTMLElement>, projectId: string): Promise<void> => {
+      event.preventDefault()
+      const conversationId = event.dataTransfer.getData('text/plain')
+      if (conversationId === '') return
+      const source = conversations.find((conversation) => conversation.id === conversationId)
+      if (!source || source.project?.id === projectId) return
+
+      try {
+        setConversations(await window.api.moveConversation(conversationId, projectId))
+      } catch {
+        /* leave the previous grouping in place */
+      }
+    },
+    [conversations]
+  )
   const toggleInterceptor = useCallback(async (): Promise<void> => {
     if (!interceptor) return
     try {
@@ -968,51 +1002,74 @@ export default function App(): JSX.Element {
         {conversations.length === 0 ? (
           <p className="panel__empty">还没有记录。打开一个对话，或点「同步」从侧边栏导入。</p>
         ) : (
-          <ul className="panel__list">
-            {conversations.map((conversation) => {
-              const active = conversation.id === conversationId
-              return (
-                <li key={conversation.id}>
-                  <div
-                    className={active ? 'conversation conversation--active' : 'conversation'}
-                    role="button"
-                    tabIndex={0}
-                    title={`${displayTitle(conversation)}\n${conversation.url}`}
-                    onClick={() => void openConversation(conversation)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        void openConversation(conversation)
-                      }
-                    }}
-                  >
-                    <span className="conversation__body">
-                      <span className="conversation__title">{displayTitle(conversation)}</span>
-                      <span
-                        className="conversation__project"
-                        title={
-                          conversation.project
-                            ? `${conversation.project.machineLabel} · ${conversation.project.path}`
-                            : '尚未绑定项目；打开该对话后会绑定当前机器和工作目录'
-                        }
-                      >
-                        {conversation.project ? conversation.project.name : '未绑定项目'}
-                      </span>
-                      <span className="conversation__time">{formatTime(conversation.updatedAt)}</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="conversation__remove"
-                      title="从数据库删除"
-                      onClick={(event) => void removeConversation(event, conversation.id)}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+          <div className="panel__list">
+            {conversationFolders.map((folder) => (
+              <details
+                key={folder.project?.id ?? '__unbound__'}
+                className="conversation-folder"
+                open
+                onDragOver={(event) => {
+                  if (!folder.project) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                }}
+                onDrop={(event) => {
+                  if (folder.project) void moveConversationToProject(event, folder.project.id)
+                }}
+              >
+                <summary
+                  className="conversation-folder__head"
+                  title={folder.project?.path ?? '未绑定项目'}
+                >
+                  <span className="conversation-folder__icon">📁</span>
+                  <span className="conversation-folder__name">
+                    {folder.project?.name ?? '未绑定项目'}
+                  </span>
+                  <span className="conversation-folder__count">{folder.conversations.length}</span>
+                </summary>
+                <ul className="conversation-folder__list">
+                  {folder.conversations.map((conversation) => {
+                    const active = conversation.id === conversationId
+                    return (
+                      <li key={conversation.id}>
+                        <div
+                          className={active ? 'conversation conversation--active' : 'conversation'}
+                          role="button"
+                          tabIndex={0}
+                          draggable={Boolean(conversation.project)}
+                          title={`${displayTitle(conversation)}\n${conversation.url}`}
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData('text/plain', conversation.id)
+                            event.dataTransfer.effectAllowed = 'move'
+                          }}
+                          onClick={() => void openConversation(conversation)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              void openConversation(conversation)
+                            }
+                          }}
+                        >
+                          <span className="conversation__body">
+                            <span className="conversation__title">{displayTitle(conversation)}</span>
+                            <span className="conversation__time">{formatTime(conversation.updatedAt)}</span>
+                          </span>
+                          <button
+                            type="button"
+                            className="conversation__remove"
+                            title="从数据库删除"
+                            onClick={(event) => void removeConversation(event, conversation.id)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </details>
+            ))}
+          </div>
         )}
       </aside>
 

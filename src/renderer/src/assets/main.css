@@ -101,7 +101,7 @@ body {
   color: var(--text);
   font-size: 13px;
   line-height: 1;
-  cursor: pointer;
+  cursor: grab;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 
@@ -392,6 +392,59 @@ body {
   flex: 1;
 }
 
+.conversation-folder {
+  margin-bottom: 4px;
+}
+
+.conversation-folder__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.conversation-folder__head:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.conversation-folder__head::marker,
+.conversation-folder__head::-webkit-details-marker {
+  display: none;
+  content: '';
+}
+
+.conversation-folder__icon {
+  flex: none;
+  font-size: 12px;
+}
+
+.conversation-folder__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-folder__count {
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.conversation-folder__list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0 5px 12px;
+}
 .conversation {
   display: flex;
   align-items: center;
@@ -399,7 +452,7 @@ body {
   padding: 7px 8px;
   border-radius: 7px;
   border: 1px solid transparent;
-  cursor: pointer;
+  cursor: grab;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 
