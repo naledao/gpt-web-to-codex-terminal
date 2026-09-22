@@ -7,7 +7,6 @@ import type {
   AutomationState,
   Conversation,
   EmbedState,
-  EnvironmentInfo,
   ExecutionMode,
   ExecutionRecord,
   ExecutionStatus,
@@ -62,35 +61,6 @@ function statusTone(status: ExecutionStatus): string {
   return 'badge'
 }
 
-/** "Microsoft Windows 11 家庭中文版（10.0.22631，64-bit）" */
-function describeOs(env: EnvironmentInfo): string {
-  const detail = [env.osVersion, env.architecture].filter((part) => part !== '').join('，')
-  if (env.osCaption === '') return env.kind === 'posix' ? '未知的远端系统' : 'Windows'
-  return detail === '' ? env.osCaption : `${env.osCaption}（${detail}）`
-}
-
-function describeShell(env: EnvironmentInfo): string {
-  const parts =
-    env.kind === 'posix'
-      ? [env.shellPath, env.shellVersion]
-      : [env.powerShellExe, env.powerShellVersion, env.powerShellEdition]
-  const text = parts.filter((part) => part.trim() !== '').join(' ')
-  return text === '' ? '未知' : text
-}
-
-/**
- * Which machine the model's commands are aimed at.
- *
- * Worth showing prominently: attaching an SSH session silently redirects every
- * command the model issues, and the one thing the user must never be wrong about
- * is which computer is about to run them.
- */
-function describeTarget(env: EnvironmentInfo): string {
-  if (env.kind !== 'posix') return '本机（Windows）'
-  const host = [env.remoteName, env.remoteTarget].filter((part) => part.trim() !== '').join(' · ')
-  return host === '' ? '远端主机（SSH）' : `远端主机 · ${host}`
-}
-
 function displayTitle(conversation: Conversation): string {
   if (conversation.title.trim() !== '') return conversation.title
   return `未命名对话 · ${conversation.id.slice(0, 8)}`
@@ -136,7 +106,6 @@ export default function App(): JSX.Element {
   const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
-  const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null)
   const [proxyDraft, setProxyDraft] = useState('')
   const [savingSettings, setSavingSettings] = useState(false)
   /**
@@ -733,13 +702,6 @@ export default function App(): JSX.Element {
         /* the dialog renders a placeholder */
       })
 
-    // The probe runs in the background at startup, so re-read it when the dialog
-    // opens rather than only on mount — otherwise the first open shows nothing.
-    window.api
-      .getEnvironment()
-      .then((value) => {
-        if (!cancelled) setEnvironment(value)
-      })
       .catch(() => {
         /* the section is simply omitted */
       })
@@ -749,10 +711,6 @@ export default function App(): JSX.Element {
     }
   }, [settingsOpen])
 
-  // The machine in charge changes while the app runs: the startup probe finishes,
-  // the terminal moves, or an SSH session takes over. Pulling only on mount would
-  // leave the panel describing a machine the model has already left.
-  useEffect(() => window.api.onEnvironmentChanged(setEnvironment), [])
 
   /**
    * The embedded page is a NATIVE view: it always paints above the DOM, so an
@@ -1678,47 +1636,6 @@ export default function App(): JSX.Element {
             </div>
 
             <div className="modal__body">
-              <div className="field">
-                <span className="field__label">探测到的环境</span>
-                <div className="env">
-                  {environment === null ? (
-                    <span className="env__pending">读取中…</span>
-                  ) : (
-                    <>
-                      <div className="env__row">
-                        <span className="env__key">执行目标</span>
-                        <span className="env__value">{describeTarget(environment)}</span>
-                      </div>
-                      <div className="env__row">
-                        <span className="env__key">操作系统</span>
-                        <span className="env__value">{describeOs(environment)}</span>
-                      </div>
-                      <div className="env__row">
-                        <span className="env__key">Shell</span>
-                        <span className="env__value">{describeShell(environment)}</span>
-                      </div>
-                      {environment.workingDirectory ? (
-                        <div className="env__row">
-                          <span className="env__key">起始目录</span>
-                          <span className="env__value">{environment.workingDirectory}</span>
-                        </div>
-                      ) : null}
-                      <p className="field__hint">
-                        这些信息会写进发给 ChatGPT 的提示词。它跟着终端实际指向的机器走：
-                        连上 SSH 后换成远端平台，断开后自动换回本机。
-                        {environment.detected ? '' : ' ⚠ 探测失败，当前用的是兜底值。'}
-                      </p>
-                      {environment.kind === 'posix' ? (
-                        <p className="field__hint field__hint--warn">
-                          模型发出的命令现在<strong>在远端主机上执行</strong>，不再经过本机的
-                          PowerShell。断开连接后会立刻切回本机。
-                        </p>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </div>
-
               <label className="field">
                 <span className="field__label">ChatGPT 网页代理</span>
                 <input
@@ -1732,10 +1649,6 @@ export default function App(): JSX.Element {
               <p className="field__hint">
                 以 <code>http://</code> 开头；只写 <code>127.0.0.1:7890</code> 也会自动补上。
               </p>
-              <p className="field__hint field__hint--warn">
-                这个代理<strong>只作用于嵌入的 chatgpt.com 页面</strong>。应用本身的其他连接不走它
-                —— SSH 走下面那个独立的设置。保存后页面会自动重新加载。
-              </p>
 
               <label className="field">
                 <span className="field__label">SSH 代理</span>
@@ -1747,34 +1660,8 @@ export default function App(): JSX.Element {
                   onChange={(event) => setSshProxyDraft(event.target.value)}
                 />
               </label>
-              <p className="field__hint">
-                SSH 连接的默认代理，和上面那个<strong>互相独立</strong>：一个是网页会话的代理，
-                一个是本应用自己拨号用的。单个主机可以在它的连接表单里覆盖这一项。
-              </p>
-              <p className="field__hint">
-                只支持 <code>http://</code>（HTTP CONNECT）。若代理同时开了 HTTP 端口（Clash 的混合端口就是），填那个即可。
-              </p>
 
               <div className="field">
-                <span className="field__label">从浏览器导入登录态</span>
-                <p className="field__hint">
-                  给<strong>无法在应用内登录</strong>的账号用：用 Google 创建的 ChatGPT
-                  账号没有密码，而 Google 会拒绝一切内嵌浏览器登录（
-                  <code>此浏览器或应用可能不安全</code>），系统浏览器里的登录态又不会自动回流。
-                  唯一能搬进来的是<strong>会话令牌本身</strong>。
-                </p>
-                <p className="field__hint">
-                  在已登录 ChatGPT 的浏览器里：<code>F12</code> → <code>Application</code>（应用）
-                  → <code>Cookies</code> → <code>https://chatgpt.com</code> → 找到
-                  <code>{SESSION_COOKIE_NAME}</code> → 复制它的 <code>Value</code> 一列，粘到下面。
-                  找不到这条就说明该浏览器当前没登录，先登录一次再来。
-                </p>
-                <p className="field__hint field__hint--warn">
-                  这是把<strong>登录凭据</strong>交给本应用：有了它就等于有了你的会话。
-                  只在本机粘贴，导完记得回浏览器删掉刚才的剪贴板内容。Chrome 的
-                  cookie 数据库是 App-Bound Encryption 加密的，任何程序都无法替你自动读取，
-                  所以只能手工复制这一次。
-                </p>
 
                 <label className="field">
                   <span className="field__label">Cookie 名称</span>
