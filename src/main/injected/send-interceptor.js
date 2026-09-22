@@ -31,6 +31,12 @@
     'button[aria-label="发送消息"]'
   ]
   const ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]'
+  const STOP_BUTTON_SELECTORS = [
+    '[data-testid="stop-button"]',
+    'button[aria-label="Stop generating"]',
+    'button[aria-label="Stop streaming"]',
+    'button[aria-label="停止生成"]'
+  ]
   /** Any turn, either role — used to locate the thread's scroll container. */
   const MESSAGE_SELECTOR = '[data-message-author-role]'
   const MESSAGE_ID_ATTR = 'data-message-id'
@@ -84,6 +90,14 @@
 
   const findSendButton = () => {
     for (const selector of SEND_BUTTON_SELECTORS) {
+      const button = document.querySelector(selector)
+      if (button) return button
+    }
+    return null
+  }
+
+  const findStopButton = () => {
+    for (const selector of STOP_BUTTON_SELECTORS) {
       const button = document.querySelector(selector)
       if (button) return button
     }
@@ -529,8 +543,8 @@
       }
 
       // A settled non-command reply is the final answer for this goal.
-      // Require the send button to be back so a pause while streaming cannot stop the timer early.
-      if (text.trim() && state.awaitingReplySince !== 0 && findSendButton()) {
+      // A quiet period while streaming is not final: the stop button remains visible until generation ends.
+      if (text.trim() && state.awaitingReplySince !== 0 && !findStopButton()) {
         state.lastCommandMessageId = messageId
         state.awaitingReplySince = 0
         report({ event: 'task-finished', messageId })
