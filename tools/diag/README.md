@@ -121,6 +121,44 @@ logs the app in. Log: `%TEMP%\gpt-login-diag\email-login-<timestamp>.log`
 The allowlist is duplicated in the probe on purpose, so it can judge hops the way the
 real app would. **Keep it in sync** when `ALLOWED_NAVIGATION` changes.
 
+## clear-embed-cookies.mjs
+
+Signs the embedded view out by removing the ChatGPT/OpenAI **login** cookies from the
+app's `persist:chatgpt` partition.
+
+**Run (from the repo root, with the app fully closed):**
+
+```powershell
+node --experimental-sqlite tools\diag\clear-embed-cookies.mjs
+```
+
+```
+[clear] removing 7 login cookie(s):
+          .auth.openai.com  auth-session-minimized  (602 bytes)
+          .chatgpt.com  __Secure-next-auth.session-token  (3919 bytes)
+          ...
+[clear] deleted rows: 7
+[clear] remaining cookies for chatgpt/openai: 29
+```
+
+- **Why a script:** the jar is a SQLite file that the running app holds under an
+  exclusive lock, and Electron's cookie API only works from inside the app. This edits
+  the file directly — after writing a timestamped backup beside it.
+- **What it removes:** the login/session families only (`__Secure-next-auth.*`,
+  `auth-session-minimized*`, `oai-login-csrf*`, `oai-sc`, a bare `session`, …).
+- **What it keeps on purpose:** `cf_clearance`, `__cf_bm`, `__cflb`, `_cfuvid` and
+  `oai-did`. Those are bot-management and anonymous-device state rather than
+  credentials — deleting them only makes the next page load solve a Cloudflare
+  challenge again.
+- **Never prints values**, only names, domains and lengths.
+- `--experimental-sqlite` is required on system Node 22.12. The app itself does not need
+  it: it runs inside Electron 44, whose Node has the module unflagged.
+
+> A cookie list is never evidence about login state. One run of this removed a valid
+> `__Secure-next-auth.session-token` **and** left `oai-sc` behind, so neither "the
+> session cookie is gone" nor "auth cookies are present" tells you anything on its own —
+> the import path therefore verifies by probing the page, not by reading the jar.
+
 ## Cleanup
 
 Delete `%TEMP%\gpt-login-diag` when the investigation is over — the logs name the
