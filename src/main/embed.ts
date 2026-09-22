@@ -185,7 +185,9 @@ export class ChatGptEmbed {
         contextIsolation: true,
         sandbox: true,
         webSecurity: true,
-        spellcheck: false
+        spellcheck: false,
+        // ChatGPT reply detection must keep running while the app is minimized.
+        backgroundThrottling: false
       }
     })
 

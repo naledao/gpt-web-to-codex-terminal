@@ -449,7 +449,9 @@ function createWindow(): void {
       // `sandbox: false` is required so the preload bundle can use Node built-ins.
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Keep renderer timers/events running while the window is minimized.
+      backgroundThrottling: false
     }
   })
   mainWindow = appWindow
