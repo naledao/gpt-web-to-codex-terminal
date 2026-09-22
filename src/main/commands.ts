@@ -115,6 +115,8 @@ export interface CommandRunnerDeps {
   onRemoteOutput: (chunk: string) => void
   onExecutionChanged: (records: ExecutionRecord[]) => void
   onTerminalChanged: (state: TerminalState) => void
+  /** Notify the host application when the model explicitly reports that the task is complete. */
+  onTaskCompleted: (description: string) => void
 }
 
 function truncateOutput(text: string): string {
@@ -377,6 +379,7 @@ export class CommandRunner {
       this.deps.store.setExecutionStatus(parsed.messageId, 'skipped')
       this.appendLine({ kind: 'notice', text: '模型报告任务完成（command 为空）' })
       this.broadcastExecutions(conversationId)
+      this.deps.onTaskCompleted(parsed.description)
       return
     }
 

@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, ipcMain, safeStorage, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_PARTITION,
@@ -842,6 +842,20 @@ if (!app.requestSingleInstanceLock()) {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send(IpcChannels.terminalChanged, state)
         }
+      },
+      onTaskCompleted: (description) => {
+        if (!Notification.isSupported()) return
+        const notification = new Notification({
+          title: 'GPT Web to Codex Terminal',
+          body: description.trim() || '任务已完成'
+        })
+        notification.on('click', () => {
+          if (!mainWindow || mainWindow.isDestroyed()) return
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          if (!mainWindow.isVisible()) mainWindow.show()
+          mainWindow.focus()
+        })
+        notification.show()
       }
     })
 
