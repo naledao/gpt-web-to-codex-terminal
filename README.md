@@ -21,6 +21,16 @@ launches Electron against it — edit any file under `src/renderer/` and the win
 hot-reloads. Changes to
 `src/main/` or `src/preload/` restart the Electron process automatically.
 
+## When something only breaks in the real app
+
+Login, Cloudflare and proxy problems happen against live third-party pages inside
+your real session, so they cannot be reproduced by a script. Those are investigated
+with **user-driven probes**: you click through the app (or a small probe window built
+from the same `persist:chatgpt` partition), the probe writes a log file, and the
+agent analyses that file. See **[`tools/diag/README.md`](tools/diag/README.md)** and
+the division-of-labour rule in `AGENTS.md`. Probes never type credentials, never
+submit forms, and never log cookie values.
+
 ## Scripts
 
 | Script                 | What it does                                                        |
@@ -105,6 +115,62 @@ Consequences worth knowing before extending the UI:
 - A stock Electron user agent advertises `Electron/44.4.3`, which Cloudflare's bot
   rules on chatgpt.com reject. `embed.ts` therefore sends a plain Chrome UA.
   Override it with the `EMBED_USER_AGENT` environment variable if needed.
+
+### Signing in: email/OTP is the only route that works in the embed
+
+Measured, not assumed (see `tools/diag/README.md` for the probes and the raw
+evidence):
+
+- **Provider OAuth cannot be made to work inside the embedded view.** Google serves
+  the sign-in form and then refuses a step later with
+  `accounts.google.com/v3/signin/rejected`. This is not a user-agent problem: this
+  Electron's stock UA already carries no `Electron/` token, the UA does reach the
+  network layer, and rewriting `Sec-CH-UA` to advertise `"Google Chrome"` in
+  `onBeforeSendHeaders` changes nothing. Page-level Client Hints cannot be corrected
+  at all — Electron 44 has no `setUserAgentMetadata`, and top-level navigations do
+  not expose `sec-ch-ua` to that handler.
+- **The system browser cannot close the loop either.** Its ChatGPT cookies live in
+  another jar, and Chrome's App-Bound Encryption (v20 cookies) makes importing them
+  from outside Chrome impossible.
+- **Email/OTP is the one route that finishes inside the embed** — `auth.openai.com`
+  is inside the navigation allowlist, and the session it creates is created in
+  `persist:chatgpt`, which is exactly the session the embedded page needs.
+
+So the auth notice's **改用邮箱登录** button navigates the embed to
+`EMBED_LOGIN_URL` (`https://auth.openai.com/log-in`). It previously sent the embed
+home while claiming to offer email sign-in — a button that promised a route no code
+implemented. Anything that changes this needs to keep the email route intact.
+
+### When no sign-in route exists: importing a session
+
+Email/OTP sign-in still needs the account to *have* a password, and an account created
+with Google does not. Entering such an address and pressing continue makes OpenAI
+redirect straight back to Google — observed at
+`auth.openai.com/api/accounts/authorize/continue` answering with
+`accounts.google.com/o/oauth2/v2/auth` — which Google then refuses. For those accounts
+the only credential that can travel into this app is the **session token the browser
+already holds**.
+
+`src/main/session-import.ts` implements that: the user copies the cookie value out of
+their browser's DevTools, and it is written into `persist:chatgpt` with
+`secure: true, httpOnly: true` for `.chatgpt.com`.
+
+Design decisions worth keeping:
+
+- **The user must copy it by hand.** Chrome and Edge both seal their cookie database
+  with App-Bound Encryption, whose key is bound to the browser's own process. Nothing
+  outside that process can decrypt it, so "read the browser's cookies automatically"
+  is not implementable — not merely unimplemented.
+- **Success is decided by the page, not by the write.** A cookie can be accepted and
+  still be expired or revoked, so the import reloads and then probes the document for
+  the signed-in chrome (a composer plus a sidebar or account button, and no login call
+  to action). Text matching is deliberately avoided: both states contain the words
+  "ChatGPT" and "log in".
+- **The value is never persisted anywhere.** It is one IPC argument, written to the
+  cookie jar, then dropped — never logged, never stored on disk, and cleared from the
+  input on both success and failure.
+- **"Cannot tell" is reported as not signed in.** A navigation during the probe must
+  never be reported as a successful login.
 
 ### State flow
 

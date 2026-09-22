@@ -26,6 +26,66 @@ npm run dev
   构建通过 ≠ 功能可用，只能说"构建通过，等待测试"。
 - 用户贴回结果后，再根据结果修改。有报错就把完整报错贴回来。
 
+### "不需要点击"不是例外
+
+上面那条已经踩过一次，所以写细一点：**智能体自己拉起 Electron 去跑测试，即使用户不用点任何东西，也是违规的。**
+
+理由不是形式主义：
+
+- 它用的是**用户真实的 `persist:chatgpt` 分区**——跑一次就改了用户正在排查的那份状态。
+- 它从**同一个 IP** 反复打真实的第三方服务。`auth.openai.com` 就是被这样打到过
+  「你的会话已结束」的限流页，而那一页看起来**和登录失败一模一样**，差点被当成 bug 去修。
+- 无界面 ≠ 无副作用。`new BrowserWindow({ show: false })` 照样发请求、写 cookie、写数据库。
+
+**唯一允许智能体直接跑的 Electron 是 `npm run build`（它只打包，不联网）。**
+需要"跑一次才知道"的信息，一律按下面探针那一节交给用户。
+
+### 诊断探针：用户跑，智能体读日志
+
+有些问题（登录、Cloudflare、代理、水印）只在真实会话里复现，构建和单测都够不着。这类问题按这个流程办：
+
+1. 智能体在 `tools/diag/` 写一个**自包含探针脚本**，运行命令原样贴给用户。
+2. **用户运行、用户操作**，探针把过程写进日志文件。
+3. 智能体读日志文件、引用关键行、说明含义，再决定下一步。
+
+探针的硬要求：
+
+- **日志用 `fs.appendFileSync` 写**，不要用 `createWriteStream`。写流会缓冲 16 KB，
+  窗口在中途关闭时磁盘上留下一个 **0 字节的文件**——一整轮诊断就这么丢了（真发生过）。
+- **cookie 只记 `名字+长度`，绝不记值。** 探针永远不输入、不提交、不读凭据；
+  需要密码的步骤是用户的手在键盘上。
+- 日志落在 `%TEMP%` 下，**不要落进仓库**（`*.log` 已在 `.gitignore` 里，但别依赖它）。
+- **别在探针里重复注册同一个 webRequest 监听器**（见下面"已验证的 Electron 事实"）。
+- 探针里若复制了主进程的常量（如导航白名单正则），**必须注明"改主进程时同步改这里"**，
+  否则它会开始说谎。
+
+### 已验证的 Electron / 登录事实（2026-09 实测，不要再重新推一遍）
+
+每一条都花了整整一轮诊断才拿到，重复推等于白烧用户的时间。
+
+- **Electron 44 自带的 UA 就是普通 Chrome**，不含 `Electron/` 标识。
+  `webContents.setUserAgent()` 也**确实作用在网络层**（用 `onBeforeSendHeaders` 读过
+  `requestHeaders` 确认）。所以"UA 没伪装好"不是登录失败的原因。
+- **一个 session 只有一个 `onBeforeSendHeaders` 槽位**：第二次注册会**静默替换**第一次。
+  把"记录器"和"改写器"分开注册，会得到一个**和实际发出的头不一致的日志**——
+  记录和改写必须在同一个 handler 里，并同时打印改前/改后的值。
+- **Electron 44 没有 `setUserAgentMetadata`。** `Sec-CH-UA*` 只能在 `onBeforeSendHeaders` 里改，
+  而 `navigator.userAgentData.brands` 永远是 `Chromium` + `Not?A_Brand`，**改不动**。
+  顶层导航的 `sec-ch-ua` 更是根本不进这个回调（`(absent)`）。
+- **登录表单渲染出来了 ≠ 登录成功。** Google 会把 `accounts.google.com/v3/signin/identifier`
+  正常发给内嵌浏览器，**在下一步**才用 `/signin/rejected` 拒绝。判成功的标准只有：
+  走到二步验证，或者带着会话 cookie 回到 chatgpt.com。
+- **Google 拒绝内嵌 OAuth 是政策，不是指纹识别。** 把 UA 和 `Sec-CH-UA` 都补成真 Chrome 之后
+  依然被拒——不要再往"伪装得更像"这个方向投入时间。
+- **`auth.openai.com/log-in` 用邮箱登录也救不了 Google 账号**：输入邮箱点继续之后，
+  `auth.openai.com/api/accounts/authorize/continue` 会直接 302 到
+  `accounts.google.com/o/oauth2/v2/auth`。邮箱只是个标识，账号没有密码可验。
+- **Chrome/Edge 的 cookie 数据库是 App-Bound Encryption 加密的**（`Local State` 里有
+  `app_bound_encrypted_key`），密钥绑定浏览器进程本身。**任何外部程序都无法解密**——
+  "自动读取浏览器登录态"这个功能在技术上不存在，不要承诺它。
+- **Electron/Chromium 的 cookie 库在进程运行时被独占锁定**，连只读复制都会被拒
+  （`FileShare.ReadWrite` 也不行）。想读它必须先关掉应用。
+
 ## 常用命令
 
 ```bash
