@@ -654,14 +654,19 @@
 
       return new Promise((resolve) => {
         let settled = false
+        let timeout = null
         const done = (outcome) => {
           if (settled) return
           settled = true
+          if (timeout) clearTimeout(timeout)
           resolve(outcome)
         }
 
-        // Hard ceiling: this promise is awaited across IPC.
-        setTimeout(() => {
+        // Hard ceiling: this promise is awaited across IPC. Clear it as soon as
+        // this raw send settles; otherwise an OLD send's 10s timer can fire while
+        // a newer command result is being retried, flip programmatic=false, and
+        // let the normal click interceptor prepend the system prompt to that raw result.
+        timeout = setTimeout(() => {
           state.programmatic = false
           done('stuck')
         }, SEND_TIMEOUT_MS)
