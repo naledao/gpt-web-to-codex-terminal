@@ -440,6 +440,22 @@ const embed = new ChatGptEmbed({
 
   onInterceptor: broadcastInterceptor,
 
+  // Only the explicit completion marker triggers a desktop notification; questions do not.
+  onTaskCompleted: () => {
+    if (!Notification.isSupported()) return
+    const notification = new Notification({
+      title: 'GPT Web to Codex Terminal',
+      body: '任务已完成'
+    })
+    notification.on('click', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      if (!mainWindow.isVisible()) mainWindow.show()
+      mainWindow.focus()
+    })
+    notification.show()
+  },
+
   // The model's reply contained a command; store it and maybe run it.
   onCommand: (command) => {
     runner?.handleDetected(command)

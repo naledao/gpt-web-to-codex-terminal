@@ -392,8 +392,8 @@ const OUTPUT_FORMAT_SECTION = [
   '下划线（$_、$env:、$()）和星号（*.txt、*）—— 不放进代码块的话，这些字符会被当成',
   'Markdown 的斜体/加粗标记而**从命令里消失**，我就只能执行一条被改坏的命令。',
   '用户会把执行结果（输出、退出码、当前目录）发回给你，你据此决定下一步。',
-  '任务已经完成时，**不要再输出 JSON**，直接像平常聊天一样用中文回复用户：',
-  '说明你做了什么、结果如何、以及需要用户注意的地方。'
+  '任务已经完成时，**不要再输出 JSON**，第一行固定输出【任务完成】，然后像平常聊天一样用中文回复用户：',
+  '说明你做了什么、结果如何、以及需要用户注意的地方。这个标记用于让应用可靠触发系统通知。'
 ].join('\n')
 
 /**
@@ -650,6 +650,8 @@ export interface InterceptorPageEvent {
   description?: string
   /** Present on `command` events: true when it answers a message we just sent. */
   live?: boolean
+  /** Present on `task-finished`: true only for an explicitly marked completed task. */
+  completed?: boolean
 }
 
 /* ------------------------------------------------------------------ *

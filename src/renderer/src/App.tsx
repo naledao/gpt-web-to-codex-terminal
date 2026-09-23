@@ -1152,7 +1152,7 @@ export default function App(): JSX.Element {
 
       <section className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
         <div className="terminal-pane__head">
-          <span className="panel__title">{sshActive ? 'SSH' : '终端'}</span>
+          {sshActive ? null : <span className="panel__title">终端</span>}
           <span
             className={
               sshActive
@@ -1323,11 +1323,35 @@ export default function App(): JSX.Element {
             >
               {ssh?.remoteExec ? '模型命令在此执行' : '模型命令仍在本地'}
             </span>
-            <span className="terminal-pane__cwd" title={ssh?.message}>
-              {ssh?.status === 'connected'
-                ? ssh.modelCwd || '目录尚未确定'
-                : ssh?.message}
-            </span>
+            {ssh?.status === 'connected' ? (
+              cwdDraft !== null ? (
+                <form className="terminal-pane__cwd-form" onSubmit={submitCwd}>
+                  <input
+                    className="terminal-pane__cwd-input"
+                    value={cwdDraft}
+                    spellCheck={false}
+                    autoFocus
+                    aria-label="SSH 工作目录"
+                    onChange={(event) => setCwdDraft(event.target.value)}
+                    onBlur={() => setCwdDraft(null)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') setCwdDraft(null)
+                    }}
+                  />
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="terminal-pane__cwd"
+                  title={`${ssh.modelCwd || '目录尚未确定'}\n点击编辑，回车切换目录`}
+                  onClick={() => setCwdDraft(ssh.modelCwd ?? '')}
+                >
+                  {ssh.modelCwd || '设置目录…'}
+                </button>
+              )
+            ) : (
+              <span className="terminal-pane__cwd" title={ssh?.message}>{ssh?.message}</span>
+            )}
             <button
               type="button"
               className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}

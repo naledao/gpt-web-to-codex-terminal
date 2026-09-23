@@ -147,6 +147,8 @@ export interface EmbedHandlers {
   onInterceptor(status: InterceptorStatus): void
   /** The model's reply contained a command. */
   onCommand(command: ParsedCommand): void
+  /** An explicitly marked plain-text reply reports that the task is complete. */
+  onTaskCompleted(): void
   /**
    * A reply looked like it carried a command but could not be parsed.
    *
@@ -670,6 +672,7 @@ export class ChatGptEmbed {
       case 'task-finished':
         if (this.interceptor.taskStartedAt !== null && this.interceptor.taskFinishedAt === null) {
           this.interceptor.taskFinishedAt = Date.now()
+          if (payload.completed === true) this.handlers.onTaskCompleted()
         }
         break
       case 'command':

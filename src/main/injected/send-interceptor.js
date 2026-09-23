@@ -547,7 +547,11 @@
       if (text.trim() && state.awaitingReplySince !== 0 && !findStopButton()) {
         state.lastCommandMessageId = messageId
         state.awaitingReplySince = 0
-        report({ event: 'task-finished', messageId })
+        report({
+          event: 'task-finished',
+          messageId,
+          completed: text.trimStart().startsWith('【任务完成】')
+        })
       }
 
       return
