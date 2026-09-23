@@ -25,6 +25,7 @@ export const IpcChannels = {
   conversationsChanged: 'conversations:changed',
   interceptorGetState: 'interceptor:get-state',
   interceptorSetEnabled: 'interceptor:set-enabled',
+  interceptorEndTask: 'interceptor:end-task',
   interceptorEvent: 'interceptor:event',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
@@ -55,6 +56,7 @@ export const IpcChannels = {
   sshDismiss: 'ssh:dismiss',
   sshRemoveHost: 'ssh:remove-host',
   sshInput: 'ssh:input',
+  sshUploadFiles: 'ssh:upload-files',
   sshChanged: 'ssh:changed',
   managerSessionsList: 'manager:sessions-list',
   managerSessionCreate: 'manager:session-create',
@@ -947,6 +949,8 @@ export interface AppApi {
   /** Terminal-mode send interceptor. */
   getInterceptorStatus(): Promise<InterceptorStatus>
   setInterceptorEnabled(enabled: boolean): Promise<InterceptorStatus>
+  /** Stop the current model/terminal loop and mark the task as manually ended. */
+  endTask(): Promise<InterceptorStatus>
   onInterceptorEvent(listener: (status: InterceptorStatus) => void): () => void
 
   /** Persisted app settings (currently just the embed proxy). */
@@ -1016,5 +1020,7 @@ export interface AppApi {
   getSshState(): Promise<SshState>
   /** Type a line into the remote shell. */
   sendSshInput(text: string): Promise<SshState>
+  /** Pick local files and upload them to the current remote working directory. */
+  uploadSshFiles(): Promise<SshState>
   onSshChanged(listener: (state: SshState) => void): () => void
 }

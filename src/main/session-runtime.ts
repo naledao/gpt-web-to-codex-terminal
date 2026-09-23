@@ -148,7 +148,10 @@ export class SessionRuntime {
       onRemoteOutput: (chunk) => this.ssh.pushModelOutput(chunk),
       onExecutionChanged: (records) => this.send(IpcChannels.executionChanged, records),
       onTerminalChanged: (state) => this.send(IpcChannels.terminalChanged, state),
-      onTaskCompleted: (description) => this.notifyTaskCompleted(description.trim() || '任务已完成')
+      onTaskCompleted: (description) => {
+        void this.embed.endTask()
+        this.notifyTaskCompleted(description.trim() || '任务已完成')
+      }
     })
 
     this.runner.restoreMode(options.initialMode)
@@ -218,8 +221,27 @@ export class SessionRuntime {
     this.embed.setVisible(visible)
   }
 
+  private taskRunning(): boolean {
+    const status = this.embed.getInterceptorStatus()
+    return status.taskStartedAt !== null && status.taskFinishedAt === null
+  }
+
   sendEmbedCommand(command: EmbedCommand): void {
+    if (this.taskRunning() && command !== 'stop') return
     this.embed.command(command)
+  }
+
+  navigateEmbed(url: string): void {
+    if (this.taskRunning()) return
+    this.embed.navigate(url)
+  }
+
+  async endTask() {
+    this.deferredCommands.clear()
+    const runner = this.runner.endTask()
+    const status = await this.embed.endTask()
+    await runner
+    return status
   }
 
   private handleDetectedCommand(command: ParsedCommand): void {
@@ -427,6 +449,8 @@ export class SessionRuntime {
   }
 
   private notifyTaskCompleted(body: string): void {
+    const window = this.window
+    if (window && !window.isDestroyed() && window.isFocused()) return
     if (!Notification.isSupported()) return
     const notification = new Notification({ title: 'GPT Web to Codex Terminal', body })
     notification.on('click', () => this.focus())

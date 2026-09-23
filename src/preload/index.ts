@@ -135,6 +135,8 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   setInterceptorEnabled: (enabled: boolean): Promise<InterceptorStatus> =>
     ipcRenderer.invoke(IpcChannels.interceptorSetEnabled, enabled),
 
+  endTask: (): Promise<InterceptorStatus> => ipcRenderer.invoke(IpcChannels.interceptorEndTask),
+
   onInterceptorEvent: (listener: (status: InterceptorStatus) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, status: InterceptorStatus): void => listener(status)
     ipcRenderer.on(IpcChannels.interceptorEvent, handler)
@@ -174,6 +176,8 @@ removeConversation: (id: string): Promise<Conversation[]> =>
 
   sendSshInput: (text: string): Promise<SshState> =>
     ipcRenderer.invoke(IpcChannels.sshInput, text),
+
+  uploadSshFiles: (): Promise<SshState> => ipcRenderer.invoke(IpcChannels.sshUploadFiles),
 
   onSshChanged: (listener: (state: SshState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: SshState): void => listener(state)

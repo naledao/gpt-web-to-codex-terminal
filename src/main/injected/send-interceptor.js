@@ -72,6 +72,8 @@
      * is a reply to us; when it is clear, whatever is on screen is history.
      */
     awaitingReplySince: 0,
+    /** Remains true across clarification turns until explicit completion or manual end. */
+    taskActive: false,
     /** Dedupe for the "looked like a command but would not parse" report. */
     lastUnparsedMessageId: null
   }
@@ -236,6 +238,7 @@
       if (ok) {
         // Once a message actually goes out, the next assistant turn is ours.
         state.awaitingReplySince = Date.now()
+        state.taskActive = true
         // Ignore only the assistant turn that existed BEFORE this send. Never
         // baseline the new placeholder/reply that may already have appeared.
         state.lastCommandMessageId = replyBaselineId
@@ -552,12 +555,14 @@
       // A settled non-command reply is the final answer for this goal.
       // A quiet period while streaming is not final: the stop button remains visible until generation ends.
       if (text.trim() && state.awaitingReplySince !== 0 && !findStopButton()) {
+        const completed = text.trimStart().startsWith('【任务完成】')
         state.lastCommandMessageId = messageId
         state.awaitingReplySince = 0
+        if (completed) state.taskActive = false
         report({
           event: 'task-finished',
           messageId,
-          completed: text.trimStart().startsWith('【任务完成】')
+          completed
         })
       }
 
@@ -617,9 +622,27 @@
     if (settleTimer) clearTimeout(settleTimer)
     state.lastCommandMessageId = null
     state.awaitingReplySince = Date.now()
+    state.taskActive = true
     checkForCommand()
     return true
   }
+
+  // Block ChatGPT sidebar conversation links while the current task is active.
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!state.taskActive) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const anchor = target.closest('a[href]')
+      if (!anchor) return
+      const href = anchor.getAttribute('href') || ''
+      if (!href.startsWith('/c/') && !/^https:\/\/chatgpt\.com\/c\//i.test(href)) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    },
+    true
+  )
 
   const observer = new MutationObserver(scheduleCheck)
   observer.observe(document.body, {
@@ -654,6 +677,21 @@
         prefixLength: state.prefix.length
       })
       return { ...state }
+    },
+
+    /** Manually terminate the current task, including an in-progress model reply. */
+    endTask() {
+      if (settleTimer) {
+        clearTimeout(settleTimer)
+        settleTimer = null
+      }
+      const stop = findStopButton()
+      if (stop && typeof stop.click === 'function') stop.click()
+      state.awaitingReplySince = 0
+      state.taskActive = false
+      state.lastCommandMessageId = lastAssistantId()
+      state.lastUnparsedMessageId = null
+      return true
     },
 
     /**

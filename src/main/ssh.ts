@@ -3,6 +3,7 @@ import type { ClientChannel } from 'ssh2'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { Socket } from 'node:net'
+import { basename, posix } from 'node:path'
 import type { SshState, TerminalLine } from '../shared/types'
 import { REMOTE_SHELL_COMMAND, RemoteShell } from './remote-shell'
 
@@ -311,6 +312,47 @@ export class SshManager {
     return this.getState()
   }
 
+  /** Upload local files into the model shell's current remote directory over SFTP. */
+  async uploadFiles(localPaths: string[]): Promise<SshState> {
+    const client = this.client
+    if (!client || this.state.status !== 'connected') {
+      this.pushLine('error', '当前没有已连接的 SSH 会话，无法上传文件。')
+      this.emit()
+      return this.getState()
+    }
+
+    const files = localPaths.filter((path) => typeof path === 'string' && path !== '')
+    if (files.length === 0) return this.getState()
+
+    const remoteDir = this.exec?.cwd || '.'
+    this.pushLine('notice', `正在上传 ${files.length} 个文件到 ${remoteDir}…`)
+    this.emit()
+
+    try {
+      const sftp = await new Promise<import('ssh2').SFTPWrapper>((resolve, reject) => {
+        client.sftp((error, channel) => (error ? reject(error) : resolve(channel)))
+      })
+
+      try {
+        for (const localPath of files) {
+          const name = basename(localPath)
+          const remotePath = posix.join(remoteDir, name)
+          await new Promise<void>((resolve, reject) => {
+            sftp.fastPut(localPath, remotePath, (error) => (error ? reject(error) : resolve()))
+          })
+          this.pushLine('notice', `已上传 ${name} → ${remotePath}`)
+          this.emit()
+        }
+      } finally {
+        sftp.end()
+      }
+    } catch (error) {
+      this.pushLine('error', `上传失败：${(error as Error).message}`)
+      this.emit()
+    }
+
+    return this.getState()
+  }
   /** Send one line to the remote shell. */
   write(text: string): void {
     const line = text.replace(/[\r\n]+$/, '')

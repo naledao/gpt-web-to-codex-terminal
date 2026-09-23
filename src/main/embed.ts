@@ -459,6 +459,32 @@ export class ChatGptEmbed {
     this.handlers.onInterceptor(status)
     return status
   }
+  /** Mark the current task finished and publish the interceptor state. */
+  completeTask(): InterceptorStatus {
+    if (this.interceptor.taskStartedAt !== null && this.interceptor.taskFinishedAt === null) {
+      this.interceptor.taskFinishedAt = Date.now()
+    }
+    const status = this.getInterceptorStatus()
+    this.handlers.onInterceptor(status)
+    return status
+  }
+  /** Stop the page-side task loop and publish a finished task state immediately. */
+  async endTask(): Promise<InterceptorStatus> {
+    const contents = this.liveContents()
+    if (contents) {
+      try {
+        await contents.executeJavaScript(
+          `window.__cmdTerminalInterceptor
+             ? window.__cmdTerminalInterceptor.endTask()
+             : false`
+        )
+      } catch (error) {
+        console.warn('[embed] endTask failed:', (error as Error).message)
+      }
+    }
+
+    return this.completeTask()
+  }
 
   /**
    * Inject the send interceptor into the page and push the current config.
@@ -555,12 +581,22 @@ export class ChatGptEmbed {
   async checkForCommandNow(): Promise<boolean> {
     const contents = this.liveContents()
     if (!contents) return false
+
+    const previousStartedAt = this.interceptor.taskStartedAt
+    const previousFinishedAt = this.interceptor.taskFinishedAt
+    this.interceptor.taskStartedAt = Date.now()
+    this.interceptor.taskFinishedAt = null
+    this.handlers.onInterceptor(this.getInterceptorStatus())
+
     try {
       await contents.executeJavaScript(
         `window.__cmdTerminalInterceptor && window.__cmdTerminalInterceptor.checkNow(); true`
       )
       return true
     } catch {
+      this.interceptor.taskStartedAt = previousStartedAt
+      this.interceptor.taskFinishedAt = previousFinishedAt
+      this.handlers.onInterceptor(this.getInterceptorStatus())
       return false
     }
   }
@@ -666,13 +702,15 @@ export class ChatGptEmbed {
         break
       case 'sent':
         this.interceptor.lastSentText = payload.text ?? null
-        this.interceptor.taskStartedAt = Date.now()
+        if (this.interceptor.taskStartedAt === null || this.interceptor.taskFinishedAt !== null) {
+          this.interceptor.taskStartedAt = Date.now()
+        }
         this.interceptor.taskFinishedAt = null
         break
       case 'task-finished':
-        if (this.interceptor.taskStartedAt !== null && this.interceptor.taskFinishedAt === null) {
-          this.interceptor.taskFinishedAt = Date.now()
-          if (payload.completed === true) this.handlers.onTaskCompleted()
+        if (payload.completed === true && this.interceptor.taskFinishedAt === null) {
+          this.completeTask()
+          this.handlers.onTaskCompleted()
         }
         break
       case 'command':

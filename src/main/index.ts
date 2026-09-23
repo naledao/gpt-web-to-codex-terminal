@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_HOME_URL,
@@ -284,7 +284,7 @@ function registerIpcHandlers(): void {
   ipcMain.on(IpcChannels.embedSetBounds, (event, bounds: EmbedBounds) => runtimeForEvent(event)?.setEmbedBounds(bounds))
   ipcMain.on(IpcChannels.embedSetVisible, (event, visible: boolean) => runtimeForEvent(event)?.setEmbedVisible(Boolean(visible)))
   ipcMain.on(IpcChannels.embedCommand, (event, command: EmbedCommand) => runtimeForEvent(event)?.sendEmbedCommand(command))
-  ipcMain.on(IpcChannels.embedNavigate, (event, url: string) => runtimeForEvent(event)?.embed.navigate(String(url)))
+  ipcMain.on(IpcChannels.embedNavigate, (event, url: string) => runtimeForEvent(event)?.navigateEmbed(String(url)))
   ipcMain.handle(IpcChannels.embedGetState, (event): EmbedState => runtimeForEvent(event)?.embed.getState() ?? EMPTY_EMBED_STATE)
   ipcMain.handle(IpcChannels.embedGetExternalAuth, (event): ExternalAuthNotice | null => runtimeForEvent(event)?.externalAuthNotice ?? null)
   ipcMain.on(IpcChannels.embedLoginWithEmail, (event) => runtimeForEvent(event)?.embed.navigate(EMBED_LOGIN_URL))
@@ -320,6 +320,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannels.interceptorGetState, (event): InterceptorStatus => runtimeForEvent(event)?.embed.getInterceptorStatus() ?? FALLBACK_INTERCEPTOR_STATE)
   ipcMain.handle(IpcChannels.interceptorSetEnabled, (event, enabled: boolean): InterceptorStatus => runtimeForEvent(event)?.embed.setInterceptorEnabled(Boolean(enabled)) ?? FALLBACK_INTERCEPTOR_STATE)
+  ipcMain.handle(IpcChannels.interceptorEndTask, async (event): Promise<InterceptorStatus> => {
+    const runtime = runtimeForEvent(event)
+    return runtime ? await runtime.endTask() : FALLBACK_INTERCEPTOR_STATE
+  })
 
   ipcMain.handle(IpcChannels.automationGetState, (event): AutomationState => runtimeForEvent(event)?.runner.getAutomation() ?? FALLBACK_AUTOMATION)
   ipcMain.handle(IpcChannels.automationSetMode, (event, mode: string): AutomationState => runtimeForEvent(event)?.applyExecutionMode(mode === 'auto' ? 'auto' : 'manual') ?? FALLBACK_AUTOMATION)
@@ -385,6 +389,22 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.sshConnect, (event, draft: SshHostDraft): SshState => runtimeForEvent(event)?.connectSsh(draft) ?? { ...EMPTY_SSH_STATE })
   ipcMain.handle(IpcChannels.sshDisconnect, (event): SshState => runtimeForEvent(event)?.ssh.disconnect() ?? { ...EMPTY_SSH_STATE })
   ipcMain.handle(IpcChannels.sshDismiss, (event): SshState => runtimeForEvent(event)?.ssh.dismiss() ?? { ...EMPTY_SSH_STATE })
+  ipcMain.handle(IpcChannels.sshUploadFiles, async (event): Promise<SshState> => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime) return { ...EMPTY_SSH_STATE }
+    const window = runtime.window
+    const result = window && !window.isDestroyed()
+      ? await dialog.showOpenDialog(window, {
+          properties: ['openFile', 'multiSelections'],
+          title: '选择要上传到 SSH 的文件'
+        })
+      : await dialog.showOpenDialog({
+          properties: ['openFile', 'multiSelections'],
+          title: '选择要上传到 SSH 的文件'
+        })
+    if (result.canceled || result.filePaths.length === 0) return runtime.ssh.getState()
+    return runtime.ssh.uploadFiles(result.filePaths)
+  })
   ipcMain.handle(IpcChannels.sshInput, (event, text: string): SshState => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return { ...EMPTY_SSH_STATE }

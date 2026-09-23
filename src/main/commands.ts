@@ -666,6 +666,26 @@ export class CommandRunner {
     this.flushTerminal()
   }
 
+  /** End the whole model-driven task: invalidate queued work and stop the active command. */
+  async endTask(): Promise<void> {
+    this.executionRequest += 1
+
+    const conversationId = this.deps.currentConversationId()
+    if (conversationId) {
+      let changed = false
+      for (const record of this.deps.store.listExecutions(conversationId)) {
+        if (record.status !== 'pending' && record.status !== 'blocked') continue
+        this.deps.store.setExecutionStatus(record.messageId, 'skipped')
+        changed = true
+      }
+      if (changed) this.broadcastExecutions(conversationId)
+    }
+
+    const shell = this.activeShell
+    if (shell && shell.running) await shell.interrupt()
+    this.appendLine({ kind: 'notice', text: '任务已手动结束' })
+    this.flushTerminal()
+  }
   /** Stop the current command without clearing the transcript. */
   async interruptTerminal(): Promise<void> {
     const shell = this.activeShell

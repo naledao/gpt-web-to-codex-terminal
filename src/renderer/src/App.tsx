@@ -134,6 +134,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
   /** The quick host list, shown inside the terminal pane. */
   const [sshPickerOpen, setSshPickerOpen] = useState(false)
   const [sshBusy, setSshBusy] = useState(false)
+  const [sshUploading, setSshUploading] = useState(false)
   const [sshDraft, setSshDraft] = useState<SshHostDraft>({
     id: null,
     name: '',
@@ -162,6 +163,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
 
   const conversationId = embed.conversationId
   const isAuto = automation?.mode === 'auto'
+  const taskRunning = interceptor?.taskStartedAt != null && interceptor.taskFinishedAt == null
 
   const waiting = useMemo(
     () => executions.filter((record) => RUNNABLE.has(record.status)),
@@ -378,10 +380,14 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
   const submitAddress = useCallback(
     (event: FormEvent<HTMLFormElement>): void => {
       event.preventDefault()
+      if (taskRunning) {
+        setEditing(false)
+        return
+      }
       window.api.navigateEmbed(address)
       setEditing(false)
     },
-    [address]
+    [address, taskRunning]
   )
 
   /**
@@ -462,6 +468,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
   }, [])
 
   const openConversation = useCallback(async (conversation: Conversation): Promise<void> => {
+    if (conversation.id === conversationId || taskRunning) return
     if (conversation.project?.path) {
       try {
         setTerminal(await window.api.setTerminalCwd(conversation.project.path))
@@ -470,7 +477,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
       }
     }
     window.api.navigateEmbed(conversation.url)
-  }, [])
+  }, [conversationId, taskRunning])
 
   const moveConversationToProject = useCallback(
     async (event: ReactDragEvent<HTMLElement>, projectId: string): Promise<void> => {
@@ -512,6 +519,15 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
       await refreshExecutions()
     } catch {
       /* ignore */
+    }
+  }, [refreshExecutions])
+
+  const endTask = useCallback(async (): Promise<void> => {
+    try {
+      setInterceptor(await window.api.endTask())
+      await refreshExecutions()
+    } catch {
+      /* leave pushed state to correct the UI */
     }
   }, [refreshExecutions])
 
@@ -629,6 +645,17 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
     [ssh?.hostId, sshLive]
   )
 
+  const uploadSshFiles = useCallback(async (): Promise<void> => {
+    if (ssh?.status !== 'connected' || sshUploading) return
+    setSshUploading(true)
+    try {
+      setSsh(await window.api.uploadSshFiles())
+    } catch {
+      /* upload errors are reported in the SSH transcript when possible */
+    } finally {
+      setSshUploading(false)
+    }
+  }, [ssh?.status, sshUploading])
   const disconnectSsh = useCallback(async (): Promise<void> => {
     try {
       setSsh(await window.api.disconnectSsh())
@@ -878,7 +905,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
           <button
             type="button"
             title="后退"
-            disabled={!embed.canGoBack}
+            disabled={taskRunning || !embed.canGoBack}
             onClick={() => window.api.sendEmbedCommand('back')}
           >
             ←
@@ -886,7 +913,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
           <button
             type="button"
             title="前进"
-            disabled={!embed.canGoForward}
+            disabled={taskRunning || !embed.canGoForward}
             onClick={() => window.api.sendEmbedCommand('forward')}
           >
             →
@@ -894,11 +921,12 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
           <button
             type="button"
             title={embed.isLoading ? '停止加载' : '重新加载'}
+            disabled={taskRunning && !embed.isLoading}
             onClick={() => window.api.sendEmbedCommand(embed.isLoading ? 'stop' : 'reload')}
           >
             {embed.isLoading ? '✕' : '⟳'}
           </button>
-          <button type="button" title="回到 ChatGPT 首页" onClick={() => window.api.sendEmbedCommand('home')}>
+          <button type="button" title="回到 ChatGPT 首页" disabled={taskRunning} onClick={() => window.api.sendEmbedCommand('home')}>
             ⌂
           </button>
 
@@ -1028,8 +1056,17 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
             </button>
             <button
               type="button"
+              className="btn btn--danger"
+              disabled={!taskRunning}
+              title="停止 ChatGPT 生成、终端命令和后续自动执行，并允许切换对话"
+              onClick={() => void endTask()}
+            >
+              结束任务
+            </button>
+            <button
+              type="button"
               className="btn"
-              disabled={!conversationId}
+              disabled={!conversationId || taskRunning}
               title="重新解析上一条回复，用于恢复中断的任务"
               onClick={() => void checkLastReply()}
             >
@@ -1111,21 +1148,25 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
                 <ul className="conversation-folder__list">
                   {folder.conversations.map((conversation) => {
                     const active = conversation.id === conversationId
+                    const locked = taskRunning && !active
                     return (
                       <li key={conversation.id}>
                         <div
                           className={active ? 'conversation conversation--active' : 'conversation'}
                           role="button"
-                          tabIndex={0}
+                          tabIndex={locked ? -1 : 0}
                           draggable={Boolean(conversation.project)}
-                          title={`${displayTitle(conversation)}\n${conversation.url}`}
+                          aria-disabled={locked}
+                          title={locked ? '任务进行中，结束任务后才能切换对话' : `${displayTitle(conversation)}\n${conversation.url}`}
                           onDragStart={(event) => {
                             event.dataTransfer.setData('text/plain', conversation.id)
                             event.dataTransfer.effectAllowed = 'move'
                           }}
-                          onClick={() => void openConversation(conversation)}
+                          onClick={() => {
+                            if (!locked) void openConversation(conversation)
+                          }}
                           onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
+                            if (!locked && (event.key === 'Enter' || event.key === ' ')) {
                               event.preventDefault()
                               void openConversation(conversation)
                             }
@@ -1356,6 +1397,15 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
             ) : (
               <span className="terminal-pane__cwd" title={ssh?.message}>{ssh?.message}</span>
             )}
+            <button
+              type="button"
+              className="panel__sync"
+              disabled={ssh?.status !== 'connected' || sshUploading}
+              title={`上传本地文件到当前远程目录：${ssh?.modelCwd || '.'}`}
+              onClick={() => void uploadSshFiles()}
+            >
+              {sshUploading ? '上传中…' : '上传'}
+            </button>
             <button
               type="button"
               className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
