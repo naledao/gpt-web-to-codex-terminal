@@ -620,10 +620,12 @@ Windows PowerShell 5.1 的 `Get-Content` 对**没有 BOM 的 UTF-8 文件是按 
   - **必须说出来，不能静默丢弃** —— 从用户角度看，没到达的结果和程序坏了完全一样。
   - 已知残留竞态：比对和真正写入之间隔着一次 `executeJavaScript` 往返（几毫秒），
     理论上有窗口。真要在那一瞬间切对话才会漏，暂不为它加页面侧的二次校验。
-- **一个 SessionRuntime 只跑一条当前对话，但应用可以同时存在多个 SessionRuntime。** 每个会话窗口各自拥有独立的
-  ChatGptEmbed、CommandRunner、终端、SSH、自动执行状态和当前 conversation，因此不同窗口可以并行跑各自的 loop。
-  管理窗口只负责创建、聚合状态和重新聚焦这些会话窗口；IPC 必须按发送方窗口路由到对应 runtime，绝不能退回全局 runner/embed。
-  同一个 SessionRuntime 内仍保留对话 id 回传校验：如果用户在该会话窗口里切走对话，旧命令结果不能误发进新对话。
+- **一个 SessionRuntime 只跑一条当前对话，但应用可以同时存在多个 SessionRuntime。** 整个应用只使用一个
+  BrowserWindow：左侧 Workspace 导航列出全部会话，右侧在“会话管理”和当前会话页面之间切换。每个 runtime 仍独立拥有
+  ChatGptEmbed、CommandRunner、终端、SSH、自动执行状态和当前 conversation，因此未显示的会话也能继续在后台跑各自的 loop。
+  多个 ChatGptEmbed 的 WebContentsView 挂在同一个窗口上，但任何时刻只能让当前 SessionRuntime 的 view 可见；renderer IPC
+  也只能路由到当前选中的 runtime，绝不能退回全局 runner/embed。切换时先停用旧 runtime 的 UI 投递，再激活新 runtime。
+  同一个 SessionRuntime 内仍保留对话 id 回传校验：如果用户在该会话里切走 ChatGPT 对话，旧命令结果不能误发进新对话。
 - 回传的文本必须包含**命令、目录、自然语言结论**三段，再跟输出：
 
   ```

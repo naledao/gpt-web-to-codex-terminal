@@ -88,7 +88,11 @@ function formatDuration(milliseconds: number): string {
     ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
     : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
-export default function App(): JSX.Element {
+interface AppProps {
+  initialSshDialogOpen?: boolean
+}
+
+export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Element {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
@@ -126,9 +130,7 @@ export default function App(): JSX.Element {
   const [notes, setNotes] = useState<TerminalNotes | null>(null)
   const [notesDraft, setNotesDraft] = useState('')
   const [notesSaving, setNotesSaving] = useState(false)
-  const [sshDialogOpen, setSshDialogOpen] = useState(
-    () => new URLSearchParams(window.location.search).get('ssh') === '1'
-  )
+  const [sshDialogOpen, setSshDialogOpen] = useState(initialSshDialogOpen)
   /** The quick host list, shown inside the terminal pane. */
   const [sshPickerOpen, setSshPickerOpen] = useState(false)
   const [sshBusy, setSshBusy] = useState(false)

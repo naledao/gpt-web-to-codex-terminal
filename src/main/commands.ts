@@ -369,9 +369,12 @@ export class CommandRunner {
    * It is ALWAYS stored, so the user can see it and run it by hand. Whether it
    * runs by itself depends on the mode and on `live` (see the notice below).
    */
-  handleDetected(parsed: ParsedCommand): void {
-    const conversationId = this.deps.currentConversationId()
-    if (!conversationId) return
+  handleDetected(parsed: ParsedCommand, conversationIdOverride?: string): boolean {
+    const conversationId = conversationIdOverride ?? this.deps.currentConversationId()
+    // A brand-new ChatGPT conversation briefly lives at '/' before the SPA assigns
+    // /c/<id>. The command can arrive during that gap; tell SessionRuntime to defer
+    // it instead of silently dropping it.
+    if (!conversationId) return false
 
     const danger = findDanger(parsed.command)
     const created = this.deps.store.createExecution({
@@ -385,7 +388,7 @@ export class CommandRunner {
 
     // Already known: this is the idempotency guard, and it is what makes a page
     // reload (which re-renders every old message) harmless.
-    if (!created) return
+    if (!created) return true
 
     // An empty command means the model considers the task finished. Check it
     // before the generic notice so the log does not say "检测到命令" and then
@@ -395,7 +398,7 @@ export class CommandRunner {
       this.appendLine({ kind: 'notice', text: '模型报告任务完成（command 为空）' })
       this.broadcastExecutions(conversationId)
       this.deps.onTaskCompleted(parsed.description)
-      return
+      return true
     }
 
     const autoRun = this.automation.mode === 'auto' && !this.automation.paused
@@ -442,6 +445,7 @@ export class CommandRunner {
     if (autoRun) {
       void this.execute(parsed.messageId)
     }
+    return true
   }
 
   /** Run a stored command that is still waiting (pending or blocked). */

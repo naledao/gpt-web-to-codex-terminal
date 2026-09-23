@@ -3,7 +3,8 @@ import type { CSSProperties, ReactElement } from 'react'
 import type { ManagedSessionSummary } from '../../shared/types'
 
 const shell: CSSProperties = {
-  minHeight: '100vh',
+  height: '100%',
+  overflow: 'auto',
   background: '#0b0e14',
   color: '#d7dde8',
   fontFamily: 'Inter, system-ui, sans-serif',

@@ -25,6 +25,7 @@ import type {
   ExternalAuthNotice,
   InterceptorStatus,
   ManagedSessionSummary,
+  WorkspaceState,
   SessionImportDraft,
   SessionImportResult,
   SshHost,
@@ -49,6 +50,8 @@ let store: ConversationStore | null = null
 let localMachineId = ''
 let settings: AppSettings = { embedProxy: '', sshProxy: '' }
 const runtimes = new Map<string, SessionRuntime>()
+let currentSessionId: string | null = null
+let workspaceOpenSshDialog = false
 
 const EMPTY_EMBED_STATE: EmbedState = {
   url: '',
@@ -93,7 +96,6 @@ async function applyEmbedProxy(proxy: string): Promise<void> {
 function managedSessions(): ManagedSessionSummary[] {
   return [...runtimes.values()]
     .map((runtime) => runtime.summary())
-    .filter((item): item is ManagedSessionSummary => item !== null)
     .sort((a, b) => a.createdAt - b.createdAt)
 }
 
@@ -102,14 +104,49 @@ function broadcastManagedSessions(): void {
   managerWindow.webContents.send(IpcChannels.managerSessionsChanged, managedSessions())
 }
 
-function runtimeForEvent(event: IpcMainEvent | IpcMainInvokeEvent): SessionRuntime | null {
-  for (const runtime of runtimes.values()) {
-    if (runtime.ownsSender(event.sender)) return runtime
+function workspaceState(): WorkspaceState {
+  return {
+    view: currentSessionId ? 'session' : 'manager',
+    sessionId: currentSessionId,
+    openSshDialog: workspaceOpenSshDialog
   }
-  return null
 }
 
-function createSession(kind: 'local' | 'ssh' = 'local'): SessionRuntime | null {
+function broadcastWorkspaceState(): void {
+  if (!managerWindow || managerWindow.isDestroyed()) return
+  managerWindow.webContents.send(IpcChannels.workspaceChanged, workspaceState())
+}
+
+function showWorkspaceManager(): boolean {
+  if (currentSessionId) runtimes.get(currentSessionId)?.setActive(false)
+  currentSessionId = null
+  workspaceOpenSshDialog = false
+  broadcastWorkspaceState()
+  return true
+}
+
+function selectSession(id: string, openSshDialog = false): boolean {
+  const runtime = runtimes.get(id)
+  if (!runtime) return false
+  if (currentSessionId && currentSessionId !== id) runtimes.get(currentSessionId)?.setActive(false)
+  currentSessionId = id
+  workspaceOpenSshDialog = openSshDialog
+  runtime.setActive(true)
+  broadcastWorkspaceState()
+  if (managerWindow && !managerWindow.isDestroyed()) {
+    if (managerWindow.isMinimized()) managerWindow.restore()
+    managerWindow.show()
+    managerWindow.focus()
+  }
+  return true
+}
+
+function runtimeForEvent(event: IpcMainEvent | IpcMainInvokeEvent): SessionRuntime | null {
+  if (!managerWindow || managerWindow.isDestroyed() || event.sender !== managerWindow.webContents) return null
+  return currentSessionId ? runtimes.get(currentSessionId) ?? null : null
+}
+
+function createSession(kind: 'local' | 'ssh' = 'local', activate = true): SessionRuntime | null {
   if (!store) return null
   const savedMode = store.getSetting(SETTING_EXECUTION_MODE)
   const initialMode: ExecutionMode = savedMode === 'auto' ? 'auto' : 'manual'
@@ -117,18 +154,14 @@ function createSession(kind: 'local' | 'ssh' = 'local'): SessionRuntime | null {
     store,
     localMachineId,
     initialMode,
-    rendererDevServerUrl,
     settings: () => ({ ...settings }),
-    openSshDialog: kind === 'ssh',
     onSummaryChanged: broadcastManagedSessions,
-    onClosed: (id) => {
-      runtimes.delete(id)
-      broadcastManagedSessions()
-    }
+    onActivate: (id) => { selectSession(id) }
   })
   runtimes.set(runtime.id, runtime)
-  runtime.createWindow()
+  if (managerWindow && !managerWindow.isDestroyed()) runtime.attach(managerWindow)
   broadcastManagedSessions()
+  if (activate) selectSession(runtime.id, kind === 'ssh')
   return runtime
 }
 
@@ -141,10 +174,10 @@ function createManagerWindow(): void {
   }
 
   const window = new BrowserWindow({
-    width: 760,
-    height: 560,
-    minWidth: 620,
-    minHeight: 420,
+    width: 1440,
+    height: 900,
+    minWidth: 1040,
+    minHeight: 620,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0b0e14',
@@ -158,7 +191,13 @@ function createManagerWindow(): void {
   })
   managerWindow = window
   window.once('ready-to-show', () => window.show())
-  window.on('closed', () => { managerWindow = null })
+  window.on('closed', () => {
+    for (const runtime of runtimes.values()) runtime.dispose()
+    runtimes.clear()
+    currentSessionId = null
+    workspaceOpenSshDialog = false
+    managerWindow = null
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
     return { action: 'deny' }
@@ -170,13 +209,8 @@ function createManagerWindow(): void {
     }
   })
 
-  if (rendererDevServerUrl) {
-    const url = new URL(rendererDevServerUrl)
-    url.searchParams.set('view', 'manager')
-    void window.loadURL(url.toString())
-  } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'), { query: { view: 'manager' } })
-  }
+  if (rendererDevServerUrl) void window.loadURL(rendererDevServerUrl)
+  else void window.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
 function registerIpcHandlers(): void {
@@ -200,17 +234,23 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.managerSessionsList, (event): ManagedSessionSummary[] =>
     fromManager(event) ? managedSessions() : []
   )
+  ipcMain.handle(IpcChannels.workspaceGetState, (event): WorkspaceState =>
+    fromManager(event) ? workspaceState() : { view: 'manager', sessionId: null, openSshDialog: false }
+  )
+  ipcMain.handle(IpcChannels.workspaceShowManager, (event): boolean =>
+    fromManager(event) ? showWorkspaceManager() : false
+  )
   ipcMain.handle(
     IpcChannels.managerSessionCreate,
     (event, kind: string): ManagedSessionSummary | null => {
       if (!fromManager(event)) return null
-      const runtime = createSession(kind === 'ssh' ? 'ssh' : 'local')
+      const runtime = createSession(kind === 'ssh' ? 'ssh' : 'local', true)
       return runtime?.summary() ?? null
     }
   )
   ipcMain.handle(IpcChannels.managerSessionOpen, (event, id: string): boolean => {
     if (!fromManager(event)) return false
-    return runtimes.get(String(id))?.focus() ?? false
+    return selectSession(String(id))
   })
 
   ipcMain.on(IpcChannels.embedSetBounds, (event, bounds: EmbedBounds) => runtimeForEvent(event)?.setEmbedBounds(bounds))
@@ -370,11 +410,11 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpcHandlers()
     createManagerWindow()
-    createSession('local')
+    createSession('local', false)
 
     app.on('activate', () => {
       createManagerWindow()
-      if (runtimes.size === 0) createSession('local')
+      if (runtimes.size === 0) createSession('local', false)
     })
   })
 }

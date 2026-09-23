@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
-import { BrowserWindow, Notification, safeStorage, shell } from 'electron'
+import { BrowserWindow, Notification, safeStorage } from 'electron'
 import {
   FALLBACK_ENVIRONMENT,
   IpcChannels,
@@ -15,6 +14,7 @@ import type {
   ExecutionMode,
   ExternalAuthNotice,
   ManagedSessionSummary,
+  ParsedCommand,
   SshHost,
   SshHostDraft,
   SshState,
@@ -49,11 +49,9 @@ export interface SessionRuntimeOptions {
   store: ConversationStore
   localMachineId: string
   initialMode: ExecutionMode
-  rendererDevServerUrl?: string
   settings: () => { embedProxy: string; sshProxy: string }
   onSummaryChanged: () => void
-  onClosed: (id: string) => void
-  openSshDialog?: boolean
+  onActivate: (id: string) => void
 }
 
 function encryptSecret(password: string): string {
@@ -101,6 +99,8 @@ export class SessionRuntime {
   private remoteShell: RemoteShell | null = null
   private lastConversationId: string | null = null
   private disposed = false
+  private active = false
+  private readonly deferredCommands = new Map<string, ParsedCommand>()
 
   constructor(private readonly options: SessionRuntimeOptions) {
     this.id = options.id ?? randomUUID()
@@ -125,6 +125,7 @@ export class SessionRuntime {
       },
       onConversation: (conversation) => {
         this.options.store.upsert(conversation, this.currentConversationProject())
+        this.flushDeferredCommands(conversation.id)
         this.broadcastConversations()
       },
       onSynced: (scraped) => {
@@ -133,7 +134,7 @@ export class SessionRuntime {
       },
       onInterceptor: (status) => this.send(IpcChannels.interceptorEvent, status),
       onTaskCompleted: () => this.notifyTaskCompleted('任务已完成'),
-      onCommand: (command) => this.runner.handleDetected(command),
+      onCommand: (command) => this.handleDetectedCommand(command),
       onParseFailed: (text) => this.runner.noteParseFailure(text)
     })
 
@@ -165,75 +166,31 @@ export class SessionRuntime {
     })
   }
 
-  createWindow(): BrowserWindow {
-    if (this.window && !this.window.isDestroyed()) return this.window
-
-    const appWindow = new BrowserWindow({
-      width: 1440,
-      height: 900,
-      minWidth: 1040,
-      minHeight: 620,
-      show: false,
-      autoHideMenuBar: true,
-      backgroundColor: '#0b0e14',
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        backgroundThrottling: false
-      }
-    })
-    this.window = appWindow
-
-    appWindow.once('ready-to-show', () => appWindow.show())
-    appWindow.on('closed', () => {
-      this.embed.destroy(appWindow)
-      this.window = null
-      this.dispose()
-      this.options.onClosed(this.id)
-    })
-    appWindow.webContents.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(url)
-      return { action: 'deny' }
-    })
-    appWindow.webContents.on('will-navigate', (event, url) => {
-      if (url !== appWindow.webContents.getURL()) {
-        event.preventDefault()
-        void shell.openExternal(url)
-      }
-    })
-
-    if (this.options.rendererDevServerUrl) {
-      const url = new URL(this.options.rendererDevServerUrl)
-      if (this.options.openSshDialog) url.searchParams.set('ssh', '1')
-      void appWindow.loadURL(url.toString())
-    } else {
-      const query = this.options.openSshDialog ? { ssh: '1' } : undefined
-      void appWindow.loadFile(join(__dirname, '../renderer/index.html'), query ? { query } : undefined)
-    }
-
-    this.embed.attach(appWindow)
+  attach(parent: BrowserWindow): void {
+    if (this.window === parent && !parent.isDestroyed()) return
+    this.window = parent
+    this.embed.attach(parent)
+    this.embed.setVisible(false)
     this.options.onSummaryChanged()
     void this.probeEnvironment()
-    return appWindow
+  }
+
+  setActive(active: boolean): void {
+    this.active = active
+    if (!active) this.embed.setVisible(false)
   }
 
   focus(): boolean {
     const window = this.window
     if (!window || window.isDestroyed()) return false
+    this.options.onActivate(this.id)
     if (window.isMinimized()) window.restore()
     if (!window.isVisible()) window.show()
     window.focus()
     return true
   }
 
-  ownsSender(sender: Electron.WebContents): boolean {
-    return Boolean(this.window && !this.window.isDestroyed() && this.window.webContents === sender)
-  }
-
-  summary(): ManagedSessionSummary | null {
-    if (!this.window || this.window.isDestroyed()) return null
+  summary(): ManagedSessionSummary {
     const state = this.embed.getState()
     const sshState = this.ssh.getState()
     const usingSsh = sshState.attached
@@ -257,6 +214,25 @@ export class SessionRuntime {
 
   sendEmbedCommand(command: EmbedCommand): void {
     this.embed.command(command)
+  }
+
+  private handleDetectedCommand(command: ParsedCommand): void {
+    if (this.runner.handleDetected(command)) return
+
+    // New chats navigate from '/' to /c/<id> asynchronously. A fast assistant
+    // reply can therefore be detected before getState() exposes its conversation
+    // id. Keep the command by message id and associate it when onConversation has
+    // persisted the new chat, rather than losing it permanently.
+    this.deferredCommands.set(command.messageId, command)
+  }
+
+  private flushDeferredCommands(conversationId: string): void {
+    if (this.deferredCommands.size === 0) return
+    for (const [messageId, command] of this.deferredCommands) {
+      if (this.runner.handleDetected(command, conversationId)) {
+        this.deferredCommands.delete(messageId)
+      }
+    }
   }
 
   currentMachineConversations(): Conversation[] {
@@ -405,6 +381,11 @@ export class SessionRuntime {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.active = false
+    this.deferredCommands.clear()
+    const window = this.window
+    if (window && !window.isDestroyed()) this.embed.destroy(window)
+    this.window = null
     this.ssh.dispose()
     this.remoteShell = null
     this.runner.disposeAll()
@@ -448,7 +429,7 @@ export class SessionRuntime {
 
   private send(channel: string, payload: unknown): void {
     const window = this.window
-    if (!window || window.isDestroyed()) return
+    if (!this.active || !window || window.isDestroyed()) return
     window.webContents.send(channel, payload)
   }
 }

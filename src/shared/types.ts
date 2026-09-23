@@ -59,12 +59,21 @@ export const IpcChannels = {
   managerSessionsList: 'manager:sessions-list',
   managerSessionCreate: 'manager:session-create',
   managerSessionOpen: 'manager:session-open',
-  managerSessionsChanged: 'manager:sessions-changed'
+  managerSessionsChanged: 'manager:sessions-changed',
+  workspaceGetState: 'workspace:get-state',
+  workspaceShowManager: 'workspace:show-manager',
+  workspaceChanged: 'workspace:changed'
 } as const
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels]
 
-/** A Session Window visible in the outer manager. */
+/** State of the single-window workspace shell. */
+export interface WorkspaceState {
+  view: 'manager' | 'session'
+  sessionId: string | null
+  openSshDialog: boolean
+}
+
 export interface ManagedSessionSummary {
   id: string
   title: string
@@ -882,6 +891,9 @@ export interface AppApi {
   createManagedSession(kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null>
   openManagedSession(id: string): Promise<boolean>
   onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
+  getWorkspaceState(): Promise<WorkspaceState>
+  showWorkspaceManager(): Promise<boolean>
+  onWorkspaceChanged(listener: (state: WorkspaceState) => void): () => void
   /** Position the native embedded view under the renderer's placeholder. */
   setEmbedBounds(bounds: EmbedBounds): void
   /** Hide/show the native view (needed while a modal covers it). */

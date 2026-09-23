@@ -224,14 +224,21 @@
    * real outcome instead of assuming success.
    */
   const submitWithRetry = (text, attempt, isRaw, done) => {
+    // Capture the newest assistant turn BEFORE clicking Send. ChatGPT can create
+    // the placeholder for the NEW assistant turn synchronously (or within the
+    // 150ms confirmation delay below). Reading lastAssistantId() only after the
+    // composer clears can therefore mark the fresh reply as already handled and
+    // make every later MutationObserver scan skip its command forever.
+    const replyBaselineId = lastAssistantId()
+
     const finish = (ok) => {
       state.programmatic = false
       if (ok) {
         // Once a message actually goes out, the next assistant turn is ours.
         state.awaitingReplySince = Date.now()
-        // Mark the reply that is on screen right now as already handled, so it
-        // cannot be mistaken for the answer.
-        state.lastCommandMessageId = lastAssistantId()
+        // Ignore only the assistant turn that existed BEFORE this send. Never
+        // baseline the new placeholder/reply that may already have appeared.
+        state.lastCommandMessageId = replyBaselineId
         // The send landed, so the new turn is about to render below the fold.
         scheduleScrollToBottom()
       }
@@ -615,7 +622,16 @@
   }
 
   const observer = new MutationObserver(scheduleCheck)
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    // ChatGPT may create a turn node before assigning data-message-id. Without
+    // observing that attribute, a fully rendered reply can remain invisible to
+    // the scanner if no later text mutation happens.
+    attributes: true,
+    attributeFilter: [MESSAGE_ID_ATTR]
+  })
 
   /* ------------------------------------------------------------------ *
    * Public surface used by the main process

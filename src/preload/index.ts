@@ -18,6 +18,7 @@ import type {
   ExternalAuthNotice,
   InterceptorStatus,
   ManagedSessionSummary,
+  WorkspaceState,
   SessionImportDraft,
   SessionImportResult,
   SshHost,
@@ -47,6 +48,16 @@ const api: AppApi = {
     const handler = (_event: IpcRendererEvent, items: ManagedSessionSummary[]): void => listener(items)
     ipcRenderer.on(IpcChannels.managerSessionsChanged, handler)
     return () => ipcRenderer.removeListener(IpcChannels.managerSessionsChanged, handler)
+  },
+
+  getWorkspaceState: (): Promise<WorkspaceState> => ipcRenderer.invoke(IpcChannels.workspaceGetState),
+
+  showWorkspaceManager: (): Promise<boolean> => ipcRenderer.invoke(IpcChannels.workspaceShowManager),
+
+  onWorkspaceChanged: (listener: (state: WorkspaceState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: WorkspaceState): void => listener(state)
+    ipcRenderer.on(IpcChannels.workspaceChanged, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.workspaceChanged, handler)
   },
 
   setEmbedBounds: (bounds: EmbedBounds): void => {

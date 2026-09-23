@@ -1,7 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import App from './App'
-import ManagerApp from './ManagerApp'
+import WorkspaceApp from './WorkspaceApp'
 import './assets/main.css'
 
 const container = document.getElementById('root')
@@ -12,6 +11,6 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    {new URLSearchParams(window.location.search).get('view') === 'manager' ? <ManagerApp /> : <App />}
+    <WorkspaceApp />
   </StrictMode>
 )
