@@ -41,6 +41,12 @@ export default function ManagerApp(): ReactElement {
     }
   }
 
+  const renameSession = async (item: ManagedSessionSummary): Promise<void> => {
+    const next = window.prompt('会话名称（留空可恢复自动标题）', item.title || '')
+    if (next === null) return
+    await window.api.renameManagedSession(item.id, next)
+  }
+
   const destroySession = async (item: ManagedSessionSummary): Promise<void> => {
     if (destroying !== null) return
     const title = item.title || '会话'
@@ -93,14 +99,24 @@ export default function ManagerApp(): ReactElement {
                 </div>
                 <div style={{ color: '#7ee787', fontSize: 12, alignSelf: 'center' }}>打开</div>
               </button>
-              <button
-                type="button"
-                disabled={destroying !== null}
-                onClick={() => void destroySession(item)}
-                style={{ ...button, color: '#ff7b72', padding: '9px 12px' }}
-              >
-                {destroying === item.id ? '销毁中…' : '销毁'}
-              </button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+                <button
+                  type="button"
+                  disabled={destroying !== null}
+                  onClick={() => void renameSession(item)}
+                  style={{ ...button, padding: '9px 12px' }}
+                >
+                  命名
+                </button>
+                <button
+                  type="button"
+                  disabled={destroying !== null}
+                  onClick={() => void destroySession(item)}
+                  style={{ ...button, color: '#ff7b72', padding: '9px 12px' }}
+                >
+                  {destroying === item.id ? '销毁中…' : '销毁'}
+                </button>
+              </div>
             </div>
           ))
         )}

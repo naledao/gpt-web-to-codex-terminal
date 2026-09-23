@@ -98,6 +98,7 @@ export class SessionRuntime {
 
   private remoteShell: RemoteShell | null = null
   private lastConversationId: string | null = null
+  private customTitle = ''
   private disposed = false
   private active = false
   private readonly deferredCommands = new Map<string, ParsedCommand>()
@@ -190,13 +191,18 @@ export class SessionRuntime {
     return true
   }
 
+  setTitle(title: string): void {
+    this.customTitle = title.trim()
+    this.options.onSummaryChanged()
+  }
+
   summary(): ManagedSessionSummary {
     const state = this.embed.getState()
     const sshState = this.ssh.getState()
     const usingSsh = sshState.attached
     return {
       id: this.id,
-      title: state.title || '当前会话',
+      title: this.customTitle || state.title || '当前会话',
       kind: usingSsh ? 'ssh' : 'local',
       target: usingSsh ? sshState.name || sshState.target || 'SSH' : '本机',
       conversationId: state.conversationId,

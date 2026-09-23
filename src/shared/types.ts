@@ -59,6 +59,7 @@ export const IpcChannels = {
   managerSessionsList: 'manager:sessions-list',
   managerSessionCreate: 'manager:session-create',
   managerSessionOpen: 'manager:session-open',
+  managerSessionRename: 'manager:session-rename',
   managerSessionDestroy: 'manager:session-destroy',
   managerSessionsChanged: 'manager:sessions-changed',
   workspaceGetState: 'workspace:get-state',
@@ -891,6 +892,7 @@ export interface AppApi {
   listManagedSessions(): Promise<ManagedSessionSummary[]>
   createManagedSession(kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null>
   openManagedSession(id: string): Promise<boolean>
+  renameManagedSession(id: string, title: string): Promise<boolean>
   destroyManagedSession(id: string): Promise<boolean>
   onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
   getWorkspaceState(): Promise<WorkspaceState>

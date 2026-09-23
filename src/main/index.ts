@@ -269,6 +269,13 @@ function registerIpcHandlers(): void {
     if (!fromManager(event)) return false
     return selectSession(String(id))
   })
+  ipcMain.handle(IpcChannels.managerSessionRename, (event, id: string, title: string): boolean => {
+    if (!fromManager(event)) return false
+    const runtime = runtimes.get(String(id))
+    if (!runtime) return false
+    runtime.setTitle(String(title))
+    return true
+  })
   ipcMain.handle(IpcChannels.managerSessionDestroy, (event, id: string): boolean => {
     if (!fromManager(event)) return false
     return destroySession(String(id))

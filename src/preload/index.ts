@@ -44,6 +44,9 @@ const api: AppApi = {
   openManagedSession: (id: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.managerSessionOpen, id),
 
+  renameManagedSession: (id: string, title: string): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.managerSessionRename, id, title),
+
   destroyManagedSession: (id: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.managerSessionDestroy, id),
 
