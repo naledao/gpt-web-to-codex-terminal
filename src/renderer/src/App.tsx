@@ -126,7 +126,9 @@ export default function App(): JSX.Element {
   const [notes, setNotes] = useState<TerminalNotes | null>(null)
   const [notesDraft, setNotesDraft] = useState('')
   const [notesSaving, setNotesSaving] = useState(false)
-  const [sshDialogOpen, setSshDialogOpen] = useState(false)
+  const [sshDialogOpen, setSshDialogOpen] = useState(
+    () => new URLSearchParams(window.location.search).get('ssh') === '1'
+  )
   /** The quick host list, shown inside the terminal pane. */
   const [sshPickerOpen, setSshPickerOpen] = useState(false)
   const [sshBusy, setSshBusy] = useState(false)

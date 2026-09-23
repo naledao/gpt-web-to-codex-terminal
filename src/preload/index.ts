@@ -17,6 +17,7 @@ import type {
   ExecutionRecord,
   ExternalAuthNotice,
   InterceptorStatus,
+  ManagedSessionSummary,
   SessionImportDraft,
   SessionImportResult,
   SshHost,
@@ -32,6 +33,21 @@ import type {
  */
 const api: AppApi = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IpcChannels.getAppInfo),
+
+  listManagedSessions: (): Promise<ManagedSessionSummary[]> =>
+    ipcRenderer.invoke(IpcChannels.managerSessionsList),
+
+  createManagedSession: (kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null> =>
+    ipcRenderer.invoke(IpcChannels.managerSessionCreate, kind),
+
+  openManagedSession: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.managerSessionOpen, id),
+
+  onManagedSessionsChanged: (listener: (items: ManagedSessionSummary[]) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, items: ManagedSessionSummary[]): void => listener(items)
+    ipcRenderer.on(IpcChannels.managerSessionsChanged, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.managerSessionsChanged, handler)
+  },
 
   setEmbedBounds: (bounds: EmbedBounds): void => {
     ipcRenderer.send(IpcChannels.embedSetBounds, bounds)

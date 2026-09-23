@@ -251,6 +251,11 @@ function posixQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+/** Conversation ids are UUIDs; the first block is enough to tell them apart in a log. */
+function shortId(id: string): string {
+  return id.slice(0, 8)
+}
+
 export class CommandRunner {
   /**
    * The one local PowerShell session.
@@ -526,6 +531,32 @@ export class CommandRunner {
     // step-through — the next command arrives, is stored as pending, and waits
     // for a click instead of running on its own.
     if (this.automation.paused) return
+
+    /*
+     * The reply has to go back to the conversation it came from.
+     *
+     * ChatGPT is a single-page app: switching conversations does not reload the
+     * page, so the interceptor is still installed and `sendRaw` would cheerfully
+     * type this output into whatever chat happens to be on screen now. Comparing
+     * the ids is the only thing between "the loop continues" and "conversation B
+     * receives conversation A's command output".
+     *
+     * The execution record is already written, so nothing is lost — only the
+     * delivery is. Say so plainly instead of dropping it silently: from the user's
+     * side a result that never arrives is indistinguishable from a broken app.
+     */
+    const owner = this.deps.currentConversationId()
+    if (owner !== conversationId) {
+      this.appendLine({
+        kind: 'error',
+        text:
+          `命令结果没有回传：对话已经切走了。这条属于 ${shortId(conversationId)}，` +
+          `当前在 ${owner === null ? '（没有打开对话）' : shortId(owner)}。` +
+          '输出仍记在执行记录里，但不会自动重发 —— 要接着跑，切回去重新发起那一步。'
+      })
+      this.flushTerminal()
+      return
+    }
 
     const message = buildResultMessage(record.command, result)
     const outcome = await this.deps.sendRawToPage(message)

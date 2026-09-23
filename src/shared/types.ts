@@ -55,10 +55,25 @@ export const IpcChannels = {
   sshDismiss: 'ssh:dismiss',
   sshRemoveHost: 'ssh:remove-host',
   sshInput: 'ssh:input',
-  sshChanged: 'ssh:changed'
+  sshChanged: 'ssh:changed',
+  managerSessionsList: 'manager:sessions-list',
+  managerSessionCreate: 'manager:session-create',
+  managerSessionOpen: 'manager:session-open',
+  managerSessionsChanged: 'manager:sessions-changed'
 } as const
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels]
+
+/** A Session Window visible in the outer manager. */
+export interface ManagedSessionSummary {
+  id: string
+  title: string
+  kind: 'local' | 'ssh'
+  target: string
+  conversationId: string | null
+  createdAt: number
+}
+
 
 /** Page the embedded view opens on. */
 export const EMBED_HOME_URL = 'https://chatgpt.com/'
@@ -862,6 +877,11 @@ export interface TerminalNotes {
  */
 export interface AppApi {
   getAppInfo(): Promise<AppInfo>
+  /** Sessions currently owned by the outer manager. */
+  listManagedSessions(): Promise<ManagedSessionSummary[]>
+  createManagedSession(kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null>
+  openManagedSession(id: string): Promise<boolean>
+  onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
   /** Position the native embedded view under the renderer's placeholder. */
   setEmbedBounds(bounds: EmbedBounds): void
   /** Hide/show the native view (needed while a modal covers it). */
