@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
+import { existsSync } from 'node:fs'
 import { DETECT_COMMAND } from './environment'
 import type { EnvironmentKind } from '../shared/types'
 
@@ -200,6 +201,8 @@ interface PendingRun {
 }
 
 export interface ConversationShellOptions {
+  /** Working directory restored across app restarts; invalid paths fall back to the home directory. */
+  initialCwd?: string
   /** Called with decoded output as it arrives, for live display. */
   onOutput?: (chunk: string) => void
   /** Called when the session process goes away unexpectedly. */
@@ -251,7 +254,10 @@ export class ConversationShell implements ExecutionShell {
   readonly kind: EnvironmentKind = 'windows'
   readonly probeCommand: string = DETECT_COMMAND
 
-  constructor(private readonly options: ConversationShellOptions = {}) {}
+  constructor(private readonly options: ConversationShellOptions = {}) {
+    const initialCwd = options.initialCwd?.trim() ?? ''
+    if (initialCwd !== '' && existsSync(initialCwd)) this.currentCwd = initialCwd
+  }
 
   get cwd(): string {
     return this.currentCwd

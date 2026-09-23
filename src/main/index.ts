@@ -44,6 +44,8 @@ const SETTING_EXECUTION_MODE = 'executionMode'
 const SETTING_EMBED_PROXY = 'embedProxy'
 const SETTING_SSH_PROXY = 'sshProxy'
 const SETTING_LOCAL_MACHINE_ID = 'localMachineId'
+const SETTING_WORKSPACE_SESSION_ID = 'workspaceSessionId'
+const SETTING_WORKSPACE_OPEN_SSH_DIALOG = 'workspaceOpenSshDialog'
 
 let managerWindow: BrowserWindow | null = null
 let store: ConversationStore | null = null
@@ -117,10 +119,17 @@ function broadcastWorkspaceState(): void {
   managerWindow.webContents.send(IpcChannels.workspaceChanged, workspaceState())
 }
 
+function persistWorkspaceState(): void {
+  if (!store) return
+  store.setSetting(SETTING_WORKSPACE_SESSION_ID, currentSessionId ?? '')
+  store.setSetting(SETTING_WORKSPACE_OPEN_SSH_DIALOG, workspaceOpenSshDialog ? '1' : '0')
+}
+
 function showWorkspaceManager(): boolean {
   if (currentSessionId) runtimes.get(currentSessionId)?.setActive(false)
   currentSessionId = null
   workspaceOpenSshDialog = false
+  persistWorkspaceState()
   broadcastWorkspaceState()
   return true
 }
@@ -132,6 +141,7 @@ function selectSession(id: string, openSshDialog = false): boolean {
   currentSessionId = id
   workspaceOpenSshDialog = openSshDialog
   runtime.setActive(true)
+  persistWorkspaceState()
   broadcastWorkspaceState()
   if (managerWindow && !managerWindow.isDestroyed()) {
     if (managerWindow.isMinimized()) managerWindow.restore()
@@ -161,6 +171,12 @@ function createSession(kind: 'local' | 'ssh' = 'local', activate = true, restore
     customTitle: restored?.title,
     initialUrl: restored?.url || undefined,
     initialConversationId: restored?.conversationId ?? null,
+    initialPaused: restored?.paused ?? false,
+    initialLocalCwd: restored?.localCwd ?? '',
+    initialSshHostId: restored?.sshHostId ?? '',
+    initialSshAttached: restored?.sshAttached ?? false,
+    initialSshReconnect: restored?.sshReconnect ?? false,
+    initialSshCwd: restored?.sshCwd ?? '',
     store,
     localMachineId,
     initialMode,
@@ -193,7 +209,10 @@ function destroySession(id: string): boolean {
   store?.removeManagedSession(id)
   runtime.dispose()
   broadcastManagedSessions()
-  if (wasCurrent) broadcastWorkspaceState()
+  if (wasCurrent) {
+    persistWorkspaceState()
+    broadcastWorkspaceState()
+  }
   return true
 }
 
@@ -272,6 +291,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.workspaceShowManager, (event): boolean =>
     fromManager(event) ? showWorkspaceManager() : false
   )
+  ipcMain.on(IpcChannels.workspaceSetOpenSshDialog, (event, open: boolean) => {
+    if (!fromManager(event) || !currentSessionId) return
+    workspaceOpenSshDialog = Boolean(open)
+    persistWorkspaceState()
+  })
   ipcMain.handle(
     IpcChannels.managerSessionCreate,
     (event, kind: string): ManagedSessionSummary | null => {
@@ -477,9 +501,20 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpcHandlers()
     createManagerWindow()
+    const savedWorkspaceSessionId = conversationStore.getSetting(SETTING_WORKSPACE_SESSION_ID) ?? ''
+    const savedWorkspaceOpenSshDialog = conversationStore.getSetting(SETTING_WORKSPACE_OPEN_SSH_DIALOG) === '1'
     const savedSessions = conversationStore.listManagedSessions()
     if (savedSessions.length === 0) createSession('local', false)
     else for (const savedSession of savedSessions) createSession('local', false, savedSession)
+
+    if (savedWorkspaceSessionId !== '' && runtimes.has(savedWorkspaceSessionId)) {
+      selectSession(savedWorkspaceSessionId, savedWorkspaceOpenSshDialog)
+    } else {
+      currentSessionId = null
+      workspaceOpenSshDialog = false
+      persistWorkspaceState()
+      broadcastWorkspaceState()
+    }
 
     app.on('activate', () => {
       createManagerWindow()

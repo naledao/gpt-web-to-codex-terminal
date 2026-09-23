@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS managed_sessions (
   title           TEXT NOT NULL DEFAULT '',
   url             TEXT NOT NULL DEFAULT '',
   conversation_id TEXT,
+  paused          INTEGER NOT NULL DEFAULT 0,
+  local_cwd       TEXT NOT NULL DEFAULT '',
+  ssh_host_id     TEXT NOT NULL DEFAULT '',
+  ssh_attached    INTEGER NOT NULL DEFAULT 0,
+  ssh_reconnect   INTEGER NOT NULL DEFAULT 0,
+  ssh_cwd         TEXT NOT NULL DEFAULT '',
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );
@@ -124,6 +130,12 @@ export interface ManagedSessionRecord {
   title: string
   url: string
   conversationId: string | null
+  paused: boolean
+  localCwd: string
+  sshHostId: string
+  sshAttached: boolean
+  sshReconnect: boolean
+  sshCwd: string
   createdAt: number
   updatedAt: number
 }
@@ -175,6 +187,23 @@ export class ConversationStore {
     }>
     if (!sshColumns.some((column) => column.name === 'note')) {
       this.db.exec("ALTER TABLE ssh_hosts ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+    }
+
+    const managedSessionColumns = this.db
+      .prepare('PRAGMA table_info(managed_sessions)')
+      .all() as unknown as Array<{ name: string }>
+    const managedSessionMigrations: Array<[string, string]> = [
+      ['paused', 'INTEGER NOT NULL DEFAULT 0'],
+      ['local_cwd', "TEXT NOT NULL DEFAULT ''"],
+      ['ssh_host_id', "TEXT NOT NULL DEFAULT ''"],
+      ['ssh_attached', 'INTEGER NOT NULL DEFAULT 0'],
+      ['ssh_reconnect', 'INTEGER NOT NULL DEFAULT 0'],
+      ['ssh_cwd', "TEXT NOT NULL DEFAULT ''"]
+    ]
+    for (const [name, definition] of managedSessionMigrations) {
+      if (!managedSessionColumns.some((column) => column.name === name)) {
+        this.db.exec(`ALTER TABLE managed_sessions ADD COLUMN ${name} ${definition}`)
+      }
     }
 
     const executionColumns = this.db
@@ -577,7 +606,7 @@ export class ConversationStore {
   listManagedSessions(): ManagedSessionRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT id, title, url, conversation_id, created_at, updated_at
+        `SELECT id, title, url, conversation_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, created_at, updated_at
            FROM managed_sessions ORDER BY created_at ASC`
       )
       .all() as unknown as Array<{
@@ -585,6 +614,12 @@ export class ConversationStore {
       title: string
       url: string
       conversation_id: string | null
+      paused: number
+      local_cwd: string
+      ssh_host_id: string
+      ssh_attached: number
+      ssh_reconnect: number
+      ssh_cwd: string
       created_at: number
       updated_at: number
     }>
@@ -594,6 +629,12 @@ export class ConversationStore {
       title: row.title,
       url: row.url,
       conversationId: row.conversation_id,
+      paused: row.paused !== 0,
+      localCwd: row.local_cwd,
+      sshHostId: row.ssh_host_id,
+      sshAttached: row.ssh_attached !== 0,
+      sshReconnect: row.ssh_reconnect !== 0,
+      sshCwd: row.ssh_cwd,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }))
@@ -603,15 +644,34 @@ export class ConversationStore {
     const now = Date.now()
     this.db
       .prepare(
-        `INSERT INTO managed_sessions (id, title, url, conversation_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO managed_sessions (id, title, url, conversation_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            url = excluded.url,
            conversation_id = excluded.conversation_id,
+           paused = excluded.paused,
+           local_cwd = excluded.local_cwd,
+           ssh_host_id = excluded.ssh_host_id,
+           ssh_attached = excluded.ssh_attached,
+           ssh_reconnect = excluded.ssh_reconnect,
+           ssh_cwd = excluded.ssh_cwd,
            updated_at = excluded.updated_at`
       )
-      .run(record.id, record.title, record.url, record.conversationId, record.createdAt, now)
+      .run(
+        record.id,
+        record.title,
+        record.url,
+        record.conversationId,
+        record.paused ? 1 : 0,
+        record.localCwd,
+        record.sshHostId,
+        record.sshAttached ? 1 : 0,
+        record.sshReconnect ? 1 : 0,
+        record.sshCwd,
+        record.createdAt,
+        now
+      )
   }
 
   removeManagedSession(id: string): void {

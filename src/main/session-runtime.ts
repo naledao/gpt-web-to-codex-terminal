@@ -50,6 +50,12 @@ export interface SessionRuntimeOptions {
   customTitle?: string
   initialUrl?: string
   initialConversationId?: string | null
+  initialPaused?: boolean
+  initialLocalCwd?: string
+  initialSshHostId?: string
+  initialSshAttached?: boolean
+  initialSshReconnect?: boolean
+  initialSshCwd?: string
   store: ConversationStore
   localMachineId: string
   initialMode: ExecutionMode
@@ -104,6 +110,8 @@ export class SessionRuntime {
   private lastConversationId: string | null
   private lastKnownUrl: string
   private customTitle: string
+  private sshCwd: string
+  private lastPersistedLocalCwd: string
   private disposed = false
   private active = false
   private readonly deferredCommands = new Map<string, ParsedCommand>()
@@ -123,6 +131,8 @@ export class SessionRuntime {
     this.customTitle = options.customTitle?.trim() ?? ''
     this.lastKnownUrl = options.initialUrl ?? ''
     this.lastConversationId = options.initialConversationId ?? null
+    this.sshCwd = options.initialSshCwd?.trim() ?? ''
+    this.lastPersistedLocalCwd = options.initialLocalCwd?.trim() ?? ''
 
     this.embed = new ChatGptEmbed({
       onState: (state) => {
@@ -170,18 +180,26 @@ export class SessionRuntime {
       onRemoteLine: (line) => this.ssh.pushModelLine(line),
       onRemoteOutput: (chunk) => this.ssh.pushModelOutput(chunk),
       onExecutionChanged: (records) => this.send(IpcChannels.executionChanged, records),
-      onTerminalChanged: (state) => this.send(IpcChannels.terminalChanged, state),
+      onTerminalChanged: (state) => {
+        this.send(IpcChannels.terminalChanged, state)
+        if (state.cwd !== this.lastPersistedLocalCwd) {
+          this.lastPersistedLocalCwd = state.cwd
+          this.options.onSummaryChanged()
+        }
+      },
       onTaskCompleted: (description) => {
         void this.embed.endTask()
         this.notifyTaskCompleted(description.trim() || '任务已完成')
       }
-    })
+    }, options.initialLocalCwd ?? '')
 
     this.runner.restoreMode(options.initialMode)
+    this.runner.restorePaused(options.initialPaused ?? false)
     this.embed.setBaselinePolicy(options.initialMode === 'auto')
 
     this.ssh = new SshManager((state) => {
       this.send(IpcChannels.sshChanged, state)
+      if (state.modelCwd !== '') this.sshCwd = state.modelCwd
       this.options.onSummaryChanged()
 
       const next = this.ssh.execShell()
@@ -189,8 +207,35 @@ export class SessionRuntime {
         const previous = this.remoteShell
         this.remoteShell = next
         if (previous === null || next === null) void this.probeEnvironment()
+      } else if (next === null && state.status === 'error') {
+        void this.probeEnvironment()
       }
     })
+
+    const restoredHostId = options.initialSshHostId?.trim() ?? ''
+    if (options.initialSshAttached && restoredHostId !== '') {
+      const host = options.store.listSshHosts().find((item) => item.id === restoredHostId)
+      if (host) {
+        const target = { hostId: host.id, name: host.name, host: host.host, port: host.port }
+        const canReconnect = options.initialSshReconnect && decryptSecret(options.store.getSshSecret(host.id)) !== ''
+        if (canReconnect) {
+          this.connectSsh(
+            {
+              id: host.id,
+              name: host.name,
+              host: host.host,
+              port: host.port,
+              username: host.username,
+              password: '',
+              proxy: host.proxy
+            },
+            this.sshCwd
+          )
+        } else {
+          this.ssh.restoreAttachment(target)
+        }
+      }
+    }
   }
 
   attach(parent: BrowserWindow): void {
@@ -199,7 +244,7 @@ export class SessionRuntime {
     this.embed.attach(parent)
     this.embed.setVisible(false)
     this.options.onSummaryChanged()
-    void this.probeEnvironment()
+    if (this.ssh.getState().status !== 'connecting') void this.probeEnvironment()
   }
 
   setActive(active: boolean): void {
@@ -227,13 +272,28 @@ export class SessionRuntime {
     title: string
     url: string
     conversationId: string | null
+    paused: boolean
+    localCwd: string
+    sshHostId: string
+    sshAttached: boolean
+    sshReconnect: boolean
+    sshCwd: string
     createdAt: number
   } {
+    const automation = this.runner.getAutomation()
+    const terminal = this.runner.getTerminalState()
+    const sshState = this.ssh.getState()
     return {
       id: this.id,
       title: this.customTitle,
       url: this.lastKnownUrl,
       conversationId: this.lastConversationId,
+      paused: automation.paused,
+      localCwd: terminal.cwd,
+      sshHostId: sshState.hostId,
+      sshAttached: sshState.attached,
+      sshReconnect: sshState.attached && sshState.status !== 'disconnected',
+      sshCwd: this.sshCwd,
       createdAt: this.createdAt
     }
   }
@@ -354,6 +414,7 @@ export class SessionRuntime {
   setPaused(paused: boolean): AutomationState {
     const state = this.runner.setPaused(paused)
     this.send(IpcChannels.automationChanged, state)
+    this.options.onSummaryChanged()
     return state
   }
 
@@ -390,7 +451,7 @@ export class SessionRuntime {
     return this.options.store.listSshHosts()
   }
 
-  connectSsh(draft: SshHostDraft): SshState {
+  connectSsh(draft: SshHostDraft, resumeCwd = ''): SshState {
     const host = String(draft?.host ?? '').trim()
     const username = String(draft?.username ?? '').trim()
     const name = String(draft?.name ?? '').trim() || host
@@ -410,6 +471,7 @@ export class SessionRuntime {
     }
 
     const id = typeof draft?.id === 'string' && draft.id !== '' ? draft.id : randomUUID()
+    const previousSshState = this.ssh.getState()
     this.options.store.upsertSshHost({
       id,
       name,
@@ -436,7 +498,10 @@ export class SessionRuntime {
       }
     }
 
-    return this.ssh.connect({ hostId: id, name, host, port, username, password, proxy })
+    const requestedCwd = resumeCwd.trim()
+    const reconnectCwd =
+      requestedCwd !== '' ? requestedCwd : previousSshState.hostId === id ? this.sshCwd : ''
+    return this.ssh.connect({ hostId: id, name, host, port, username, password, proxy }, reconnectCwd)
   }
 
   async probeEnvironment(): Promise<EnvironmentInfo> {

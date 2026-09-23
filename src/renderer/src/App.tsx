@@ -809,6 +809,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
    */
   useEffect(() => {
     window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen)
+    window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
   }, [settingsOpen, sshDialogOpen])
 
   // SSH state and saved hosts.

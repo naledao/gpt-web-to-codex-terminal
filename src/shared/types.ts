@@ -67,6 +67,7 @@ export const IpcChannels = {
   managerSessionsChanged: 'manager:sessions-changed',
   workspaceGetState: 'workspace:get-state',
   workspaceShowManager: 'workspace:show-manager',
+  workspaceSetOpenSshDialog: 'workspace:set-open-ssh-dialog',
   workspaceChanged: 'workspace:changed'
 } as const
 
@@ -909,6 +910,7 @@ export interface AppApi {
   onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
   getWorkspaceState(): Promise<WorkspaceState>
   showWorkspaceManager(): Promise<boolean>
+  setWorkspaceSshDialogOpen(open: boolean): void
   onWorkspaceChanged(listener: (state: WorkspaceState) => void): () => void
   /** Position the native embedded view under the renderer's placeholder. */
   setEmbedBounds(bounds: EmbedBounds): void

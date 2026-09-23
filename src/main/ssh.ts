@@ -192,7 +192,7 @@ export class SshManager {
    * `onChanged`. A handshake can take twenty seconds, and blocking an IPC reply
    * on it would freeze the dialog that started it.
    */
-  connect(target: SshTarget): SshState {
+  connect(target: SshTarget, resumeCwd = ''): SshState {
     this.teardown()
 
     this.lines = []
@@ -242,7 +242,7 @@ export class SshManager {
         // Opened after the pane is already usable: the model's channel is not
         // needed for the user to start typing, and waiting for it would delay
         // every connection by a round trip.
-        this.openExecChannel(client)
+        this.openExecChannel(client, resumeCwd.trim())
       })
     })
 
@@ -291,6 +291,26 @@ export class SshManager {
       }
     })()
 
+    return this.getState()
+  }
+
+  /** Restore an attached-but-disconnected SSH pane without opening a network connection. */
+  restoreAttachment(target: Pick<SshTarget, 'hostId' | 'name' | 'host' | 'port'>): SshState {
+    this.teardown()
+    this.lines = []
+    this.buffer = ''
+    this.execAttempts = 0
+    this.state = {
+      ...EMPTY,
+      status: 'disconnected',
+      attached: true,
+      name: target.name,
+      target: `${target.host}:${target.port}`,
+      hostId: target.hostId,
+      message: '已断开',
+      lines: []
+    }
+    this.emit()
     return this.getState()
   }
 

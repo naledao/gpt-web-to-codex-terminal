@@ -297,6 +297,7 @@ export class CommandRunner {
    * class dispose a session the user is still looking at.
    */
   private localShell: ConversationShell | null = null
+  private localCwd: string
   private lines: TerminalLine[] = []
   private pushTimer: NodeJS.Timeout | null = null
   /** Message ids currently executing, so a double click cannot run one twice. */
@@ -314,7 +315,9 @@ export class CommandRunner {
     paused: false
   }
 
-  constructor(private readonly deps: CommandRunnerDeps) {}
+  constructor(private readonly deps: CommandRunnerDeps, initialLocalCwd = '') {
+    this.localCwd = initialLocalCwd.trim()
+  }
 
   /* ---------------- automation state ---------------- */
 
@@ -342,6 +345,12 @@ export class CommandRunner {
    */
   restoreMode(mode: ExecutionMode): AutomationState {
     this.automation = { ...this.automation, mode }
+    return this.getAutomation()
+  }
+
+  /** Restore pause state without resuming queued work. */
+  restorePaused(paused: boolean): AutomationState {
+    this.automation = { ...this.automation, paused }
     return this.getAutomation()
   }
 
@@ -633,7 +642,7 @@ export class CommandRunner {
   getTerminalState(): TerminalState {
     return {
       alive: this.localShell?.alive ?? false,
-      cwd: this.localShell?.cwd ?? '',
+      cwd: this.localShell?.cwd ?? this.localCwd,
       lines: [...this.lines]
     }
   }
@@ -750,6 +759,7 @@ export class CommandRunner {
     // down would leave a running command orphaned. Dropping it first also stops
     // the dying session's onExit from posting "会话已结束" over the reset notice.
     const shell = this.localShell
+    if (shell) this.localCwd = shell.cwd
     this.localShell = null
     shell?.dispose()
 
@@ -794,6 +804,7 @@ export class CommandRunner {
     try {
       return await shell.run(command)
     } finally {
+      if (shell === this.localShell) this.localCwd = shell.cwd
       // A local PowerShell restart reuses the same ConversationShell object.
       // Compare the run id as well, otherwise the old interrupted run can clear
       // activeShell after its replacement has already started on that same object.
@@ -863,6 +874,7 @@ export class CommandRunner {
       // Captured so the exit handler can tell "my session died" from "the user
       // reset the terminal and this is the old session reporting in".
       const created = new ConversationShell({
+        initialCwd: this.localCwd,
         onOutput: (chunk) => this.appendOutput(chunk),
         onExit: () => {
           if (this.localShell !== created) return

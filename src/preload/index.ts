@@ -60,6 +60,10 @@ const api: AppApi = {
 
   showWorkspaceManager: (): Promise<boolean> => ipcRenderer.invoke(IpcChannels.workspaceShowManager),
 
+  setWorkspaceSshDialogOpen: (open: boolean): void => {
+    ipcRenderer.send(IpcChannels.workspaceSetOpenSshDialog, open)
+  },
+
   onWorkspaceChanged: (listener: (state: WorkspaceState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: WorkspaceState): void => listener(state)
     ipcRenderer.on(IpcChannels.workspaceChanged, handler)
