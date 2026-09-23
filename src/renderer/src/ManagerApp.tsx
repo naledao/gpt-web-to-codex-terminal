@@ -25,6 +25,9 @@ export default function ManagerApp(): ReactElement {
   const [sessions, setSessions] = useState<ManagedSessionSummary[]>([])
   const [creating, setCreating] = useState<'local' | 'ssh' | null>(null)
   const [destroying, setDestroying] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [renameSaving, setRenameSaving] = useState(false)
 
   useEffect(() => {
     void window.api.listManagedSessions().then(setSessions)
@@ -41,10 +44,27 @@ export default function ManagerApp(): ReactElement {
     }
   }
 
-  const renameSession = async (item: ManagedSessionSummary): Promise<void> => {
-    const next = window.prompt('会话名称（留空可恢复自动标题）', item.title || '')
-    if (next === null) return
-    await window.api.renameManagedSession(item.id, next)
+  const beginRename = (item: ManagedSessionSummary): void => {
+    setRenamingId(item.id)
+    setRenameDraft(item.title || '')
+  }
+
+  const saveRename = async (): Promise<void> => {
+    if (!renamingId || renameSaving) return
+    setRenameSaving(true)
+    try {
+      await window.api.renameManagedSession(renamingId, renameDraft)
+      setRenamingId(null)
+      setRenameDraft('')
+    } finally {
+      setRenameSaving(false)
+    }
+  }
+
+  const cancelRename = (): void => {
+    if (renameSaving) return
+    setRenamingId(null)
+    setRenameDraft('')
   }
 
   const destroySession = async (item: ManagedSessionSummary): Promise<void> => {
@@ -99,24 +119,47 @@ export default function ManagerApp(): ReactElement {
                 </div>
                 <div style={{ color: '#7ee787', fontSize: 12, alignSelf: 'center' }}>打开</div>
               </button>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
-                <button
-                  type="button"
-                  disabled={destroying !== null}
-                  onClick={() => void renameSession(item)}
-                  style={{ ...button, padding: '9px 12px' }}
-                >
-                  命名
-                </button>
-                <button
-                  type="button"
-                  disabled={destroying !== null}
-                  onClick={() => void destroySession(item)}
-                  style={{ ...button, color: '#ff7b72', padding: '9px 12px' }}
-                >
-                  {destroying === item.id ? '销毁中…' : '销毁'}
-                </button>
-              </div>
+              {renamingId === item.id ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    disabled={renameSaving}
+                    placeholder="会话名称，留空恢复自动标题"
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void saveRename()
+                      if (event.key === 'Escape') cancelRename()
+                    }}
+                    style={{ ...button, cursor: 'text', width: 220, outline: 'none' }}
+                  />
+                  <button type="button" disabled={renameSaving} onClick={() => void saveRename()} style={{ ...button, padding: '9px 12px' }}>
+                    {renameSaving ? '保存中…' : '保存'}
+                  </button>
+                  <button type="button" disabled={renameSaving} onClick={cancelRename} style={{ ...button, padding: '9px 12px' }}>
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+                  <button
+                    type="button"
+                    disabled={destroying !== null}
+                    onClick={() => beginRename(item)}
+                    style={{ ...button, padding: '9px 12px' }}
+                  >
+                    命名
+                  </button>
+                  <button
+                    type="button"
+                    disabled={destroying !== null}
+                    onClick={() => void destroySession(item)}
+                    style={{ ...button, color: '#ff7b72', padding: '9px 12px' }}
+                  >
+                    {destroying === item.id ? '销毁中…' : '销毁'}
+                  </button>
+                </div>
+              )}
             </div>
           ))
         )}
