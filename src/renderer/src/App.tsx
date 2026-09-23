@@ -192,6 +192,20 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
     return executions.length > 0 ? executions[executions.length - 1] : null
   }, [executions, waiting])
 
+  /**
+   * What the USER asked for in this conversation.
+   *
+   * Not `currentExecution.description`: that is the model's one-liner about a single
+   * command, which is a different thing and reads as a non-sequitur under a label that
+   * says "goal". The goal is captured on send and stored on the conversation itself, so
+   * it also survives a reload — where `description` is only as good as the last command
+   * that happened to run.
+   */
+  const currentGoal = useMemo(() => {
+    if (!conversationId) return ''
+    return conversations.find((conversation) => conversation.id === conversationId)?.goal?.trim() ?? ''
+  }, [conversations, conversationId])
+
   useEffect(() => {
     if (interceptor?.taskStartedAt == null || interceptor.taskFinishedAt != null) return
     setDurationNow(Date.now())
@@ -1136,9 +1150,9 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
             ) : null}
           </div>
 
-          {currentExecution?.description ? (
-            <p className="terminal__last" title={currentExecution.description}>
-              当前的目标：{currentExecution.description}
+          {currentGoal ? (
+            <p className="terminal__last" title={currentGoal}>
+              当前的目标：{currentGoal}
             </p>
           ) : null}
 

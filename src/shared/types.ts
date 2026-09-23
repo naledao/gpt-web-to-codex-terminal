@@ -288,6 +288,15 @@ export interface Conversation {
   url: string
   title: string
   project: ConversationProject | null
+  /**
+   * What the USER last asked for, verbatim.
+   *
+   * Deliberately not derivable from anything else: the per-command `description` is
+   * the model's own one-liner about a single command, and the injected prompt text is
+   * what the app wraps around the message. The user's own words exist only at the
+   * moment the composer is submitted, so they are captured there and stored.
+   */
+  goal: string
   /** Epoch milliseconds. */
   updatedAt: number
 }

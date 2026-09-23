@@ -107,6 +107,15 @@ export class SessionRuntime {
   private disposed = false
   private active = false
   private readonly deferredCommands = new Map<string, ParsedCommand>()
+  /**
+   * The last thing the user asked for, held until the conversation has an id.
+   *
+   * The first message of a new chat is sent while the SPA is still at `/`; the `/c/<id>`
+   * URL appears only AFTER the send. So the goal is captured on send and associated
+   * here, and `onConversation` flushes it — the same ordering problem
+   * `deferredCommands` exists for.
+   */
+  private pendingGoal = ''
 
   constructor(private readonly options: SessionRuntimeOptions) {
     this.id = options.id ?? randomUUID()
@@ -137,13 +146,17 @@ export class SessionRuntime {
       onConversation: (conversation) => {
         this.options.store.upsert(conversation, this.currentConversationProject())
         this.flushDeferredCommands(conversation.id)
+        this.flushPendingGoal(conversation.id)
         this.broadcastConversations()
       },
       onSynced: (scraped) => {
         this.options.store.upsertMany(scraped)
         this.broadcastConversations()
       },
-      onInterceptor: (status) => this.send(IpcChannels.interceptorEvent, status),
+      onInterceptor: (status) => {
+        this.captureGoal(status.lastSentText)
+        this.send(IpcChannels.interceptorEvent, status)
+      },
       onTaskCompleted: () => this.notifyTaskCompleted('任务已完成'),
       onCommand: (command) => this.handleDetectedCommand(command),
       onParseFailed: (text) => this.runner.noteParseFailure(text)
@@ -285,6 +298,37 @@ export class SessionRuntime {
       if (this.runner.handleDetected(command, conversationId)) {
         this.deferredCommands.delete(messageId)
       }
+    }
+  }
+
+  /**
+   * Remember what the user asked for.
+   *
+   * Called on EVERY interceptor push, because that is the only place the page reports
+   * the user's own words — the main process never sees the composer. The comparison
+   * against the previous value is what keeps it from being a write per event, and the
+   * blank check matters because a `sent` report can legitimately carry nothing.
+   */
+  private captureGoal(sentText: string | null): void {
+    const text = (sentText ?? '').trim()
+    if (text === '' || text === this.pendingGoal) return
+    this.pendingGoal = text
+
+    const conversationId = this.embed.getState().conversationId
+    if (conversationId) {
+      this.flushPendingGoal(conversationId)
+      return
+    }
+
+    // No id yet (the first message of a new chat): `onConversation` will fire once the
+    // SPA assigns one, and flushPendingGoal() writes it then.
+  }
+
+  /** Persist the captured goal, if there is one and the conversation is known. */
+  private flushPendingGoal(conversationId: string): void {
+    if (this.pendingGoal === '') return
+    if (this.options.store.setGoal(conversationId, this.pendingGoal)) {
+      this.broadcastConversations()
     }
   }
 

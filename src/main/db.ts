@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   id         TEXT PRIMARY KEY,
   url        TEXT NOT NULL,
   title      TEXT NOT NULL DEFAULT '',
+  goal       TEXT NOT NULL DEFAULT '',
   project_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -96,6 +97,7 @@ interface ConversationRow {
   id: string
   url: string
   title: string
+  goal: string
   project_id: string | null
   project_machine_scope: string | null
   project_host_id: string | null
@@ -187,6 +189,9 @@ export class ConversationStore {
     if (!conversationColumns.some((column) => column.name === 'project_id')) {
       this.db.exec('ALTER TABLE conversations ADD COLUMN project_id TEXT')
     }
+    if (!conversationColumns.some((column) => column.name === 'goal')) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN goal TEXT NOT NULL DEFAULT ''")
+    }
     this.db.exec(
       'CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations (project_id, updated_at DESC)'
     )
@@ -262,6 +267,23 @@ export class ConversationStore {
     return true
   }
 
+  /**
+   * Record what the user asked for in this conversation.
+   *
+   * A blank goal never overwrites a known one, for the same reason a blank title does
+   * not: the capture happens on send, and a miss must not erase what is already known.
+   * It does NOT touch `updated_at` — that orders the sidebar, and the goal arrives from
+   * a send rather than from activity in the page.
+   */
+  setGoal(conversationId: string, goal: string): boolean {
+    const text = goal.trim()
+    if (text === '') return false
+    const result = this.db
+      .prepare('UPDATE conversations SET goal = ? WHERE id = ?')
+      .run(text, conversationId)
+    return result.changes > 0
+  }
+
   /** Merge a batch scraped from the sidebar. Returns how many were new. */
   upsertMany(conversations: ScrapedConversation[]): number {
     let inserted = 0
@@ -278,7 +300,7 @@ export class ConversationStore {
   list(machineScope?: 'local' | 'ssh', hostId?: string): Conversation[] {
     const rows = this.db
       .prepare(
-        `SELECT c.id, c.url, c.title, c.project_id, c.updated_at,
+        `SELECT c.id, c.url, c.title, c.goal, c.project_id, c.updated_at,
                 p.machine_scope AS project_machine_scope,
                 p.host_id AS project_host_id,
                 p.machine_label AS project_machine_label,
@@ -295,6 +317,7 @@ export class ConversationStore {
       id: row.id,
       url: row.url,
       title: row.title,
+      goal: row.goal ?? '',
       project:
         row.project_id && row.project_machine_scope && row.project_name && row.project_path
           ? {

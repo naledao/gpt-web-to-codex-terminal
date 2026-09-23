@@ -249,7 +249,7 @@
         ok
           ? isRaw
             ? { event: 'sent-raw', text: text.slice(0, 200) }
-            : { event: 'sent', text: text.slice(0, 400) }
+            : { event: 'sent', text: userTextOf(text).slice(0, 400) }
           : { event: 'send-failed', text: text.slice(0, 200) }
       )
       if (done) done(ok ? 'ok' : 'stuck')
@@ -290,6 +290,40 @@
   }
 
   /** @returns true when the event was consumed and the send was taken over. */
+  /**
+   * Marks where the injected prompt ends and the user's own words begin.
+   *
+   * A splitter that instead guessed the boundary from the prompt's LAST 【…】 section
+   * looked reasonable and was wrong in three ways, all caught by tests: a greedy match
+   * swallowed the prompt's tail, a user message containing its own 【…】 (for example
+   * 「把【已完成】加到文档里」) was cut in half, and a message with no 【 at all could not
+   * be split. The boundary is only knowable where the text is COMPOSED, so it is recorded
+   * there rather than re-derived later.
+   *
+   * The characters are control codes: they cannot be typed into ChatGPT's composer and
+   * do not survive a copy-paste, so a real message cannot contain one by accident.
+   */
+  const USER_TEXT_SENTINEL = '\u0000\u0001'
+
+  /**
+   * Recover what the USER typed from the text that was actually submitted.
+   *
+   * `submitWithRetry` is handed the composed string — the injected system prompt with
+   * the user's words appended after the sentinel — and that composed string is what must
+   * go to ChatGPT. Everything downstream that means "what the user asked for" (the goal
+   * shown in the UI) needs the user's part only: reporting the whole prompt would put the
+   * entire system prompt on screen.
+   *
+   * Falls back to the full text when no sentinel is present, which is the honest answer
+   * for a message that carried no prompt (terminal mode off) or an empty submit.
+   */
+  const userTextOf = (composed) => {
+    const text = String(composed || '')
+    const at = text.lastIndexOf(USER_TEXT_SENTINEL)
+    if (at === -1) return text
+    return text.slice(at + USER_TEXT_SENTINEL.length)
+  }
+
   const intercept = (event) => {
     // Our own sends must pass through untouched: no prefix, no interception.
     if (state.programmatic) return false
@@ -311,9 +345,16 @@
       return true
     }
 
+    /*
+     * The sentinel goes in right after the prompt, on the same insertion pass that puts
+     * the user's own text back. Nothing else can know where the prompt ends, and doing it
+     * here means the marker cannot drift out of sync with what is actually in the box.
+     */
+    insertText(element, USER_TEXT_SENTINEL + text)
+
     state.injectedCount += 1
     report({ event: 'injected', count: state.injectedCount })
-    setTimeout(() => submitWithRetry(text, 0, false), 60)
+    setTimeout(() => submitWithRetry(state.prefix + USER_TEXT_SENTINEL + text, 0, false), 60)
     return true
   }
 
