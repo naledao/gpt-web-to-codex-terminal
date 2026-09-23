@@ -1136,9 +1136,9 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
             ) : null}
           </div>
 
-          {interceptor?.lastSentText ? (
-            <p className="terminal__last" title={interceptor.lastSentText}>
-              当前的目标：{interceptor.lastSentText}
+          {currentExecution?.description ? (
+            <p className="terminal__last" title={currentExecution.description}>
+              当前的目标：{currentExecution.description}
             </p>
           ) : null}
 
