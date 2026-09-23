@@ -64,6 +64,32 @@ const DANGEROUS_PATTERNS: Array<{ re: RegExp; label: string }> = [
  */
 const MARKDOWN_MANGLED_RE = /\$\.[A-Za-z_[]/
 
+/**
+ * A command that is really a placeholder the model wrote while explaining the FORMAT.
+ *
+ * Observed in the wild: a model replied with the schema literally —
+ * `{"command":"...","description":"..."}` — and because that is perfectly valid JSON,
+ * the pipeline ran `...` and PowerShell answered
+ * `The term '...' is not recognized as the name of a cmdlet…`. The result was then sent
+ * back to the model, which burned a round trip on a command nobody ever meant to issue.
+ *
+ * The prompt hands the model that exact `{"command":"","description":""}` example, so
+ * "the model echoed the shape" is a failure mode to expect, not a freak event.
+ *
+ * The test is deliberately narrow — "the command is ONLY a placeholder" or "it contains
+ * no letters or digits at all" — because a false positive costs a legitimate command.
+ * Real commands always carry at least one alphanumeric character, so `...`, `<command>`,
+ * `${cmd}` and `TODO` are caught while `ls -la`, `.\\build.ps1` and `rm -rf ./out` are not.
+ */
+const PLACEHOLDER_COMMAND_RE = /^(\.{3,}|…|todo|tbd|n\/a|command|your[-_ ]?command)$/i
+
+function isPlaceholderCommand(command: string): boolean {
+  const trimmed = command.trim()
+  if (trimmed === '') return false
+  if (PLACEHOLDER_COMMAND_RE.test(trimmed)) return true
+  return !/[A-Za-z0-9]/.test(trimmed)
+}
+
 interface DangerHit {
   label: string
   /** The exact substring that tripped the rule, so a hit can be verified. */
@@ -398,6 +424,26 @@ export class CommandRunner {
       this.appendLine({ kind: 'notice', text: '模型报告任务完成（command 为空）' })
       this.broadcastExecutions(conversationId)
       this.deps.onTaskCompleted(parsed.description)
+      return true
+    }
+
+    /*
+     * A placeholder is not a command. Refuse it like an empty one — skipped, not run,
+     * and deliberately NOT sent back to the model.
+     *
+     * Not sending it back is the point: the model did not mean to issue anything, so a
+     * "term '...' is not recognized" result teaches it nothing and costs a full round
+     * trip. The user still needs to see it, hence the loud line.
+     */
+    if (isPlaceholderCommand(parsed.command)) {
+      this.deps.store.setExecutionStatus(parsed.messageId, 'skipped')
+      this.appendLine({
+        kind: 'error',
+        text:
+          `⚠ 模型输出的不是一条真命令，而是占位符：${JSON.stringify(parsed.command)}。` +
+          '已跳过执行，也没有把这个结果回传给模型（它多半是在说明格式，而不是真的想执行）。'
+      })
+      this.broadcastExecutions(conversationId)
       return true
     }
 
