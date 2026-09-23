@@ -165,6 +165,23 @@ function createSession(kind: 'local' | 'ssh' = 'local', activate = true): Sessio
   return runtime
 }
 
+function destroySession(id: string): boolean {
+  const runtime = runtimes.get(id)
+  if (!runtime) return false
+
+  const wasCurrent = currentSessionId === id
+  if (wasCurrent) {
+    currentSessionId = null
+    workspaceOpenSshDialog = false
+  }
+
+  runtimes.delete(id)
+  runtime.dispose()
+  broadcastManagedSessions()
+  if (wasCurrent) broadcastWorkspaceState()
+  return true
+}
+
 function createManagerWindow(): void {
   if (managerWindow && !managerWindow.isDestroyed()) {
     if (managerWindow.isMinimized()) managerWindow.restore()
@@ -251,6 +268,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.managerSessionOpen, (event, id: string): boolean => {
     if (!fromManager(event)) return false
     return selectSession(String(id))
+  })
+  ipcMain.handle(IpcChannels.managerSessionDestroy, (event, id: string): boolean => {
+    if (!fromManager(event)) return false
+    return destroySession(String(id))
   })
 
   ipcMain.on(IpcChannels.embedSetBounds, (event, bounds: EmbedBounds) => runtimeForEvent(event)?.setEmbedBounds(bounds))

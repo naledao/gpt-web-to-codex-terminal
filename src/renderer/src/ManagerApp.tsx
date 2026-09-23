@@ -24,6 +24,7 @@ const button: CSSProperties = {
 export default function ManagerApp(): ReactElement {
   const [sessions, setSessions] = useState<ManagedSessionSummary[]>([])
   const [creating, setCreating] = useState<'local' | 'ssh' | null>(null)
+  const [destroying, setDestroying] = useState<string | null>(null)
 
   useEffect(() => {
     void window.api.listManagedSessions().then(setSessions)
@@ -37,6 +38,18 @@ export default function ManagerApp(): ReactElement {
       await window.api.createManagedSession(kind)
     } finally {
       setCreating(null)
+    }
+  }
+
+  const destroySession = async (item: ManagedSessionSummary): Promise<void> => {
+    if (destroying !== null) return
+    const title = item.title || '会话'
+    if (!window.confirm(`销毁“${title}”？\n\n该会话的终端进程和 SSH 连接会立即结束，ChatGPT 对话历史不会因此删除。`)) return
+    setDestroying(item.id)
+    try {
+      await window.api.destroyManagedSession(item.id)
+    } finally {
+      setDestroying(null)
     }
   }
 
@@ -64,22 +77,31 @@ export default function ManagerApp(): ReactElement {
           </div>
         ) : (
           sessions.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => void window.api.openManagedSession(item.id)}
-              style={{ ...button, textAlign: 'left', padding: 16, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}
-            >
-              <div>
-                <div style={{ fontWeight: 650, fontSize: 15 }}>{item.title || '会话'}</div>
-                <div style={{ marginTop: 5, color: '#8b949e', fontSize: 12 }}>
-                  {item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
+            <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+              <button
+                onClick={() => void window.api.openManagedSession(item.id)}
+                style={{ ...button, textAlign: 'left', padding: 16, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}
+              >
+                <div>
+                  <div style={{ fontWeight: 650, fontSize: 15 }}>{item.title || '会话'}</div>
+                  <div style={{ marginTop: 5, color: '#8b949e', fontSize: 12 }}>
+                    {item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
+                  </div>
+                  {item.conversationId ? (
+                    <div style={{ marginTop: 4, color: '#6e7681', fontSize: 11 }}>{item.conversationId}</div>
+                  ) : null}
                 </div>
-                {item.conversationId ? (
-                  <div style={{ marginTop: 4, color: '#6e7681', fontSize: 11 }}>{item.conversationId}</div>
-                ) : null}
-              </div>
-              <div style={{ color: '#7ee787', fontSize: 12, alignSelf: 'center' }}>打开</div>
-            </button>
+                <div style={{ color: '#7ee787', fontSize: 12, alignSelf: 'center' }}>打开</div>
+              </button>
+              <button
+                type="button"
+                disabled={destroying !== null}
+                onClick={() => void destroySession(item)}
+                style={{ ...button, color: '#ff7b72', padding: '9px 12px' }}
+              >
+                {destroying === item.id ? '销毁中…' : '销毁'}
+              </button>
+            </div>
           ))
         )}
       </section>

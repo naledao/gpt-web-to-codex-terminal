@@ -44,6 +44,9 @@ const api: AppApi = {
   openManagedSession: (id: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.managerSessionOpen, id),
 
+  destroyManagedSession: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.managerSessionDestroy, id),
+
   onManagedSessionsChanged: (listener: (items: ManagedSessionSummary[]) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, items: ManagedSessionSummary[]): void => listener(items)
     ipcRenderer.on(IpcChannels.managerSessionsChanged, handler)
