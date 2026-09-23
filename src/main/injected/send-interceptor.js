@@ -575,6 +575,13 @@
     // quiet period (ChatGPT renders the assistant turn before its text arrives)
     // ate the flag, and the real reply then looked like restored history. It is
     // only reset when history is actually being loaded, i.e. by armBaseline().
+    // A parseable command is not necessarily a finished reply. ChatGPT can pause
+    // long enough for REPLY_SETTLE_MS while it is still streaming; executing here
+    // would let the shell finish before the current assistant turn is done, so the
+    // raw result gets inserted into a composer that ChatGPT still refuses to send.
+    // The stop button disappearing mutates the DOM and schedules another check.
+    if (findStopButton()) return
+
     const live = state.awaitingReplySince !== 0
     state.lastCommandMessageId = messageId
 
