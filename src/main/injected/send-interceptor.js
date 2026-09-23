@@ -225,7 +225,7 @@
    * `done` is only supplied for programmatic sends, so the caller can report the
    * real outcome instead of assuming success.
    */
-  const submitWithRetry = (text, attempt, isRaw, done) => {
+  const submitWithRetry = (text, attempt, isRaw, done, deadline = 0) => {
     // Capture the newest assistant turn BEFORE clicking Send. ChatGPT can create
     // the placeholder for the NEW assistant turn synchronously (or within the
     // 150ms confirmation delay below). Reading lastAssistantId() only after the
@@ -255,13 +255,18 @@
       if (done) done(ok ? 'ok' : 'stuck')
     }
 
+    if (deadline > 0 && Date.now() >= deadline) {
+      finish(false)
+      return
+    }
+
     const button = findSendButton()
 
     if (!button || button.disabled) {
       // The send button only enables once ProseMirror has committed the edit,
       // and it disappears entirely while a reply is streaming.
-      if (attempt < MAX_SEND_ATTEMPTS) {
-        setTimeout(() => submitWithRetry(text, attempt + 1, isRaw, done), 80)
+      if (deadline > 0 ? Date.now() < deadline : attempt < MAX_SEND_ATTEMPTS) {
+        setTimeout(() => submitWithRetry(text, attempt + 1, isRaw, done, deadline), 80)
       } else {
         finish(false)
       }
@@ -276,8 +281,8 @@
         finish(true)
         return
       }
-      if (attempt < MAX_SEND_ATTEMPTS) {
-        submitWithRetry(text, attempt + 1, isRaw, done)
+      if (deadline > 0 ? Date.now() < deadline : attempt < MAX_SEND_ATTEMPTS) {
+        submitWithRetry(text, attempt + 1, isRaw, done, deadline)
       } else {
         finish(false)
       }
@@ -750,7 +755,7 @@
           done('stuck')
         }, SEND_TIMEOUT_MS)
 
-        submitWithRetry(payload, 0, true, done)
+        submitWithRetry(payload, 0, true, done, Date.now() + SEND_TIMEOUT_MS - 100)
       })
     },
 
