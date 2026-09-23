@@ -1143,6 +1143,26 @@ body {
   margin-top: 12px;
 }
 
+/*
+ * The session-import value box.
+ *
+ * A textarea rather than an input because a SPLIT session token arrives as two cookies
+ * (`.0` and `.1`) and has to be pasted whole — an input would scroll one of them out of
+ * sight and make a correct paste look wrong. `resize: vertical` only: the dialog is a
+ * fixed-height flex column now, and a horizontally resizable box can push its footer
+ * off-screen.
+ */
+.session-import__value {
+  min-height: 62px;
+  padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* Read-only report of what the startup probe found. */
 .env {
   margin-bottom: 18px;

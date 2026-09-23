@@ -85,6 +85,16 @@ npm run dev
   "自动读取浏览器登录态"这个功能在技术上不存在，不要承诺它。
 - **Electron/Chromium 的 cookie 库在进程运行时被独占锁定**，连只读复制都会被拒
   （`FileShare.ReadWrite` 也不行）。想读它必须先关掉应用。
+- **纯逻辑可以完全不启动 Electron 就验证**（这符合上面的分工，不是绕过它）：把模块源码读出、
+  **去掉所有 `import` 行**、把其中用到的运行时常量（如 `SESSION_COOKIE_NAME`）以 `const`
+  **前置**补回去，写到 `%TEMP%` 下的 `.ts`，再用 `node --experimental-strip-types` 跑断言。
+  两个坑：常量**必须前置**（模块加载期就要用，放文件末尾会撞暂时性死区）；
+  `--experimental-strip-types` **不接受无扩展名的相对导入**，所以是"复制源码"而不是直接 import 仓库文件。
+  `session-import.ts` 的 cookie 解析就是这样测的。
+- **测试数据要用真实形状。** 上面这套测试第一版用 1.2 KB 的假分块，结果 5 条断言失败、
+  真 bug（把 `.0`/`.1` 当成两个不同 cookie 而拒绝）被淹没在噪声里。真实令牌分块是
+  **每块约 3.3 KB**——NextAuth 只在超过浏览器 ~4 KB 上限时才分块。数据不真实时，
+  测试既抓不到真 bug，也会给出假 bug。
 
 ## 常用命令
 

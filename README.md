@@ -151,9 +151,9 @@ redirect straight back to Google — observed at
 the only credential that can travel into this app is the **session token the browser
 already holds**.
 
-`src/main/session-import.ts` implements that: the user copies the cookie value out of
-their browser's DevTools, and it is written into `persist:chatgpt` with
-`secure: true, httpOnly: true` for `.chatgpt.com`.
+`src/main/session-import.ts` implements that: the user copies the cookie out of their
+browser's DevTools, and it is written into `persist:chatgpt` with `secure: true,
+httpOnly: true` for `.chatgpt.com`.
 
 Design decisions worth keeping:
 
@@ -161,6 +161,22 @@ Design decisions worth keeping:
   with App-Bound Encryption, whose key is bound to the browser's own process. Nothing
   outside that process can decrypt it, so "read the browser's cookies automatically"
   is not implementable — not merely unimplemented.
+- **A session token is often TWO cookies, and both halves are required.** NextAuth
+  splits a session cookie that exceeds the browser's ~4 KB cap into
+  `…session-token.0` and `…session-token.1`. The split is a byte-wise slice of one
+  string with no re-encoding, so `parsePastedCookie`-side logic joins the chunks in
+  numeric order to rebuild it; importing only the first half produces a token the
+  server cannot decrypt. This is also why the value box is a textarea: two lines have
+  to be visible at once.
+- **Paste the whole `cookie:` request header and let the parser pick.** Copying one row
+  out of DevTools is error-prone (long values are truncated in the Application panel),
+  so the parser accepts a full header, takes the session-token family, and ignores
+  everything else. A value with no name at all falls back to the name field.
+- **The 4 KB cap is what makes "half a token" detectable.** A lone `.0` under the cap
+  is ambiguous — NextAuth only splits when it must — so it is attempted; a lone `.0`
+  over the cap cannot have been one cookie, so it is refused by name.
+- **`__Host-` names must not carry a Domain attribute.** That prefix means "this exact
+  host", and Chromium rejects the write if a Domain is supplied.
 - **Success is decided by the page, not by the write.** A cookie can be accepted and
   still be expired or revoked, so the import reloads and then probes the document for
   the signed-in chrome (a composer plus a sidebar or account button, and no login call
@@ -171,6 +187,10 @@ Design decisions worth keeping:
   input on both success and failure.
 - **"Cannot tell" is reported as not signed in.** A navigation during the probe must
   never be reported as a successful login.
+- **The UI must say the token is a credential.** It is a bearer token: whoever holds it
+  is signed in, with no password prompt and no impossible-travel alert. The dialog says
+  so, and says not to paste it into chats, notes or screenshots — a user pasting the
+  header into a support conversation is the realistic way this leaks.
 
 ### State flow
 

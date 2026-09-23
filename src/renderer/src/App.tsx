@@ -1743,9 +1743,36 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
               </label>
 
               <div className="field">
+                <span className="field__label">从浏览器导入登录态</span>
+                <p className="field__hint">
+                  给<strong>无法在应用内登录</strong>的账号用：用 Google 创建的 ChatGPT
+                  账号没有密码，而 Google 会拒绝一切内嵌浏览器登录（
+                  <code>此浏览器或应用可能不安全</code>），系统浏览器里的登录态又不会自动回流。
+                  唯一能搬进来的是<strong>会话令牌本身</strong>。
+                </p>
+                <p className="field__hint">
+                  在已登录 ChatGPT 的浏览器里：<code>F12</code> → <code>Network</code> →
+                  刷新页面 → 点最上面那条 <code>chatgpt.com</code> 请求 → 
+                  <code>Request Headers</code> 里找到 <code>cookie:</code> 一整行复制。
+                  整行直接粘进下面的框即可，会自动挑出会话令牌。
+                </p>
+                <p className="field__hint">
+                  <strong>令牌可能被分成两块</strong>（NextAuth 在 cookie 超过约 4 KB
+                  时会切成 <code>.0</code> 和 <code>.1</code>）。那种情况下
+                  <strong>两块都要粘进来</strong>——只给一块的话服务端解不开。
+                  上面的整行复制天然包含两块，所以优先用那个取法。
+                </p>
+                <p className="field__hint field__hint--warn">
+                  这是把<strong>登录凭据</strong>交给本应用。会话令牌是 bearer 凭据：
+                  谁拿到它谁就能以你的身份登录，<strong>不需要密码、也不会触发异常登录告警</strong>。
+                  <strong>只粘进这个框</strong>——不要贴到任何聊天窗口、笔记或截图里。
+                  Chrome 的 cookie 数据库是 App-Bound Encryption 加密的，任何程序都无法替你自动读取，
+                  所以只能手工复制这一次。导完记得清一下剪贴板（Windows 的
+                  <code>Win+V</code> 剪贴板历史也要清）。
+                </p>
 
                 <label className="field">
-                  <span className="field__label">Cookie 名称</span>
+                  <span className="field__label">Cookie 名称（粘贴整行时可留默认值）</span>
                   <input
                     className="address__input"
                     value={sessionCookieName}
@@ -1754,14 +1781,14 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
                   />
                 </label>
                 <label className="field">
-                  <span className="field__label">Cookie 值</span>
-                  <input
-                    className="address__input"
-                    type="password"
+                  <span className="field__label">Cookie 值 / 整行 cookie</span>
+                  <textarea
+                    className="address__input session-import__value"
                     value={sessionCookieValue}
                     spellCheck={false}
                     autoComplete="off"
-                    placeholder="粘贴 Value 一列的内容"
+                    rows={3}
+                    placeholder="粘贴整行 cookie，或只粘 Value 一列的内容"
                     onChange={(event) => setSessionCookieValue(event.target.value)}
                   />
                 </label>
