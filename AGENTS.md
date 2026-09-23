@@ -85,6 +85,11 @@ npm run dev
   "自动读取浏览器登录态"这个功能在技术上不存在，不要承诺它。
 - **Electron/Chromium 的 cookie 库在进程运行时被独占锁定**，连只读复制都会被拒
   （`FileShare.ReadWrite` 也不行）。想读它必须先关掉应用。
+- **Chromium 的单条 cookie 上限是「name=value 整个 pair」4096 字节**，不是"值" 4096 字节。
+  超了 `cookies.set` 会直接抛 `EXCLUDE_NAME_VALUE_PAIR_EXCEEDS_MAX_SIZE, DO_NOT_WARN, NO_EXEMPTION`。
+  推论：**NextAuth 分块的令牌（`…session-token.0` / `.1`）必须按分块原名分别写回，绝不能拼接后写一条** ——
+  拼接出来正好就是那条超限的 cookie。这里踩过一次：先拼成 4.5 KB 再写，Chromium 直接拒绝。
+  浏览器的行为也是发两条、由服务端拼回去；"把令牌还原成一条"是错的心智模型。
 - **纯逻辑可以完全不启动 Electron 就验证**（这符合上面的分工，不是绕过它）：把模块源码读出、
   **去掉所有 `import` 行**、把其中用到的运行时常量（如 `SESSION_COOKIE_NAME`）以 `const`
   **前置**补回去，写到 `%TEMP%` 下的 `.ts`，再用 `node --experimental-strip-types` 跑断言。

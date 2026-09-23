@@ -170,14 +170,38 @@ export function parseCookiePairs(raw: string): ParsedCookie[] {
   return pairs
 }
 
-/** What was pasted, assembled into something writable. */
+/**
+ * What was pasted, ready to be written.
+ *
+ * THREE shapes, and conflating them is what broke this the first time:
+ *
+ *   1. `cookies` present — the token is SPLIT. Each chunk is written as its own cookie
+ *      with its original `.N` name, because that is what the server expects to receive.
+ *   2. a lone value under the ~4 KB cap, named — written as one cookie.
+ *   3. a bare value with no name at all — written under the caller's requested name.
+ *
+ * WHY THE CHUNKS ARE NOT JOINED
+ * -----------------------------
+ * Joining them builds a cookie the browser cannot store: an earlier version of this
+ * code concatenated `.0` and `.1` into one 4.5 KB value and Chromium refused with
+ * `EXCLUDE_NAME_VALUE_PAIR_EXCEEDS_MAX_SIZE` (the 4096-byte name=value cap). The
+ * browser that produced the paste never held a joined cookie either — it held two, and
+ * sends two, and NextAuth reassembles them server-side. So "reassemble the token" was
+ * the wrong mental model; the import has to reproduce the cookie SET, not the string.
+ */
 interface AssembledSession {
-  /** Cookie name to write. A lone value takes the caller's requested name. */
+  /** Split token: write each of these as its own cookie, keeping its name. */
+  cookies?: ParsedCookie[]
+  /** Single cookie name, for the unsplit shapes. */
   name: string
-  /** Final value: chunks joined in numeric order, or a single cookie's value. */
+  /** Value for the single-cookie shapes. */
   value: string
-  /** Names actually recognised in the paste. Used verbatim in messages. */
+  /** Every cookie name recognised in the paste. Used verbatim in messages. */
   names: string[]
+  /** Number of chunks, when the token arrived split. */
+  chunkCount: number
+  /** Total length of the token: the joined length for a split token. */
+  totalLength: number
 }
 
 /**
@@ -218,7 +242,9 @@ export function assembleSession(
     if (value.length > MAX_ASSEMBLED_LENGTH) {
       return { error: `这段值有 ${value.length} 个字符，远超单个 cookie 的上限，可能把整行都当成值了。` }
     }
-    return { assembled: { name: requestedName, value, names: [] } }
+    return {
+      assembled: { name: requestedName, value, names: [], chunkCount: 0, totalLength: value.length }
+    }
   }
 
   /*
@@ -259,7 +285,9 @@ export function assembleSession(
           '它很可能是被分块的 —— 请把 .0 / .1 那几行一起粘进来。'
       }
     }
-    return { assembled: { name: base, value, names } }
+    return {
+      assembled: { name: base, value, names, chunkCount: 0, totalLength: value.length }
+    }
   }
 
   // A chunked name mixed with a non-chunked one would have been caught above; this
@@ -273,15 +301,20 @@ export function assembleSession(
     }
   }
 
-  // Split token: every chunk after the first must be present, or the halves do not
-  // join back into the token the server can decrypt.
+  /*
+   * Ordered by chunk index, and checked for gaps.
+   *
+   * The chunks are then written SEPARATELY, under their original `.N` names — the joined
+   * value is only measured, never stored. See the note on `AssembledSession`: joining
+   * produced a cookie Chromium refuses, because the 4096-byte name=value cap is exactly
+   * what forced NextAuth to split in the first place.
+   */
   const sorted = [...chunks].sort((a, b) => a.index - b.index)
   const missing: number[] = []
   for (let i = 0; i < sorted.length; i += 1) {
     if (sorted[i].index !== i) missing.push(i)
   }
-
-  const joined = sorted.map((chunk) => chunk.value).join('')
+  const joinedForMeasurement = sorted.map((chunk) => chunk.value).join('')
 
   if (missing.length > 0) {
     return {
@@ -295,26 +328,35 @@ export function assembleSession(
 
   /*
    * A lone `.0` is ambiguous — NextAuth only splits when it must, so one chunk can be a
-   * complete token — but the browser's ~4 KB cookie cap settles it: a value that size
-   * could not have been sent as a single cookie, so the rest is missing from the paste.
+   * complete token — but the browser's ~4 KB pair limit settles it: a value past that
+   * could not have been stored as a single cookie, so the rest is missing from the paste.
    *
    * Anything smaller is attempted as-is. Guessing "incomplete" there would block a
    * legitimate paste, and a wrong token fails safely anyway: the page simply stays
    * signed out and the user is told so.
    */
-  if (sorted.length === 1 && sorted[0].index === 0 && joined.length > MAX_COOKIE_LENGTH) {
+  if (sorted.length === 1 && sorted[0].index === 0 && joinedForMeasurement.length > MAX_COOKIE_LENGTH) {
     return {
       error:
-        `只粘进来了 ${base}.0（${joined.length} 个字符，超过单个 cookie 的上限），` +
+        `只粘进来了 ${base}.0（${joinedForMeasurement.length} 个字符，超过单个 cookie 的上限），` +
         `看起来还有 ${base}.1 没有粘。请把分块一起复制过来。`
     }
   }
 
-  if (joined.length > MAX_ASSEMBLED_LENGTH) {
-    return { error: `拼接后有 ${joined.length} 个字符，太长了，不像是会话令牌。` }
+  if (joinedForMeasurement.length > MAX_ASSEMBLED_LENGTH) {
+    return { error: `拼接后有 ${joinedForMeasurement.length} 个字符，太长了，不像是会话令牌。` }
   }
 
-  return { assembled: { name: base, value: joined, names } }
+  return {
+    assembled: {
+      cookies: sorted.map((chunk) => ({ name: chunk.name, value: chunk.value })),
+      name: base,
+      value: joinedForMeasurement,
+      names,
+      chunkCount: sorted.length,
+      totalLength: joinedForMeasurement.length
+    }
+  }
 }
 
 /**
@@ -357,11 +399,10 @@ export function previewSessionImport(draft: SessionImportDraft): SessionImportRe
     return { ok: false, message: parsed.error, signedIn: false }
   }
 
-  const { name, value, names } = parsed.assembled
-  const chunkCount = names.filter((entry) => entry !== name).length
+  const { name, value, chunkCount, totalLength } = parsed.assembled
   const detail =
-    chunkCount > 0
-      ? `会话令牌 ${name}，由 ${chunkCount} 个分块拼接而成，共 ${value.length} 个字符`
+    chunkCount > 1
+      ? `会话令牌 ${name}，分 ${chunkCount} 块（${totalLength} 个字符），将按分块原名分别写入`
       : `会话令牌 ${name}，${value.length} 个字符`
 
   return {
@@ -435,7 +476,7 @@ export async function importSessionToken(
     return { ok: false, message: parsed.error, signedIn: false }
   }
 
-  const { name, value, names } = parsed.assembled
+  const { name, value, names, cookies, chunkCount, totalLength } = parsed.assembled
   // Say which name was used. When the user pasted the whole cookie header, the field
   // above is not what decided it, so staying silent would make the result unreadable.
   const usedNote = names.length > 0 ? `${name}（粘贴内容里识别到：${names.join('、')}）` : name
@@ -447,12 +488,23 @@ export async function importSessionToken(
   }
 
   const ses = session.fromPartition(EMBED_PARTITION)
+  const toWrite: ParsedCookie[] = cookies ?? [{ name, value }]
+
   try {
-    await ses.cookies.set({ ...cookieAttributes(name), value })
+    // Written one by one, each under its OWN name. A split token reassembled into a
+    // single cookie cannot be stored at all: Chromium caps the name=value pair at
+    // 4096 bytes, which is precisely why NextAuth split it.
+    for (const cookie of toWrite) {
+      await ses.cookies.set({ ...cookieAttributes(cookie.name), value: cookie.value })
+    }
   } catch (error) {
+    const sizeHint =
+      /MAX_SIZE/i.test((error as Error).message)
+        ? '这条 cookie 太大，超过 Chromium 单条 4096 字节的上限——多半是分块没有一起粘进来。'
+        : ''
     return {
       ok: false,
-      message: `写入 cookie 失败（名称 ${usedNote}）：${(error as Error).message}`,
+      message: `写入 cookie 失败（名称 ${usedNote}）：${(error as Error).message}${sizeHint}`,
       signedIn: false
     }
   }
@@ -460,10 +512,13 @@ export async function importSessionToken(
   await reloadAndWait()
 
   const signedIn = await isEmbedSignedIn(contents, 25000)
+  const written =
+    chunkCount > 1 ? `${chunkCount} 条分块（共 ${totalLength} 个字符）` : `${value.length} 个字符`
+
   if (signedIn) {
     return {
       ok: true,
-      message: `已导入 ${usedNote}，页面已进入登录状态。`,
+      message: `已导入 ${usedNote}，写入 ${written}，页面已进入登录状态。`,
       signedIn
     }
   }
@@ -471,7 +526,7 @@ export async function importSessionToken(
   return {
     ok: true,
     message:
-      `cookie 已写入（名称 ${usedNote}，共 ${value.length} 个字符），但页面看起来仍未登录。` +
+      `cookie 已写入（名称 ${usedNote}，${written}），但页面看起来仍未登录。` +
       '常见原因：令牌已过期（在别处点了「登出所有设备」也会让它立刻失效）、复制的不完整，' +
       '或者账号还需要别的前缀 cookie。回浏览器刷新一次 ChatGPT 页面再复制一份通常能解决。',
     signedIn
