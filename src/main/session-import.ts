@@ -340,6 +340,38 @@ function cookieAttributes(name: string): Electron.CookiesSetDetails {
 }
 
 /**
+ * What the paste WOULD import, without writing anything.
+ *
+ * The user should never have to guess whether they copied the right row out of
+ * DevTools. Pasting the whole `cookie:` header is the reliable move, and this is what
+ * makes that trustworthy: the dialog reports which cookie was recognised and how big
+ * the reassembled token is, before anything is written to the jar.
+ *
+ * Idempotent, side-effect free, and safe to call on every keystroke — no cookie is set
+ * and no value is echoed back.
+ */
+export function previewSessionImport(draft: SessionImportDraft): SessionImportResult {
+  const requestedName = sanitizeName(draft.name) || SESSION_COOKIE_NAME
+  const parsed = assembleSession(draft, requestedName)
+  if ('error' in parsed) {
+    return { ok: false, message: parsed.error, signedIn: false }
+  }
+
+  const { name, value, names } = parsed.assembled
+  const chunkCount = names.filter((entry) => entry !== name).length
+  const detail =
+    chunkCount > 0
+      ? `会话令牌 ${name}，由 ${chunkCount} 个分块拼接而成，共 ${value.length} 个字符`
+      : `会话令牌 ${name}，${value.length} 个字符`
+
+  return {
+    ok: true,
+    message: `识别到：${detail}。点下面的按钮才会写入并重新加载。`,
+    signedIn: false
+  }
+}
+
+/**
  * True when the embed looks signed in.
  *
  * Never throws: a navigation during the call is normal, and "cannot tell" must not

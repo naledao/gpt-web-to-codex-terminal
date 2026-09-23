@@ -16,6 +16,7 @@ export const IpcChannels = {
   embedExternalAuth: 'embed:external-auth',
   embedLoginWithEmail: 'embed:login-with-email',
   embedImportSession: 'embed:import-session',
+  embedPreviewSession: 'embed:preview-session',
   embedGetAuthState: 'embed:get-auth-state',
   openChatgptExternal: 'app:open-chatgpt-external',
   conversationsList: 'conversations:list',
@@ -931,6 +932,13 @@ export interface AppApi {
    * session token the browser already holds.
    */
   importSession(draft: SessionImportDraft): Promise<SessionImportResult>
+  /**
+   * Report what a paste WOULD import, without writing anything.
+   *
+   * The user should not have to guess whether they copied the right row out of DevTools.
+   * Side-effect free, so the dialog can call it as they type.
+   */
+  previewSessionImport(draft: SessionImportDraft): Promise<SessionImportResult>
   /** Whether the embedded page is signed in (cookie names only, never values). */
   getEmbedAuthState(): Promise<EmbedAuthState>
   /** Open ChatGPT in the user's normal browser. */

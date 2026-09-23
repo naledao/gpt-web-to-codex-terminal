@@ -102,6 +102,9 @@ const api: AppApi = {
   importSession: (draft: SessionImportDraft): Promise<SessionImportResult> =>
     ipcRenderer.invoke(IpcChannels.embedImportSession, draft),
 
+  previewSessionImport: (draft: SessionImportDraft): Promise<SessionImportResult> =>
+    ipcRenderer.invoke(IpcChannels.embedPreviewSession, draft),
+
   getEmbedAuthState: (): Promise<EmbedAuthState> =>
     ipcRenderer.invoke(IpcChannels.embedGetAuthState),
 

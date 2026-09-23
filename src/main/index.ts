@@ -34,7 +34,7 @@ import type {
   TerminalNotes,
   TerminalState
 } from '../shared/types'
-import { embedAuthState, importSessionToken } from './session-import'
+import { embedAuthState, importSessionToken, previewSessionImport } from './session-import'
 import { ConversationStore } from './db'
 import { EMPTY_SSH_STATE, SessionRuntime } from './session-runtime'
 
@@ -307,6 +307,10 @@ function registerIpcHandlers(): void {
     const runtime = runtimeForEvent(event)
     if (!runtime) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
     return importSessionToken(draft, runtime.embed.contents(), () => runtime.embed.reloadAndWait())
+  })
+  ipcMain.handle(IpcChannels.embedPreviewSession, (event, draft: SessionImportDraft): SessionImportResult => {
+    if (!runtimeForEvent(event)) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
+    return previewSessionImport(draft)
   })
   ipcMain.handle(IpcChannels.embedGetAuthState, async (event): Promise<EmbedAuthState> => {
     const runtime = runtimeForEvent(event)

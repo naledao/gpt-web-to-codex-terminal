@@ -119,6 +119,12 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
   const [sessionCookieName, setSessionCookieName] = useState(SESSION_COOKIE_NAME)
   const [sessionCookieValue, setSessionCookieValue] = useState('')
   const [sessionImport, setSessionImport] = useState<SessionImportResult | null>(null)
+  /**
+   * Whether the message above is a preview of the current paste or the outcome of a
+   * real import. They must be styled differently: a preview saying "not signed in" is
+   * normal, and a finished import saying it is a problem.
+   */
+  const [sessionImportPhase, setSessionImportPhase] = useState<'preview' | 'result'>('preview')
   const [importingSession, setImportingSession] = useState(false)
   const [commandDraft, setCommandDraft] = useState('')
   /** Non-null while the working directory is being edited inline. */
@@ -418,6 +424,10 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
   const submitSessionImport = useCallback(async (): Promise<void> => {
     setImportingSession(true)
     setSessionImport(null)
+    // Claim the message before the value is cleared below: otherwise the preview
+    // effect sees an empty field, decides there is nothing to report, and wipes the
+    // import's own result off the screen the moment it arrives.
+    setSessionImportPhase('result')
     try {
       const result = await window.api.importSession({
         name: sessionCookieName,
@@ -435,6 +445,42 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
       setImportingSession(false)
     }
   }, [sessionCookieName, sessionCookieValue])
+
+  /**
+   * Say what the paste WOULD import, before anything is written.
+   *
+   * Pasting the whole `cookie:` header is the reliable move, and this is what makes it
+   * trustworthy: the user sees which cookie was recognised and how big the reassembled
+   * token is, instead of having to guess whether they grabbed the right row out of
+   * DevTools. Debounced, because it runs on every keystroke.
+   */
+  useEffect(() => {
+    if (!settingsOpen) return
+    const value = sessionCookieValue.trim()
+    if (value === '') {
+      if (sessionImportPhase !== 'result') setSessionImport(null)
+      return
+    }
+
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void window.api
+        .previewSessionImport({ name: sessionCookieName, value: sessionCookieValue })
+        .then((result) => {
+          if (cancelled) return
+          setSessionImportPhase('preview')
+          setSessionImport(result)
+        })
+        .catch(() => {
+          /* a preview that fails is not worth reporting — the import itself will */
+        })
+    }, 250)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [settingsOpen, sessionCookieName, sessionCookieValue])
 
   const externalAuthProviderLabel = externalAuth?.provider === 'apple' ? 'Apple' : 'Google'
 
@@ -1808,7 +1854,13 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
                 {sessionImport ? (
                   <p
                     className={
-                      sessionImport.signedIn
+                      /*
+                       * A preview that fails to parse IS a problem (the paste is wrong),
+                       * and so is a finished import that left the page signed out. Only
+                       * two things are neutral: a preview that parsed, and an import
+                       * that actually signed in.
+                       */
+                      sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok)
                         ? 'field__hint'
                         : 'field__hint field__hint--warn'
                     }
