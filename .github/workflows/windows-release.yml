@@ -64,3 +64,21 @@ jobs:
             "release/GPT Web to Codex Terminal Setup $env:VERSION.exe" `
             "release/GPT Web to Codex Terminal Setup $env:VERSION.exe.blockmap" `
             "release/latest.yml"
+      - name: Keep only latest 3 releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releases = @()
+          $page = 1
+          do {
+            $batch = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100&page=$page" | ConvertFrom-Json)
+            $releases += $batch
+            $page += 1
+          } while ($batch.Count -eq 100)
+
+          $oldReleases = $releases | Sort-Object { [DateTime]$_.created_at } -Descending | Select-Object -Skip 3
+          foreach ($release in $oldReleases) {
+            Write-Host "Deleting old release $($release.tag_name)"
+            gh release delete $release.tag_name --yes
+          }
