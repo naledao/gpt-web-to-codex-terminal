@@ -201,7 +201,7 @@ export class ChatGptEmbed {
    */
   private armBaselineOnInstall = false
 
-  constructor(private readonly handlers: EmbedHandlers) {}
+  constructor(private readonly handlers: EmbedHandlers, private readonly initialUrl = EMBED_HOME_URL) {}
 
   /** Create the view and add it to the window. Safe to call more than once. */
   attach(parent: BrowserWindow): void {
@@ -313,7 +313,7 @@ export class ChatGptEmbed {
     })
     contents.on('render-process-gone', () => this.publishState())
 
-    void contents.loadURL(EMBED_HOME_URL)
+    void contents.loadURL(this.initialUrl || EMBED_HOME_URL)
     this.applyBounds()
   }
 

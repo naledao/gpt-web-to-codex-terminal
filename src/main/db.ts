@@ -52,6 +52,18 @@ CREATE TABLE IF NOT EXISTS executions (
 CREATE INDEX IF NOT EXISTS idx_executions_conversation
   ON executions (conversation_id, created_at);
 
+-- Managed workspace sessions. Unlike ChatGPT conversations, these rows describe
+-- the app-level session cards shown by the session manager and survive restarts.
+CREATE TABLE IF NOT EXISTS managed_sessions (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL DEFAULT '',
+  url             TEXT NOT NULL DEFAULT '',
+  conversation_id TEXT,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_managed_sessions_created_at
+  ON managed_sessions (created_at ASC);
 -- Small key/value store for app settings that must survive a restart
 -- (currently just the execution mode).
 CREATE TABLE IF NOT EXISTS settings (
@@ -104,6 +116,14 @@ interface ExecutionRow {
   created_at: number
   started_at: number | null
   finished_at: number | null
+}
+export interface ManagedSessionRecord {
+  id: string
+  title: string
+  url: string
+  conversationId: string | null
+  createdAt: number
+  updatedAt: number
 }
 
 /** Map a raw SQLite row onto the shared shape. */
@@ -529,6 +549,51 @@ export class ConversationStore {
     this.db.prepare('UPDATE ssh_hosts SET note = ? WHERE id = ?').run(note, id)
   }
 
+  /* ---------------- managed sessions ---------------- */
+
+  listManagedSessions(): ManagedSessionRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, title, url, conversation_id, created_at, updated_at
+           FROM managed_sessions ORDER BY created_at ASC`
+      )
+      .all() as unknown as Array<{
+      id: string
+      title: string
+      url: string
+      conversation_id: string | null
+      created_at: number
+      updated_at: number
+    }>
+
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      url: row.url,
+      conversationId: row.conversation_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }))
+  }
+
+  upsertManagedSession(record: Omit<ManagedSessionRecord, 'updatedAt'>): void {
+    const now = Date.now()
+    this.db
+      .prepare(
+        `INSERT INTO managed_sessions (id, title, url, conversation_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title,
+           url = excluded.url,
+           conversation_id = excluded.conversation_id,
+           updated_at = excluded.updated_at`
+      )
+      .run(record.id, record.title, record.url, record.conversationId, record.createdAt, now)
+  }
+
+  removeManagedSession(id: string): void {
+    this.db.prepare('DELETE FROM managed_sessions WHERE id = ?').run(id)
+  }
   /* ---------------- settings ---------------- */
 
   getSetting(key: string): string | null {

@@ -146,19 +146,33 @@ function runtimeForEvent(event: IpcMainEvent | IpcMainInvokeEvent): SessionRunti
   return currentSessionId ? runtimes.get(currentSessionId) ?? null : null
 }
 
-function createSession(kind: 'local' | 'ssh' = 'local', activate = true): SessionRuntime | null {
+function persistManagedSession(runtime: SessionRuntime): void {
+  if (!store) return
+  store.upsertManagedSession(runtime.persistentState())
+}
+function createSession(kind: 'local' | 'ssh' = 'local', activate = true, restored?: ReturnType<ConversationStore['listManagedSessions']>[number]): SessionRuntime | null {
   if (!store) return null
   const savedMode = store.getSetting(SETTING_EXECUTION_MODE)
   const initialMode: ExecutionMode = savedMode === 'auto' ? 'auto' : 'manual'
-  const runtime = new SessionRuntime({
+  let runtime: SessionRuntime | null = null
+  runtime = new SessionRuntime({
+    id: restored?.id,
+    createdAt: restored?.createdAt,
+    customTitle: restored?.title,
+    initialUrl: restored?.url || undefined,
+    initialConversationId: restored?.conversationId ?? null,
     store,
     localMachineId,
     initialMode,
     settings: () => ({ ...settings }),
-    onSummaryChanged: broadcastManagedSessions,
+    onSummaryChanged: () => {
+      if (runtime) persistManagedSession(runtime)
+      broadcastManagedSessions()
+    },
     onActivate: (id) => { selectSession(id) }
   })
   runtimes.set(runtime.id, runtime)
+  persistManagedSession(runtime)
   if (managerWindow && !managerWindow.isDestroyed()) runtime.attach(managerWindow)
   broadcastManagedSessions()
   if (activate) selectSession(runtime.id, kind === 'ssh')
@@ -176,6 +190,7 @@ function destroySession(id: string): boolean {
   }
 
   runtimes.delete(id)
+  store?.removeManagedSession(id)
   runtime.dispose()
   broadcastManagedSessions()
   if (wasCurrent) broadcastWorkspaceState()
@@ -458,7 +473,9 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpcHandlers()
     createManagerWindow()
-    createSession('local', false)
+    const savedSessions = conversationStore.listManagedSessions()
+    if (savedSessions.length === 0) createSession('local', false)
+    else for (const savedSession of savedSessions) createSession('local', false, savedSession)
 
     app.on('activate', () => {
       createManagerWindow()

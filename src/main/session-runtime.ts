@@ -46,6 +46,10 @@ export const EMPTY_SSH_STATE: SshState = {
 
 export interface SessionRuntimeOptions {
   id?: string
+  createdAt?: number
+  customTitle?: string
+  initialUrl?: string
+  initialConversationId?: string | null
   store: ConversationStore
   localMachineId: string
   initialMode: ExecutionMode
@@ -82,7 +86,7 @@ function normalizeProxy(raw: string): string {
 
 export class SessionRuntime {
   readonly id: string
-  readonly createdAt = Date.now()
+  readonly createdAt: number
   readonly embed: ChatGptEmbed
   readonly runner: CommandRunner
   readonly ssh: SshManager
@@ -97,19 +101,24 @@ export class SessionRuntime {
   }
 
   private remoteShell: RemoteShell | null = null
-  private lastConversationId: string | null = null
-  private customTitle = ''
+  private lastConversationId: string | null
+  private lastKnownUrl: string
+  private customTitle: string
   private disposed = false
   private active = false
   private readonly deferredCommands = new Map<string, ParsedCommand>()
 
   constructor(private readonly options: SessionRuntimeOptions) {
     this.id = options.id ?? randomUUID()
+    this.createdAt = options.createdAt ?? Date.now()
+    this.customTitle = options.customTitle?.trim() ?? ''
+    this.lastKnownUrl = options.initialUrl ?? ''
+    this.lastConversationId = options.initialConversationId ?? null
 
     this.embed = new ChatGptEmbed({
       onState: (state) => {
+        if (state.url !== '') this.lastKnownUrl = state.url
         this.send(IpcChannels.embedState, state)
-        this.options.onSummaryChanged()
 
         if (state.conversationId !== this.lastConversationId) {
           const previousConversationId = this.lastConversationId
@@ -119,6 +128,7 @@ export class SessionRuntime {
             void this.embed.armCommandBaseline()
           }
         }
+        this.options.onSummaryChanged()
       },
       onExternalAuth: (notice) => {
         this.externalAuthNotice = notice
@@ -137,7 +147,7 @@ export class SessionRuntime {
       onTaskCompleted: () => this.notifyTaskCompleted('任务已完成'),
       onCommand: (command) => this.handleDetectedCommand(command),
       onParseFailed: (text) => this.runner.noteParseFailure(text)
-    })
+    }, options.initialUrl)
 
     this.runner = new CommandRunner({
       store: options.store,
@@ -199,6 +209,21 @@ export class SessionRuntime {
     this.options.onSummaryChanged()
   }
 
+  persistentState(): {
+    id: string
+    title: string
+    url: string
+    conversationId: string | null
+    createdAt: number
+  } {
+    return {
+      id: this.id,
+      title: this.customTitle,
+      url: this.lastKnownUrl,
+      conversationId: this.lastConversationId,
+      createdAt: this.createdAt
+    }
+  }
   summary(): ManagedSessionSummary {
     const state = this.embed.getState()
     const sshState = this.ssh.getState()
