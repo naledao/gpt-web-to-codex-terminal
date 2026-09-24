@@ -846,6 +846,11 @@ export class SessionRuntime {
     }
   }
 
+  /** True once dispose() has run. Callers holding a runtime reference across an async boundary (e.g. a late SSH event) must check this before touching state. */
+  isDisposed(): boolean {
+    return this.disposed
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
@@ -857,9 +862,9 @@ export class SessionRuntime {
       // live WebContents too, and destroying only the visible one would leak a running page.
       for (const entry of this.embeds.values()) entry.embed?.destroy(window)
     }
+    this.ssh.dispose()
     this.embeds.clear()
     this.window = null
-    this.ssh.dispose()
     this.remoteShell = null
     this.runner.disposeAll()
   }

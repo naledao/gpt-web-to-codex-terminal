@@ -222,6 +222,10 @@ function runtimeForEvent(event: IpcMainEvent | IpcMainInvokeEvent): SessionRunti
 
 function persistManagedSession(runtime: SessionRuntime): void {
   if (!store) return
+  // A late async event (e.g. the SSH socket's close handler firing after dispose) can still
+  // reach here with an already-torn-down runtime. Persisting it would read its cleared
+  // embeds and throw, so drop the write instead.
+  if (runtime.isDisposed()) return
   store.upsertManagedSession(runtime.persistentState())
 }
 function createSession(
@@ -633,10 +637,10 @@ function registerIpcHandlers(): void {
     runtimeForEvent(event)?.ssh.getUploads() ?? [])
   ipcMain.handle(IpcChannels.sshUploadCancel, (event, id: string): boolean =>
     runtimeForEvent(event)?.ssh.cancelUpload(String(id ?? '')) ?? false)
-  ipcMain.handle(IpcChannels.sshInput, (event, text: string): SshState => {
+  ipcMain.handle(IpcChannels.sshInput, async (event, text: string): Promise<SshState> => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return { ...EMPTY_SSH_STATE }
-    runtime.ssh.write(String(text ?? ''))
+    await runtime.ssh.write(String(text ?? ''))
     return runtime.ssh.getState()
   })
 

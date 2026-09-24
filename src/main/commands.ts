@@ -690,6 +690,7 @@ export class CommandRunner {
     }
 
     const message = buildResultMessage(record.command, result)
+    this.appendLine({ kind: 'notice', text: '正在发送...' })
     const outcome = await this.deps.sendRawToPage(message)
     if (outcome === 'ok') {
       this.appendLine({ kind: 'notice', text: '已把执行结果发回给模型' })

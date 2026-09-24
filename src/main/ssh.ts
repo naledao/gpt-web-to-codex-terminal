@@ -626,19 +626,30 @@ export class SshManager {
     this.onUploadsChanged(this.getUploads())
   }
   /** Send one line to the remote shell. */
-  write(text: string): void {
+  async write(text: string): Promise<void> {
     const line = text.replace(/[\r\n]+$/, '')
     if (line === '') return
 
     this.pushLine('command', line)
     this.emit()
 
-    if (!this.stream) {
-      this.pushLine('error', '当前没有已连接的 SSH 会话。')
+    // Manual input runs on the model's exec channel, so a `cd` here moves the
+    // directory the model will actually work in. Writing to the interactive PTY
+    // would silently desync the two shells, which is the bug this closes.
+    const exec = this.exec
+    if (!exec) {
+      this.pushLine('error', '模型命令通道尚未就绪，稍后再试。')
       this.emit()
       return
     }
-    this.stream.write(`${line}\n`)
+
+    const result = await exec.run(line)
+    if (result.rejected) {
+      this.pushLine('error', result.output)
+    }
+    // A bare `cd` emits no output line, so nothing else would signal the change;
+    // emit here so the UI re-reads modelCwd.
+    this.emit()
   }
 
   dispose(): void {
