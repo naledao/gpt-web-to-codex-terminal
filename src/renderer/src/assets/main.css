@@ -678,6 +678,12 @@ body {
   line-height: 1.5;
 }
 
+/* A hint with no text at all — a state whose description was removed — must not
+ * leave its 7px margin behind as a gap. */
+.terminal__hint:empty {
+  display: none;
+}
+
 .terminal__stats {
   margin-top: 6px;
 }

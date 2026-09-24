@@ -1148,7 +1148,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
               ? '正在读取状态…'
               : interceptor.enabled
                 ? interceptor.installed
-                  ? '发送前会自动在输入框最前面插入系统提示词'
+                  ? null
                   : '已开启，等待页面加载后生效'
                 : '已关闭：消息按原样发送'}
           </p>
@@ -1180,7 +1180,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
             {automation === null
               ? '正在读取设置…'
               : isAuto
-                ? '自动执行：检测到命令立刻在该会话的终端里运行，并把结果发回给模型。'
+                ? null
                 : '手动执行：命令列在下方等你点「运行」，跑完的结果同样会发回给模型。'}
           </p>
 
@@ -1213,9 +1213,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
             </button>
           </div>
 
-          <p className="terminal__hint">
-            打开会话时，屏幕上已有的回复不会被当成新命令执行；要接着跑就点「检查上一条」。
-          </p>
 
           <div className="terminal__stats">
             <span className="terminal__count">已注入 {interceptor?.injectedCount ?? 0} 次</span>
