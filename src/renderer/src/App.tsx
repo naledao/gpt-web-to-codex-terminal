@@ -1028,6 +1028,32 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
             />
           </form>
 
+          {/*
+            Which model this session is talking to, sitting immediately left of the gear so the
+            gear stays the last thing in the bar. Both platforms' pages stay loaded, so this is
+            a change of which one is in front — the SSH connection and the terminal are NOT
+            rebuilt, and each site keeps its own conversation.
+
+            A dropdown rather than a row of buttons: one-of-N is what a select is for, and the
+            list is expected to grow.
+          */}
+          <select
+            className="model-select"
+            aria-label="模型"
+            value={platformId}
+            // Refused while a task is running: the main process enforces this too, and this is
+            // only so the control does not look available when it is not.
+            disabled={taskRunning || switchingPlatform || platformId === ''}
+            title={taskRunning ? '任务运行中不能切换模型' : '切换模型'}
+            onChange={(event) => void switchPlatform(event.target.value)}
+          >
+            {CHAT_PLATFORMS.map((platform) => (
+              <option key={platform.id} value={platform.id}>
+                {platform.label}
+              </option>
+            ))}
+          </select>
+
           <button
             type="button"
             title="设置"
@@ -1071,34 +1097,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
           </button>
         </div>
         <div className="terminal-controls">
-          {/*
-            Which model this session is talking to. Both platforms' pages stay loaded, so this
-            is a change of which one is in front — the SSH connection and the terminal are NOT
-            rebuilt, and each site keeps its own conversation.
-
-            A dropdown rather than a row of buttons: the panel is narrow, the list is expected
-            to grow, and a one-of-N choice reads as a select.
-          */}
-          <div className="terminal__row">
-            <span className="terminal__label">模型</span>
-          </div>
-          <select
-            className="model-select"
-            aria-label="模型"
-            value={platformId}
-            // Refused while a task is running: the main process enforces this too, and this is
-            // only so the control does not look available when it is not.
-            disabled={taskRunning || switchingPlatform}
-            title={taskRunning ? '任务运行中不能切换模型' : '切换 ChatGPT / DeepSeek'}
-            onChange={(event) => void switchPlatform(event.target.value)}
-          >
-            {CHAT_PLATFORMS.map((platform) => (
-              <option key={platform.id} value={platform.id}>
-                {platform.label}
-              </option>
-            ))}
-          </select>
-
           <div className="terminal__row">
             <span className="terminal__label">终端模式</span>
             <span className={interceptor?.installed ? 'terminal__dot' : 'terminal__dot terminal__dot--wait'} />
