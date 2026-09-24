@@ -198,7 +198,9 @@
     }
 
     element.focus()
-    placeCaretAtStart(element)
+    // Select the whole draft so `insertText` REPLACES it rather than inserting at a caret whose
+    // position we cannot control. See `selectAllIn`.
+    selectAllIn(element)
     // Keep focus/selection honest so ProseMirror records a real edit.
     return document.execCommand('insertText', false, text)
   }
@@ -386,10 +388,25 @@
     return collapse(readComposer(element)).startsWith(head)
   }
 
-  const placeCaretAtStart = (element) => {
+  /**
+   * Select everything in the composer, so the next write REPLACES it.
+   *
+   * This used to collapse the selection to the start, on the assumption that
+   * `execCommand('insertText')` would then insert there. It does not: in a ProseMirror
+   * contenteditable the text landed at the END, after whatever the user had typed — observed as
+   * "the prompt appears after my sentence". `hasPrefix()` then failed (the prompt was not at the
+   * front), so the next keystroke composed again and appended a second copy, and the send never
+   * went out.
+   *
+   * Selecting all removes the dependency on caret placement entirely: the composed string
+   * already contains both the prompt and the user's text, so replacing the contents with it is
+   * the correct operation no matter where the caret happened to be. It also makes the
+   * contenteditable path mean the same thing as the textarea path, which has always been a
+   * whole-value replace — one behaviour instead of two.
+   */
+  const selectAllIn = (element) => {
     const range = document.createRange()
     range.selectNodeContents(element)
-    range.collapse(true)
     const selection = window.getSelection()
     selection.removeAllRanges()
     selection.addRange(range)
