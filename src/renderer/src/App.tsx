@@ -18,6 +18,7 @@ import type {
   SshHost,
   SshHostDraft,
   SshFileEntry,
+  SshDownloadTask,
   SshState,
   TerminalNotes,
   TerminalState
@@ -101,6 +102,19 @@ function formatDuration(milliseconds: number): string {
     ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
     : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
+function formatBytes(bytes: number): string {
+  const value = Math.max(0, bytes)
+  if (value < 1024) return `${value} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let size = value
+  let index = -1
+  do {
+    size /= 1024
+    index += 1
+  } while (size >= 1024 && index < units.length - 1)
+  return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${units[index]}`
+}
+
 interface AppProps {
   initialSshDialogOpen?: boolean
   /** Which chat platform this session is showing, from the main process's session list. */
@@ -168,6 +182,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
   const [sshFileData, setSshFileData] = useState<FilemanagerEntity[]>([])
   const [sshFilesLoading, setSshFilesLoading] = useState(false)
   const [sshFilesError, setSshFilesError] = useState('')
+  const [sshDownloads, setSshDownloads] = useState<SshDownloadTask[]>([])
   const [sshDraft, setSshDraft] = useState<SshHostDraft>({
     id: null,
     name: '',
@@ -797,6 +812,14 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
     }
   }, [sshFilesOpen, ssh?.status, ssh?.hostId])
 
+  const cancelSshDownload = useCallback(async (id: string): Promise<void> => {
+    try {
+      await window.api.cancelSshDownload(id)
+    } catch {
+      /* pushed state remains authoritative */
+    }
+  }, [])
+
   const disconnectSsh = useCallback(async (): Promise<void> => {
     try {
       setSsh(await window.api.disconnectSsh())
@@ -926,6 +949,18 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
     })
 
     const unsubscribe = window.api.onSshChanged(setSsh)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.api.getSshDownloads().then((items) => {
+      if (!cancelled) setSshDownloads(items)
+    })
+    const unsubscribe = window.api.onSshDownloadsChanged(setSshDownloads)
     return () => {
       cancelled = true
       unsubscribe()
@@ -1725,21 +1760,69 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
           <>
             {sshActive && sshFilesOpen ? (
               <div className="ssh-files">
+                {sshDownloads.length > 0 ? (
+                  <div className="ssh-downloads">
+                    <div className="ssh-downloads__head">
+                      <strong>下载任务</strong>
+                      <span>{sshDownloads.filter((item) => item.status === 'downloading').length} 个进行中</span>
+                    </div>
+                    <div className="ssh-downloads__list">
+                      {sshDownloads.map((item) => {
+                        const percent = item.total > 0
+                          ? Math.min(100, Math.round((item.transferred / item.total) * 100))
+                          : 0
+                        const statusLabel = item.status === 'completed'
+                          ? '已完成'
+                          : item.status === 'cancelled'
+                            ? '已取消'
+                            : item.status === 'failed'
+                              ? '失败'
+                              : item.total > 0 ? `${percent}%` : '准备中…'
+                        return (
+                          <div className="ssh-download" key={item.id} title={item.error || item.localPath}>
+                            <div className="ssh-download__row">
+                              <span className="ssh-download__name">{item.name}</span>
+                              <span className={`ssh-download__status ssh-download__status--${item.status}`}>{statusLabel}</span>
+                              {item.status === 'downloading' ? (
+                                <button
+                                  type="button"
+                                  className="ssh-download__cancel"
+                                  onClick={() => void cancelSshDownload(item.id)}
+                                >
+                                  取消
+                                </button>
+                              ) : null}
+                            </div>
+                            <div className="ssh-download__progress" aria-label={`${item.name} 下载进度`}>
+                              <span style={{ width: `${item.total > 0 ? percent : 0}%` }} />
+                            </div>
+                            <div className="ssh-download__meta">
+                              <span>{formatBytes(item.transferred)}{item.total > 0 ? ` / ${formatBytes(item.total)}` : ''}</span>
+                              {item.error ? <span className="ssh-download__error">{item.error}</span> : null}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 {sshFilesError ? <div className="ssh-files__error">{sshFilesError}</div> : null}
-                {sshFilesLoading ? (
-                  <div className="ssh-files__loading">正在读取远程文件…</div>
-                ) : (
-                  <WillowDark>
-                    <Filemanager
-                      data={sshFileData}
-                      readonly
-                      mode="table"
-                      preview={false}
-                      icons="simple"
-                      init={initSshFilemanager}
-                    />
-                  </WillowDark>
-                )}
+                <div className="ssh-files__browser">
+                  {sshFilesLoading ? (
+                    <div className="ssh-files__loading">正在读取远程文件…</div>
+                  ) : (
+                    <WillowDark>
+                      <Filemanager
+                        data={sshFileData}
+                        readonly
+                        mode="table"
+                        preview={false}
+                        icons="simple"
+                        init={initSshFilemanager}
+                      />
+                    </WillowDark>
+                  )}
+                </div>
               </div>
             ) : (
               <>

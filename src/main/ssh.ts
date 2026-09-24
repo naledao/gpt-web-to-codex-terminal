@@ -1,10 +1,12 @@
 import { Client } from 'ssh2'
-import type { ClientChannel } from 'ssh2'
+import type { ClientChannel, SFTPWrapper } from 'ssh2'
+import { randomUUID } from 'node:crypto'
+import { unlink } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { Socket } from 'node:net'
 import { basename, posix } from 'node:path'
-import type { SshFileEntry, SshState, TerminalLine } from '../shared/types'
+import type { SshDownloadTask, SshFileEntry, SshState, TerminalLine } from '../shared/types'
 import { REMOTE_SHELL_COMMAND, RemoteShell } from './remote-shell'
 
 /** Strips ANSI/VT escape sequences — there is no terminal emulator to render them. */
@@ -144,8 +146,14 @@ export class SshManager {
   private exec: RemoteShell | null = null
   private execAttempts = 0
   private mirrorTimer: NodeJS.Timeout | null = null
+  private readonly downloads = new Map<string, SshDownloadTask>()
+  private readonly downloadChannels = new Map<string, SFTPWrapper>()
+  private readonly downloadEmitAt = new Map<string, number>()
 
-  constructor(private readonly onChanged: (state: SshState) => void) {}
+  constructor(
+    private readonly onChanged: (state: SshState) => void,
+    private readonly onDownloadsChanged: (items: SshDownloadTask[]) => void
+  ) {}
 
   getState(): SshState {
     return {
@@ -359,25 +367,127 @@ export class SshManager {
     }
   }
 
-  /** Download one remote file to a local path over SFTP. */
-  async downloadFile(remotePath: string, localPath: string): Promise<void> {
-    const client = this.client
-    if (!client || this.state.status !== 'connected') throw new Error('当前没有已连接的 SSH 会话。')
+  /** Current and recently finished downloads, newest first. */
+  getDownloads(): SshDownloadTask[] {
+    return [...this.downloads.values()]
+      .sort((a, b) => b.startedAt - a.startedAt)
+      .map((item) => ({ ...item }))
+  }
+
+  /** Start one remote-file download without blocking its IPC caller until completion. */
+  downloadFile(remotePath: string, localPath: string): void {
+    if (!this.client || this.state.status !== 'connected') throw new Error('当前没有已连接的 SSH 会话。')
     const source = remotePath.trim()
     const destination = localPath.trim()
     if (source === '' || destination === '') throw new Error('下载路径不能为空。')
-    const sftp = await new Promise<import('ssh2').SFTPWrapper>((resolve, reject) => {
-      client.sftp((error, channel) => (error ? reject(error) : resolve(channel)))
-    })
+
+    const task: SshDownloadTask = {
+      id: randomUUID(),
+      name: basename(source) || source,
+      remotePath: source,
+      localPath: destination,
+      status: 'downloading',
+      transferred: 0,
+      total: 0,
+      startedAt: Date.now(),
+      finishedAt: null,
+      error: ''
+    }
+    this.downloads.set(task.id, task)
+    this.emitDownloads()
+    void this.runDownload(task.id)
+  }
+
+  /** Cancel one transfer by closing its dedicated SFTP channel. */
+  cancelDownload(id: string): boolean {
+    const task = this.downloads.get(id)
+    if (!task || task.status !== 'downloading') return false
+    task.status = 'cancelled'
+    task.finishedAt = Date.now()
+    this.emitDownloads()
     try {
-      await new Promise<void>((resolve, reject) => {
-        sftp.fastGet(source, destination, (error) => (error ? reject(error) : resolve()))
+      this.downloadChannels.get(id)?.destroy()
+    } catch {
+      /* the transfer may already be closing */
+    }
+    return true
+  }
+
+  private async runDownload(id: string): Promise<void> {
+    const task = this.downloads.get(id)
+    const client = this.client
+    if (!task || !client) return
+
+    let sftp: SFTPWrapper | null = null
+    let transferStarted = false
+    try {
+      sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
+        client.sftp((error, channel) => (error ? reject(error) : resolve(channel)))
       })
+      if (task.status !== 'downloading') return
+      this.downloadChannels.set(id, sftp)
+
+      await new Promise<void>((resolve, reject) => {
+        transferStarted = true
+        sftp!.fastGet(
+          task.remotePath,
+          task.localPath,
+          {
+            step: (transferred, _chunk, total) => {
+              const active = this.downloads.get(id)
+              if (!active || active.status !== 'downloading') return
+              active.transferred = transferred
+              active.total = total
+              const now = Date.now()
+              const last = this.downloadEmitAt.get(id) ?? 0
+              if (now - last >= 100 || (total > 0 && transferred >= total)) {
+                this.downloadEmitAt.set(id, now)
+                this.emitDownloads()
+              }
+            }
+          },
+          (error) => (error ? reject(error) : resolve())
+        )
+      })
+
+      const completed = this.downloads.get(id)
+      if (completed?.status === 'downloading') {
+        completed.status = 'completed'
+        completed.finishedAt = Date.now()
+        if (completed.total > 0) completed.transferred = completed.total
+        this.emitDownloads()
+      }
+    } catch (error) {
+      const failed = this.downloads.get(id)
+      if (failed?.status === 'downloading') {
+        failed.status = 'failed'
+        failed.finishedAt = Date.now()
+        failed.error = (error as Error).message
+        this.emitDownloads()
+      }
+      if (transferStarted && failed?.status !== 'completed') {
+        try {
+          await unlink(task.localPath)
+        } catch {
+          /* partial file may already be gone */
+        }
+      }
     } finally {
-      sftp.end()
+      this.downloadChannels.delete(id)
+      this.downloadEmitAt.delete(id)
+      if (sftp) {
+        try {
+          sftp.end()
+        } catch {
+          /* already closed */
+        }
+      }
     }
   }
 
+  private emitDownloads(): void {
+    this.onDownloadsChanged(this.getDownloads())
+  }
   /** Upload local files into the model shell's current remote directory over SFTP. */
   async uploadFiles(localPaths: string[]): Promise<SshState> {
     const client = this.client
@@ -519,6 +629,10 @@ export class SshManager {
   }
 
   private teardown(): void {
+    for (const task of this.downloads.values()) {
+      if (task.status === 'downloading') this.cancelDownload(task.id)
+    }
+
     if (this.mirrorTimer) {
       clearTimeout(this.mirrorTimer)
       this.mirrorTimer = null

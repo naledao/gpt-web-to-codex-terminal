@@ -245,6 +245,8 @@ export class SessionRuntime {
       } else if (next === null && state.status === 'error') {
         void this.probeEnvironment()
       }
+    }, (downloads) => {
+      this.send(IpcChannels.sshDownloadsChanged, downloads)
     })
 
     const restoredHostId = options.initialSshHostId?.trim() ?? ''

@@ -30,6 +30,7 @@ import type {
   SessionImportResult,
   SshHost,
   SshHostDraft,
+  SshDownloadTask,
   SshFileEntry,
   SshState,
   TerminalNotes,
@@ -534,9 +535,13 @@ function registerIpcHandlers(): void {
       ? await dialog.showSaveDialog(window, options)
       : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return false
-    await runtime.ssh.downloadFile(source, result.filePath)
+    runtime.ssh.downloadFile(source, result.filePath)
     return true
   })
+  ipcMain.handle(IpcChannels.sshDownloadsGet, (event): SshDownloadTask[] =>
+    runtimeForEvent(event)?.ssh.getDownloads() ?? [])
+  ipcMain.handle(IpcChannels.sshDownloadCancel, (event, id: string): boolean =>
+    runtimeForEvent(event)?.ssh.cancelDownload(String(id ?? '')) ?? false)
 
   ipcMain.handle(IpcChannels.sshUploadFiles, async (event): Promise<SshState> => {
     const runtime = runtimeForEvent(event)

@@ -1816,14 +1816,122 @@ body {
 }
 
 .ssh-files {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
 }
 
-.ssh-files > * {
+.ssh-files__browser {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ssh-files__browser > * {
   height: 100%;
+}
+
+.ssh-downloads {
+  flex: 0 0 auto;
+  max-height: 220px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.ssh-downloads__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ssh-downloads__list {
+  max-height: 184px;
+  overflow: auto;
+  padding: 0 8px 8px;
+}
+
+.ssh-download {
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.ssh-download + .ssh-download {
+  margin-top: 6px;
+}
+
+.ssh-download__row,
+.ssh-download__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ssh-download__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.ssh-download__status,
+.ssh-download__meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.ssh-download__status--completed {
+  color: #3fb950;
+}
+
+.ssh-download__status--failed {
+  color: var(--danger);
+}
+
+.ssh-download__cancel {
+  border: 0;
+  padding: 2px 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ssh-download__cancel:hover {
+  color: var(--danger);
+}
+
+.ssh-download__progress {
+  height: 3px;
+  margin: 6px 0 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.ssh-download__progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+}
+
+.ssh-download__meta {
+  justify-content: space-between;
+}
+
+.ssh-download__error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--danger);
 }
 
 .ssh-files__loading,

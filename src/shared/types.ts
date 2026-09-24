@@ -61,6 +61,9 @@ export const IpcChannels = {
   sshUploadFiles: 'ssh:upload-files',
   sshListFiles: 'ssh:list-files',
   sshDownloadFile: 'ssh:download-file',
+  sshDownloadsGet: 'ssh:downloads-get',
+  sshDownloadCancel: 'ssh:download-cancel',
+  sshDownloadsChanged: 'ssh:downloads-changed',
   sshChanged: 'ssh:changed',
   managerSessionsList: 'manager:sessions-list',
   managerSessionCreate: 'manager:session-create',
@@ -867,6 +870,21 @@ export interface SshFileEntry {
   modifiedAt: number
 }
 
+export type SshDownloadStatus = 'downloading' | 'completed' | 'cancelled' | 'failed'
+
+export interface SshDownloadTask {
+  id: string
+  name: string
+  remotePath: string
+  localPath: string
+  status: SshDownloadStatus
+  transferred: number
+  total: number
+  startedAt: number
+  finishedAt: number | null
+  error: string
+}
+
 export interface SshState {
   status: SshStatus
   /**
@@ -1106,7 +1124,12 @@ export interface AppApi {
   uploadSshFiles(): Promise<SshState>
   /** List one remote directory over SFTP. */
   listSshFiles(path: string): Promise<SshFileEntry[]>
-  /** Pick a local destination and download one remote file over SFTP. */
+  /** Pick a local destination and start downloading one remote file over SFTP. */
   downloadSshFile(path: string): Promise<boolean>
+  /** Current and recently finished downloads for this SSH session. */
+  getSshDownloads(): Promise<SshDownloadTask[]>
+  /** Cancel one in-progress download. */
+  cancelSshDownload(id: string): Promise<boolean>
+  onSshDownloadsChanged(listener: (items: SshDownloadTask[]) => void): () => void
   onSshChanged(listener: (state: SshState) => void): () => void
 }
