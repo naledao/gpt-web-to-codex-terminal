@@ -207,6 +207,24 @@
 
   const findSendButton = () => queryFirst(PAGE.sendButtonSelectors)
 
+  /**
+   * Fallback for textarea-based composers whose send button has no stable selector.
+   * Programmatic sends keep state.programmatic=true, so our own Enter interceptor lets
+   * this synthetic event pass through without injecting the terminal prompt again.
+   */
+  const pressEnter = (element) => {
+    if (!element) return
+    const init = { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 }
+    try {
+      element.focus()
+      element.dispatchEvent(new KeyboardEvent('keydown', init))
+      element.dispatchEvent(new KeyboardEvent('keypress', init))
+      element.dispatchEvent(new KeyboardEvent('keyup', init))
+    } catch (_) {
+      /* submitWithRetry verifies success by checking whether the composer cleared */
+    }
+  }
+
   const findStopButton = () => queryFirst(PAGE.stopButtonSelectors)
 
   /* ------------------------------------------------------------------ *
@@ -461,17 +479,22 @@
     const button = findSendButton()
 
     if (!button || button.disabled) {
-      // The send button only enables once ProseMirror has committed the edit,
-      // and it disappears entirely while a reply is streaming.
-      if (deadline > 0 ? Date.now() < deadline : attempt < MAX_SEND_ATTEMPTS) {
-        setTimeout(() => submitWithRetry(text, attempt + 1, isRaw, done, deadline), 80)
+      const element = getComposer()
+      if (!button && element && (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT')) {
+        pressEnter(element)
       } else {
-        finish(false)
+        // The send button only enables once the editor has committed the edit,
+        // and it can disappear entirely while a reply is streaming.
+        if (deadline > 0 ? Date.now() < deadline : attempt < MAX_SEND_ATTEMPTS) {
+          setTimeout(() => submitWithRetry(text, attempt + 1, isRaw, done, deadline), 80)
+        } else {
+          finish(false)
+        }
+        return
       }
-      return
+    } else {
+      pressButton(button)
     }
-
-    pressButton(button)
 
     setTimeout(() => {
       const element = getComposer()
