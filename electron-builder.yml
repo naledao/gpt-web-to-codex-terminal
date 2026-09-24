@@ -1,6 +1,12 @@
 appId: com.example.gptweb2codexterminal
 productName: GPT Web to Codex Terminal
 
+# Pin the artifact name so the file on disk, the path recorded in latest.yml,
+# and the asset name on GitHub all match. Without it electron-builder writes
+# spaces (disk) / hyphens (latest.yml) / dots (GitHub upload) and the updater
+# 404s because it downloads the name latest.yml declares.
+artifactName: GPT-Web-to-Codex-Terminal-Setup-${version}.${ext}
+
 directories:
   buildResources: build
   output: release

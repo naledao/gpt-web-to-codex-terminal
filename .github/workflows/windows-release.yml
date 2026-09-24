@@ -61,8 +61,8 @@ jobs:
           gh release create $tag `
             --title $title `
             --generate-notes `
-            "release/GPT Web to Codex Terminal Setup $env:VERSION.exe" `
-            "release/GPT Web to Codex Terminal Setup $env:VERSION.exe.blockmap" `
+            "release/GPT-Web-to-Codex-Terminal-Setup-$env:VERSION.exe" `
+            "release/GPT-Web-to-Codex-Terminal-Setup-$env:VERSION.exe.blockmap" `
             "release/latest.yml"
       - name: Keep only latest 3 releases
         shell: pwsh
