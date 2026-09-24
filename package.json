@@ -1,7 +1,7 @@
 {
   "name": "gpt-web-to-codex-terminal",
   "productName": "GPT Web to Codex Terminal",
-  "version": "0.1.51",
+  "version": "0.1.52",
   "private": true,
   "description": "React + Electron desktop application (electron-vite + TypeScript)",
   "license": "MIT",
