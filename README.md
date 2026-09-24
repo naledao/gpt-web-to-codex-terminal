@@ -209,6 +209,70 @@ the first events fire while the window is still being created — before React h
 subscribed — the renderer also pulls `embed:get-state` once on mount. Without that
 pull the UI can stay stuck on its initial "loading" state.
 
+## Embedding chat.deepseek.com
+
+DeepSeek is the second platform, added so a conversation can be driven on either
+site. Everything site-specific lives in a **platform descriptor**
+(`src/shared/platforms.ts`) — URLs, the navigation allowlist, the conversation-id
+shape, the sidebar scraper, and a `PageAdapter` of DOM selectors — and the
+interceptor is platform-independent logic wrapped around those values. Adding a
+third site should mean adding a descriptor, not editing the interceptor.
+
+Differences from ChatGPT that the code has to respect:
+
+| | ChatGPT | DeepSeek |
+| --- | --- | --- |
+| Partition | `persist:chatgpt` | `persist:deepseek` |
+| Conversation URL | `/c/<uuid>` | `/a/chat/s/<uuid>` |
+| Composer | ProseMirror `contenteditable` | React-controlled `<textarea>` |
+| Writing text | `document.execCommand('insertText')` | native value setter + `input` event |
+| Stable message id | `data-message-id` | **none** — see below |
+| Assistant answer | the turn's own text | `.ds-assistant-message-main-content` only |
+
+Two of those are silent-failure traps, which is why they are on the list:
+
+- **The composer mechanism is not a style choice.** `execCommand` does nothing to a
+  React-controlled `<textarea>`, and assigning `innerHTML` to a ProseMirror
+  `contenteditable` is overwritten. The wrong one for the site does nothing at all
+  — no error, no log.
+- **DeepSeek has no stable per-message id.** `data-virtual-list-item-key` exists but
+  holds `"1"`, `"2"`, … — a position in a virtualised list, recycled as you scroll.
+  Using it as the idempotency key would let two different replies collide and the
+  second be silently suppressed, so it is deliberately *not* declared. Both sides
+  fall back to a content hash (`turnKeyOf` in the page script, `executionKeyOf` in
+  the main process), which is what makes "an executed command never runs twice"
+  hold without a per-message id.
+
+A turn's own text is **not** the answer on DeepSeek: it begins with `已思考（用时 4 秒）`,
+then search citations, and the reasoning contains `ds-markdown` blocks of its own. The
+reply is read from `.ds-assistant-message-main-content` — a *semantic* class, which is
+why it can be relied on where the hashed ones (`_9663006`, `_4f9bf79`) cannot.
+
+### One host the page uses is unreachable, on purpose
+
+`hif-dliq.deepseek.com/query` is a background beacon the page fires on a timer. It
+publishes **only AAAA records and no A record at all**, so on a machine without an
+IPv6 route every attempt fails — and Chromium reports it as
+
+```
+handshake failed; returned -1, SSL error code 1, net_error -100
+```
+
+**naming no host**, every few seconds. That single line is what made this expensive
+to find; `DSH_NET_LOG=1` plus `tools/diag/analyse-net-log.mjs` is what named it
+(24 failures over 149 seconds, while `chat.deepseek.com` and `chatgpt.com`
+completed TLS through the same proxy).
+
+The page is **completely unaffected** — verified with no error text in the DOM and
+the sidebar and message list updating normally throughout. It is log noise, not a
+fault, and nothing in the app can make that host reachable: the peer offers no IPv4
+and the machine has no IPv6. So the app stops asking, via
+`--host-resolver-rules=MAP hif-dliq.deepseek.com ~NOTFOUND`, declared as
+`unresolvableHosts` on the DeepSeek descriptor.
+
+**Delete that entry** if DeepSeek ever publishes an A record for the host or the
+machine gains IPv6 — at that point the beacon would work and the rule would be
+suppressing real traffic.
 
 ## The three processes
 

@@ -123,6 +123,35 @@ export interface ChatPlatform {
    * conversations. Empty disables the feature for this platform.
    */
   sidebarScript: string
+  /**
+   * Hosts this site uses that are unreachable from this machine and that the app does not
+   * need, so Chromium stops dialling them.
+   *
+   * WHY THIS IS HERE AND NOT A STRAY SWITCH
+   * ---------------------------------------
+   * `hif-dliq.deepseek.com/query` — a background beacon the page fires on a timer. It has
+   * **only AAAA records and no A record at all** (measured: it CNAMEs to a Huawei Cloud WAF
+   * name with IPv6 addresses only), so on a machine with no IPv6 route every attempt ends in
+   * `ERR_CONNECTION_CLOSED` and Chromium logs it as
+   *
+   *   handshake failed; returned -1, SSL error code 1, net_error -100
+   *
+   * every few seconds, **naming no host**, which is what made it expensive to diagnose. The
+   * page itself is completely unaffected (verified: no error text in the DOM, sidebar and
+   * message list normal while the beacon failed) — this is log noise, not a fault.
+   *
+   * Nothing the app can do makes that host reachable: the peer offers no IPv4 and the machine
+   * has no IPv6. What it CAN do is stop asking. `--host-resolver-rules=MAP <host> ~NOTFOUND`
+   * makes the lookup fail immediately instead of opening a doomed connection every few
+   * seconds.
+   *
+   * REMOVE THE ENTRY when DeepSeek publishes an A record for it, or when the machine gets
+   * IPv6 — at that point the beacon would start working and this would be suppressing real
+   * traffic. That is also why it lives on the platform descriptor rather than beside the
+   * `appendSwitch` call: it is a fact about the SITE, and it should be deleted by whoever
+   * next edits the site's descriptor.
+   */
+  unresolvableHosts: string[]
   /** Injected-page descriptor, as JSON-serialisable data. */
   page: PageAdapter
 }
@@ -215,6 +244,8 @@ export const CHATGPT_PLATFORM: ChatPlatform = {
     'a[data-sidebar-item][href^="/c/"], a[href^="/c/"]',
     '/c/'
   ),
+  // Nothing known to be unreachable: ChatGPT's hosts all resolve over IPv4.
+  unresolvableHosts: [],
   page: CHATGPT_PAGE
 }
 
@@ -289,6 +320,14 @@ export const DEEPSEEK_PLATFORM: ChatPlatform = {
   },
   conversationUrl: (id) => `https://chat.deepseek.com/a/chat/s/${id}`,
   sidebarScript: SIDEBAR_SCRIPT_BY_DEFAULT('a[href^="/a/chat/s/"]', '/a/chat/s/'),
+  /*
+   * Measured with DSH_NET_LOG=1: this host produced 24 `net_error -100` failures over 149
+   * seconds, i.e. one doomed TLS handshake every ~6.5 seconds, while every other host the
+   * page uses completed normally. It has AAAA records only, and this machine has no IPv6
+   * default route — so it can never connect. See the field's own comment for when to delete
+   * this.
+   */
+  unresolvableHosts: ['hif-dliq.deepseek.com'],
   page: DEEPSEEK_PAGE
 }
 

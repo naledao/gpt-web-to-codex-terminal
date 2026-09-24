@@ -119,6 +119,19 @@ npm run dev
   并且**它只有 AAAA（IPv6）记录、根本没有 A 记录**。
   所以那不是本应用的代理设置问题，也不是能靠改代码修好的东西。
   **怀疑代理之前，先看同一份输出里其他主机成不成功。**
+  本轮随后实测本机：**没有 IPv6 默认路由、没有全局 IPv6 地址** —— `-109`
+  （`ERR_ADDRESS_UNREACHABLE`）打在 Google DoH `[2001:4860:4860::8888]:443` 上就是同一个原因。
+  一个只有 IPv6 的对端 + 一台没有 IPv6 的机器 = 永远连不上。
+  这个噪音已经用 `--host-resolver-rules=MAP hif-dliq.deepseek.com ~NOTFOUND` 消掉，
+  声明在 `ChatPlatform.unresolvableHosts` 上（**不是散在 `appendSwitch` 旁边**：
+  这是"关于那个网站的事实"，该由下一个改该网站描述符的人来删）。
+  - `~NOTFOUND` 是 Chromium 专门为此加的写法（crbug 12481010），不是猜的。
+  - **必须用 `app.commandLine.appendArgument`，不能用 `appendSwitch`** ——
+    规则文本里有空格，`--host-resolver-rules=MAP a ~NOTFOUND` 必须是**一个**命令行 token，
+    拆开就静默失效。改完去 `out/main/index.js` 里确认拼出来的字符串。
+  - **该主机对页面完全无影响**（实测：DOM 无报错字样、侧栏和消息列表照常更新），
+    所以消音是纯收益；但它是"我们主动不去解析一个域名"，
+    **对面哪天有 A 记录了、或本机有了 IPv6，就要把这条删掉**。
 
 ## 常用命令
 

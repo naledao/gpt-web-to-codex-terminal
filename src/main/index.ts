@@ -48,6 +48,26 @@ import { installAppLog, installNetLog } from './app-log'
 const netLogFile = installNetLog()
 const appLogFile = installAppLog()
 
+/*
+ * Stop Chromium from dialling hosts that a platform declares unreachable from this machine.
+ *
+ * `hif-dliq.deepseek.com` is IPv6-only and this machine has no IPv6 route, so the page's
+ * background beacon to it failed every ~6.5s and Chromium printed a `net_error -100` line that
+ * names no host — 24 of them in one 149-second run, all from that one destination. Nothing the
+ * app can do makes the host reachable; it can only stop asking. See the field's comment on
+ * `ChatPlatform` for why it is declared there, and for when to delete it.
+ *
+ * Must run before `app.whenReady()`, like the net log: the host resolver is built during
+ * startup and this switch is read once.
+ */
+const unresolvableHosts = CHAT_PLATFORMS.flatMap((platform) => platform.unresolvableHosts)
+if (unresolvableHosts.length > 0) {
+  const rules = unresolvableHosts.map((host) => `MAP ${host} ~NOTFOUND`).join(', ')
+  // `appendArgument` rather than `appendSwitch`: the rule text contains spaces, and
+  // `--host-resolver-rules=MAP a ~NOTFOUND` has to stay ONE command-line token.
+  app.commandLine.appendArgument(`--host-resolver-rules=${rules}`)
+}
+
 const rendererDevServerUrl = process.env['ELECTRON_RENDERER_URL']
 const isDev = !app.isPackaged
 const SETTING_EXECUTION_MODE = 'executionMode'
@@ -530,6 +550,15 @@ if (!app.requestSingleInstanceLock()) {
     if (netLogFile) {
       console.info(`[app] network log (tens of MB) → ${netLogFile}`)
       console.info('[app] analyse it with: node tools/diag/analyse-net-log.mjs "<that file>"')
+    }
+    /*
+     * Say it out loud. A resolver rule that fails to apply is invisible — the only symptom is
+     * the log noise coming back — so the run states which hosts it silenced, and why.
+     */
+    if (unresolvableHosts.length > 0) {
+      console.info(
+        `[app] not resolving (IPv6-only, unreachable from here): ${unresolvableHosts.join(', ')}`
+      )
     }
 
     const conversationStore = new ConversationStore(join(app.getPath('userData'), 'conversations.db'))
