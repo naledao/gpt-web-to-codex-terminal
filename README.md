@@ -888,18 +888,18 @@ $env:DSH_APP_LOG='1'; $env:DSH_NET_LOG='1'; npm run dev
 
 Both are off by default. The app log is not always-on because the embed's console output
 can carry page content; the net log is separate because of its size and because it records
-sensitive URLs. Enable them, reproduce the problem, then quit the app — the file is only
-complete once the process exits.
+sensitive URLs. Enable them, reproduce the problem, then read the files — the app log is
+written as it happens, and the net log can be analysed while the app is still running.
 
 Reduce a net log to its failures:
 
 ```powershell
-node tools\diag\analyse-net-log.mjs "$env:APPDATA\<app name>\logs\netlog-<timestamp>.json"
+node tools\diag\analyse-net-log.mjs "$env:APPDATA\GPT Web to Codex Terminal\logs\netlog-<timestamp>.json"
 ```
 
-It pairs each `SSL_HANDSHAKE_ERROR` / `URL_REQUEST_FAILED` with the URL request that owns
-it and prints the failures grouped by host, which is the only practical way to turn a bare
-`handshake failed; returned -1, SSL error code 1, net_error -100` into a hostname. Delete
-the files when the investigation is over — they name every site visited and, in
+It attributes each failed TLS handshake / request to the destination it belongs to and prints
+the failures grouped by host, which is the only practical way to turn a bare
+`handshake failed; returned -1, SSL error code 1, net_error -100` into a hostname. Delete the
+files when the investigation is over — they name every site visited and, in
 `IncludeSensitive` mode, the URLs themselves.
 

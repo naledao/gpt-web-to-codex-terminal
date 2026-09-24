@@ -205,46 +205,77 @@ are embedded at once (`chatgpt.com`, `chat.deepseek.com`), so the line alone can
 acted on — it does not even say whether the failure is in the embed, in an OAuth hop, or
 in an update check.
 
-The net log does have the answer: it records each URL request, each socket, and the
-`SSL_HANDSHAKE_ERROR` attached to them. This script pairs a failure event with the URL
-request it belongs to (through the shared `source.id`) and groups the results by host.
+The net log does have the answer — but **not in the place it looks like**. See "Why it does not
+read the event-type table" below.
 
 ### Run it
 
 Record a run with the net log on (see the README's "Recording a run to a file"), reproduce
-the problem for ~30 seconds, quit the app, then:
+the problem, then:
 
 ```powershell
-node tools\diag\analyse-net-log.mjs "$env:APPDATA\gpt-web-to-codex-terminal\logs\netlog-<timestamp>.json"
+node tools\diag\analyse-net-log.mjs "$env:APPDATA\GPT Web to Codex Terminal\logs\netlog-<timestamp>.json"
 ```
 
-(Adjust the app name if `app.getName()` differs; the app prints the exact path at startup
-when `DSH_NET_LOG=1` is set.)
+The app prints the exact path at startup when `DSH_NET_LOG=1` is set.
+
+**The app does not have to be closed first.** The `constants` block (the event-type table) is
+written **last, when Chromium closes the log**, so a running app's file contains no type names
+at all — but host attribution does not need them. Analysing a live file is therefore fine, and
+usually better: you see the failure while it is still happening.
 
 Output:
 
 ```
-events: 41233   url requests: 918   failures: 37
+events: 7020   destinations seen: 197   failures: 86
+note: the event-type table is still being written (the app is running, or was killed),
+      so rows are labelled by numeric type. Host attribution is unaffected — it is
+      structural, not table-driven.
 
 failures by host:
 
-  chat.deepseek.com   (37 failures)   net_error -100
-      https://chat.deepseek.com/api/v0/chat/…
+  hif-dliq.deepseek.com   (18 failures over 46.5s)   net_error -100
+      events: type117, type134, type2
+      repeating every ~2.7s
 ```
 
-A full per-failure list is also written to
-`%TEMP%\net-log-failures-<timestamp>.txt` — the grouped summary is deliberately short
-enough to read in one go, and the file is there when it is not.
+A full per-failure list is also written to `%TEMP%\net-log-failures-<timestamp>.txt`.
+
+### Why it does not read the event-type table
+
+The obvious design — parse `constants.logEventTypes`, then match on names — **produces a silent
+wrong answer on any file from a running app**, which is the normal case: the block is an
+unterminated JSON object until the log is closed, `JSON.parse` throws, and the first version of
+this script fell back to placeholder type names and reported
+
+```
+events: 6289   url requests: 0   failures: 0
+```
+
+against a file that was in fact full of failures. A diagnostic that reports "nothing wrong"
+because it could not read its own input is worse than no diagnostic at all.
+
+So the host is recovered **structurally**: a connection's destination rides on the
+`HTTP_STREAM_JOB` event as `params.destination` (a full URL), and every event of that
+connection names its owning source by `source.id`. Matching any event with a negative
+`params.net_error` against that map attributes each failure to a host without decoding a
+single type id.
+
+Rows reading `(no destination recorded for this connection)` are printed rather than dropped —
+those are DNS/socket-level failures with no URL yet, and silently hiding them would repeat
+exactly the mistake above.
 
 ### Notes
 
 - **`net_error -100` is `ERR_CONNECTION_CLOSED`**, and `SSL error code 1` means the TLS
   handshake was cut off mid-flight. It is not a certificate problem (that would be
-  `-200`–`-299`). The usual cause is a proxy closing the tunnel, which is why the *host*
-  matters: it says whether the proxy is dropping everything or one destination.
+  `-200`–`-299`). The usual cause is the peer — or a proxy — closing the tunnel, which is why
+  the *host* matters: it says whether everything is failing or one destination is.
+- **One host failing while the rest work is not a proxy misconfiguration.** In the run above,
+  `chat.deepseek.com` and `chatgpt.com` both completed TLS through the same proxy while
+  `hif-dliq.deepseek.com` was reset every time — including when dialled **directly, with no
+  proxy in the path**. Read the other rows before touching the proxy settings.
 - **It reads the file and prints the summary; it never writes into the repo.**
-- The net log is written by Chromium and is only complete after the process exits — a file
-  read while the app is running will be truncated and report fewer failures than happened.
 - **Delete the log afterwards.** With `net-log-capture-mode=IncludeSensitive` it holds full
   URLs, and some of them carry tokens.
 

@@ -100,6 +100,25 @@ npm run dev
   真 bug（把 `.0`/`.1` 当成两个不同 cookie 而拒绝）被淹没在噪声里。真实令牌分块是
   **每块约 3.3 KB**——NextAuth 只在超过浏览器 ~4 KB 上限时才分块。数据不真实时，
   测试既抓不到真 bug，也会给出假 bug。
+- **Chromium 的 net log 里，`constants` 块是关文件时最后才写的。** 所以**应用还在跑的时候，
+  那个文件里没有任何事件类型名字**——`constants` 是一个**没有闭合的 JSON 对象**，
+  `JSON.parse` 直接抛异常。
+  - 踩过的坑：分析脚本按"读 `constants.logEventTypes` 再按名字匹配"来写，于是退回
+    `type117` 这类占位名，对着一份**满是失败**的 net log 报出
+    `events: 6289   url requests: 0   failures: 0`。**一个读不懂输入却报"一切正常"的诊断，
+    比没有诊断更糟**——差一点就据此去改代理设置了。
+  - **正确做法是结构化取主机名，不依赖类型表**：连接的目标挂在 `HTTP_STREAM_JOB` 事件的
+    `params.destination`（是完整 URL），而同一个连接的所有事件都用 `source.id` 指向自己。
+    拿"带负数 `params.net_error`"的事件去这张表里查即可，**一个类型 id 都不用解**。
+  - 取不到目标的失败要**显式打印成 `(no destination recorded …)`**，不能丢掉：
+    那是 DNS/socket 层的失败，藏起来就是重犯上面那个错。
+  - 推论：`net log` **不需要等应用退出**就能分析。以前写在文档里的"必须退出后才完整"是错的。
+- **一个主机失败、其余都正常 ≠ 代理配错了。** `hif-dliq.deepseek.com` 那次的实测：
+  `chat.deepseek.com` 和 `chatgpt.com` 走同一个代理**都握手成功**，只有
+  `hif-dliq.deepseek.com` 每次都被 reset —— **而且不走代理、直连也一样被 reset**，
+  并且**它只有 AAAA（IPv6）记录、根本没有 A 记录**。
+  所以那不是本应用的代理设置问题，也不是能靠改代码修好的东西。
+  **怀疑代理之前，先看同一份输出里其他主机成不成功。**
 
 ## 常用命令
 
