@@ -870,3 +870,36 @@ npm run dev
 Note it can be present in the real environment block while being absent from
 `Get-ChildItem env:`, so verify with `node -p "process.env.ELECTRON_RUN_AS_NODE"`.
 
+## Recording a run to a file
+
+`console.warn` in the main process goes to a console nobody keeps, and Chromium's own
+network errors name no host at all — a pasted copy of the terminal is often not enough
+to tell **which** request died. Two opt-in flags write the run to
+`<userData>/logs/` instead. `userData` is `%APPDATA%\<app name>` on Windows.
+
+| Flag | Writes | Cost |
+| --- | --- | --- |
+| `DSH_APP_LOG=1` | every `console.*` line, raw stdout/stderr, uncaught exceptions and unhandled rejections, into `logs\<timestamp>.log` | one file, page content may appear in it |
+| `DSH_NET_LOG=1` | Chromium's complete net log (URL, error, proxy resolution per request) into `logs\netlog-<timestamp>.json` | tens of megabytes; every URL the session touched |
+
+```powershell
+$env:DSH_APP_LOG='1'; $env:DSH_NET_LOG='1'; npm run dev
+```
+
+Both are off by default. The app log is not always-on because the embed's console output
+can carry page content; the net log is separate because of its size and because it records
+sensitive URLs. Enable them, reproduce the problem, then quit the app — the file is only
+complete once the process exits.
+
+Reduce a net log to its failures:
+
+```powershell
+node tools\diag\analyse-net-log.mjs "$env:APPDATA\<app name>\logs\netlog-<timestamp>.json"
+```
+
+It pairs each `SSL_HANDSHAKE_ERROR` / `URL_REQUEST_FAILED` with the URL request that owns
+it and prints the failures grouped by host, which is the only practical way to turn a bare
+`handshake failed; returned -1, SSL error code 1, net_error -100` into a hostname. Delete
+the files when the investigation is over — they name every site visited and, in
+`IncludeSensitive` mode, the URLs themselves.
+

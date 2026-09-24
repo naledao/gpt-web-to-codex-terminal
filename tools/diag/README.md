@@ -192,6 +192,62 @@ Log: `%TEMP%\gpt-login-diag\deepseek-<timestamp>.log`
 | `message containers:` | candidate thread containers with child tag/class and text length |
 | `sidebar links` | conversation links, for the "sync conversations" feature |
 
+## analyse-net-log.mjs
+
+**The question this answers:** Chromium keeps printing
+
+```
+handshake failed; returned -1, SSL error code 1, net_error -100
+```
+
+every 2–4 seconds from the same process, and the message **names no host**. Two platforms
+are embedded at once (`chatgpt.com`, `chat.deepseek.com`), so the line alone cannot be
+acted on — it does not even say whether the failure is in the embed, in an OAuth hop, or
+in an update check.
+
+The net log does have the answer: it records each URL request, each socket, and the
+`SSL_HANDSHAKE_ERROR` attached to them. This script pairs a failure event with the URL
+request it belongs to (through the shared `source.id`) and groups the results by host.
+
+### Run it
+
+Record a run with the net log on (see the README's "Recording a run to a file"), reproduce
+the problem for ~30 seconds, quit the app, then:
+
+```powershell
+node tools\diag\analyse-net-log.mjs "$env:APPDATA\gpt-web-to-codex-terminal\logs\netlog-<timestamp>.json"
+```
+
+(Adjust the app name if `app.getName()` differs; the app prints the exact path at startup
+when `DSH_NET_LOG=1` is set.)
+
+Output:
+
+```
+events: 41233   url requests: 918   failures: 37
+
+failures by host:
+
+  chat.deepseek.com   (37 failures)   net_error -100
+      https://chat.deepseek.com/api/v0/chat/…
+```
+
+A full per-failure list is also written to
+`%TEMP%\net-log-failures-<timestamp>.txt` — the grouped summary is deliberately short
+enough to read in one go, and the file is there when it is not.
+
+### Notes
+
+- **`net_error -100` is `ERR_CONNECTION_CLOSED`**, and `SSL error code 1` means the TLS
+  handshake was cut off mid-flight. It is not a certificate problem (that would be
+  `-200`–`-299`). The usual cause is a proxy closing the tunnel, which is why the *host*
+  matters: it says whether the proxy is dropping everything or one destination.
+- **It reads the file and prints the summary; it never writes into the repo.**
+- The net log is written by Chromium and is only complete after the process exits — a file
+  read while the app is running will be truncated and report fewer failures than happened.
+- **Delete the log afterwards.** With `net-log-capture-mode=IncludeSensitive` it holds full
+  URLs, and some of them carry tokens.
+
 ## Cleanup
 
 Delete `%TEMP%\gpt-login-diag` when the investigation is over — the logs name the

@@ -27,6 +27,37 @@ import { app } from 'electron'
 const FLAG = 'DSH_APP_LOG'
 const DIR_NAME = 'logs'
 
+/**
+ * Set `DSH_NET_LOG=1` to have Chromium write its full network log, which is the only way to
+ * learn WHICH request produced a bare `handshake failed … net_error -100`.
+ *
+ * Chromium's console message for a failed TLS handshake names no host, and two platforms are
+ * embedded at once — so the message alone cannot be acted on. The net log carries the URL, the
+ * error and the proxy resolution for every request; `analyseNetLog` reduces it to the failures.
+ *
+ * Separate flag from `DSH_APP_LOG` on purpose: the net log is tens of megabytes and contains
+ * every URL the session touched, so it should be asked for explicitly.
+ */
+const NET_LOG_FLAG = 'DSH_NET_LOG'
+
+/** Enabled alongside the app log; the file lands in the same directory. */
+export function installNetLog(): string | null {
+  if (process.env[NET_LOG_FLAG] !== '1') return null
+  const dir = join(app.getPath('userData'), DIR_NAME)
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch {
+    return null
+  }
+  const now = new Date()
+  const name = `netlog-${now.toISOString().replace(/[:.]/g, '-')}.json`
+  const file = join(dir, name)
+  // Must be set before the network service starts; callers do this at import time.
+  app.commandLine.appendSwitch('log-net-log', file)
+  app.commandLine.appendSwitch('net-log-capture-mode', 'IncludeSensitive')
+  return file
+}
+
 let logFile: string | null = null
 let installed = false
 

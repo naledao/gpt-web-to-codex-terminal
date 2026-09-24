@@ -37,14 +37,15 @@ import type {
 import { embedAuthState, importSessionToken, previewSessionImport } from './session-import'
 import { ConversationStore } from './db'
 import { EMPTY_SSH_STATE, SessionRuntime } from './session-runtime'
-import { installAppLog } from './app-log'
+import { installAppLog, installNetLog } from './app-log'
 
 /*
  * Before anything else, so a failure during startup is itself recorded.
  *
- * Off unless `DSH_APP_LOG=1`. The path is printed below because a log nobody can find is the
- * same as no log — which is what made the last few rounds cost a terminal copy each time.
+ * Both are off unless their flag is set. `installNetLog` must run before the network service
+ * starts, which is why it lives here rather than inside `whenReady`.
  */
+const netLogFile = installNetLog()
 const appLogFile = installAppLog()
 
 const rendererDevServerUrl = process.env['ELECTRON_RENDERER_URL']
@@ -525,6 +526,10 @@ if (!app.requestSingleInstanceLock()) {
     if (appLogFile) {
       console.info(`[app] logging this run to ${appLogFile}`)
       console.info(`[app] sessions are restored below; each prints its platform and url`)
+    }
+    if (netLogFile) {
+      console.info(`[app] network log (tens of MB) → ${netLogFile}`)
+      console.info('[app] analyse it with: node tools/diag/analyse-net-log.mjs "<that file>"')
     }
 
     const conversationStore = new ConversationStore(join(app.getPath('userData'), 'conversations.db'))
