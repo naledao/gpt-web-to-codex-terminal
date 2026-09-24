@@ -125,6 +125,13 @@ body {
    * It still shrinks (`flex-shrink: 1`) so a narrow window degrades instead of overflowing.
    */
   flex: 0 1 360px;
+  /*
+   * `margin-left: auto` pulls the address, the model select and the gear together into one
+   * group at the right end of the bar, leaving the navigation buttons alone on the left. The
+   * auto margin absorbs the slack that nothing else takes, which is what keeps the three of
+   * them adjacent instead of spread across the width.
+   */
+  margin-left: auto;
   min-width: 0;
   display: flex;
 }
@@ -1088,12 +1095,10 @@ body {
 .toolbar__settings {
   flex: none;
   /*
-   * The gear is pinned to the right end of the bar, and this is load-bearing rather than
-   * decorative: the address field is capped rather than greedy, so without it everything in the
-   * toolbar would bunch up on the left. `margin-left: auto` absorbs the slack, which also means
-   * the model select beside it ends up just left of the gear wherever the window is resized to.
+   * NO `margin-left: auto` here. The slack is absorbed by `.address` instead, which is what
+   * groups the address, the model select and this gear together at the right end. Two auto
+   * margins would split the free space and push a gap between the select and the gear.
    */
-  margin-left: auto;
   width: 28px;
   height: 28px;
   border-radius: 6px;
