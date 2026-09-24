@@ -290,6 +290,29 @@ export class ChatGptEmbed {
       this.handlePageReport(details.message)
     })
 
+    /*
+     * Name the failures.
+     *
+     * Chromium prints `handshake failed … net_error -100` with NO host, which is not enough
+     * to act on — two platforms are embedded at once and either could be the one dying. These
+     * events carry the URL, so a log can answer "which request, to where".
+     */
+    contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+      // -3 is ERR_ABORTED: a navigation superseded by another, which is routine here.
+      if (code === -3) return
+      console.warn(
+        `[embed:${this.platform.id}] load failed ${code} ${description} ` +
+          `${isMainFrame ? 'main' : 'sub'} ${url}`
+      )
+    })
+    contents.on('did-fail-provisional-load', (_event, code, description, url) => {
+      if (code === -3) return
+      console.warn(`[embed:${this.platform.id}] provisional load failed ${code} ${description} ${url}`)
+    })
+    contents.on('certificate-error', (_event, url, error) => {
+      console.warn(`[embed:${this.platform.id}] certificate error ${error} ${url}`)
+    })
+
     // Re-inject on every full page load; client-side route changes keep the
     // document-level listeners installed by the previous run.
     contents.on('did-finish-load', () => {

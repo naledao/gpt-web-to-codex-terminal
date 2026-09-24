@@ -37,6 +37,15 @@ import type {
 import { embedAuthState, importSessionToken, previewSessionImport } from './session-import'
 import { ConversationStore } from './db'
 import { EMPTY_SSH_STATE, SessionRuntime } from './session-runtime'
+import { installAppLog } from './app-log'
+
+/*
+ * Before anything else, so a failure during startup is itself recorded.
+ *
+ * Off unless `DSH_APP_LOG=1`. The path is printed below because a log nobody can find is the
+ * same as no log — which is what made the last few rounds cost a terminal copy each time.
+ */
+const appLogFile = installAppLog()
 
 const rendererDevServerUrl = process.env['ELECTRON_RENDERER_URL']
 const isDev = !app.isPackaged
@@ -204,6 +213,11 @@ function createSession(
   })
   runtimes.set(runtime.id, runtime)
   persistManagedSession(runtime)
+  // One line per session, naming the site and the URL: when two platforms are embedded at
+  // once, "which view is failing" is the first question a log has to be able to answer.
+  console.info(
+    `[session] created ${runtime.id.slice(0, 8)} platform=${platform.id} url=${restored?.url || platform.homeUrl}`
+  )
   if (managerWindow && !managerWindow.isDestroyed()) runtime.attach(managerWindow)
   broadcastManagedSessions()
   if (activate) selectSession(runtime.id, kind === 'ssh')
@@ -507,6 +521,11 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     if (process.platform === 'win32') app.setAppUserModelId('com.example.gptweb2codexterminal')
+
+    if (appLogFile) {
+      console.info(`[app] logging this run to ${appLogFile}`)
+      console.info(`[app] sessions are restored below; each prints its platform and url`)
+    }
 
     const conversationStore = new ConversationStore(join(app.getPath('userData'), 'conversations.db'))
     store = conversationStore
