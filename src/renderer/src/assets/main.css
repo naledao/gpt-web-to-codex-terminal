@@ -39,7 +39,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 288px;
+  grid-template-columns: auto minmax(0, 1fr) var(--panel-width, 288px);
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     'topbar   topbar topbar'
@@ -210,11 +210,28 @@ body {
 
 .panel {
   grid-area: panel;
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: var(--bg-chrome);
   border-left: 1px solid var(--border);
+}
+
+/* Grab strip along the left edge; the panel grows to the left. */
+.panel__resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 1;
+}
+
+.panel__resizer:hover {
+  background: var(--accent-soft);
 }
 .panel__collapse-head {
   flex: none;

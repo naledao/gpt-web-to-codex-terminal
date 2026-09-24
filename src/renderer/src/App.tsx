@@ -35,6 +35,9 @@ const INITIAL_EMBED_STATE: EmbedState = {
 
 const TERMINAL_MIN_WIDTH = 220
 const TERMINAL_DEFAULT_WIDTH = 400
+const PANEL_MIN_WIDTH = 220
+const PANEL_DEFAULT_WIDTH = 288
+const PANEL_MAX_RESERVE = 520
 
 function toFilemanagerEntities(entries: SshFileEntry[]): FilemanagerEntity[] {
   return entries.map((entry) => ({
@@ -126,6 +129,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [editing, setEditing] = useState(false)
   const [terminalWidth, setTerminalWidth] = useState(TERMINAL_DEFAULT_WIDTH)
   const [terminalCollapsed, setTerminalCollapsed] = useState(false)
+  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH)
   const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [switchingPlatform, setSwitchingPlatform] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1074,6 +1078,31 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     [terminalWidth]
   )
 
+  /** Drag the conversation panel's left edge to resize that column. */
+  const startPanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      event.preventDefault()
+      const startX = event.clientX
+      const startWidth = panelWidth
+
+      const onMove = (moveEvent: PointerEvent): void => {
+        // The panel sits on the RIGHT, so dragging left makes it wider.
+        const next = startWidth - (moveEvent.clientX - startX)
+        // Leave room for the terminal and the chat view.
+        const max = Math.max(PANEL_MIN_WIDTH, window.innerWidth - PANEL_MAX_RESERVE)
+        setPanelWidth(Math.min(Math.max(next, PANEL_MIN_WIDTH), max))
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+      }
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [panelWidth]
+  )
+
   const removeConversation = useCallback(
     async (event: MouseEvent, id: string): Promise<void> => {
       // The row itself navigates; the delete button must not trigger that.
@@ -1088,7 +1117,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   )
 
   return (
-    <div className={panelCollapsed ? 'app app--panel-collapsed' : 'app'} style={{ '--terminal-width': `${terminalWidth}px` } as CSSProperties}>
+    <div className={panelCollapsed ? 'app app--panel-collapsed' : 'app'} style={{ '--terminal-width': `${terminalWidth}px`, '--panel-width': `${panelWidth}px` } as CSSProperties}>
       <header className="topbar">
         <div className="brand">
           <span className="brand__mark">GPT</span>
@@ -1193,6 +1222,15 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       </main>
 
       <aside className={panelCollapsed ? 'panel panel--collapsed' : 'panel'}>
+        {panelCollapsed ? null : (
+          <div
+            className="panel__resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整侧栏宽度"
+            onPointerDown={startPanelResize}
+          />
+        )}
         <div className="panel__collapse-head">
           {panelCollapsed ? null : <span className="panel__title">侧栏</span>}
           <span className="panel__spacer" />
