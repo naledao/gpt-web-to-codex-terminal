@@ -694,6 +694,15 @@ export interface InterceptorPageEvent {
   text?: string
   enabled?: boolean
   prefixLength?: number
+  /**
+   * Opening words of the prompt the PAGE holds, on `injected`.
+   *
+   * The prompt is stored per view in the main process, so the page can end up configured with an
+   * older or generic one. Comparing this with main's own prefix is the only way to see that from
+   * a log — otherwise the symptom is just "messages go out without the prompt", which is
+   * indistinguishable from terminal mode being off.
+   */
+  prefixHead?: string
   /** Present on `command` events. */
   messageId?: string
   command?: string

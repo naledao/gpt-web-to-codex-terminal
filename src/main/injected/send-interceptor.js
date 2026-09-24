@@ -606,7 +606,25 @@
 
     draftRejected = false
     state.injectedCount += 1
-    report({ event: 'injected', count: state.injectedCount })
+    /*
+     * The prefix is reported alongside the count, not just the fact of injection.
+     *
+     * The prompt is stored PER VIEW in the main process, so "this page was configured with the
+     * wrong (generic fallback) prompt" is a real failure mode — and from the outside it looks
+     * exactly like terminal mode being off. Sending the length and the opening words makes the
+     * question answerable from the log instead of by reading the composer and guessing.
+     */
+    report({
+      event: 'injected',
+      count: state.injectedCount,
+      prefixLength: state.prefix.length,
+      /*
+       * A LONG head, because the opening of the prompt is boilerplate that both the probed
+       * prompt and the generic fallback share — the machine-specific lines come later. A short
+       * prefix would report "MATCH" while the page was in fact describing the wrong machine.
+       */
+      prefixHead: collapse(state.prefix).slice(0, 220)
+    })
     setTimeout(() => submitWithRetry(composed, 0, false), 60)
     return true
   }

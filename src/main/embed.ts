@@ -727,11 +727,35 @@ export class ChatGptEmbed {
 
     switch (payload.event) {
       case 'installed':
+        this.interceptor.installed = true
+        break
       case 'configured':
         this.interceptor.installed = true
+        /*
+         * The page reports the prompt it was just given, every time it is configured. Logged for
+         * the same reason as `injected` below: the prompt lives per view, so "the page holds an
+         * older or generic prompt" is a silent failure otherwise.
+         */
+        console.info(
+          `[embed:${this.platform.id}] configured enabled=${payload.enabled} ` +
+            `page-prompt=${payload.prefixLength ?? '?'} main-prompt=${this.interceptor.prefix.length} ` +
+            `${payload.prefixLength === this.interceptor.prefix.length ? 'MATCH' : 'MISMATCH'}`
+        )
         break
       case 'injected':
         this.interceptor.injectedCount += 1
+        /*
+         * Log which prompt the PAGE actually holds, and compare it with what main thinks it
+         * pushed. The two can diverge because the prefix lives per view: a view created before
+         * the environment probe, or reconfigured while it had no live contents, keeps the
+         * generic fallback — and the only visible symptom is messages going out un-prefixed.
+         */
+        console.info(
+          `[embed:${this.platform.id}] injected #${this.interceptor.injectedCount} ` +
+            `page-prompt=${payload.prefixLength ?? '?'} main-prompt=${this.interceptor.prefix.length} ` +
+            `page-head=${JSON.stringify(payload.prefixHead ?? '')} ` +
+            `${payload.prefixLength === this.interceptor.prefix.length ? 'MATCH' : 'MISMATCH'}`
+        )
         break
       case 'sent':
         this.interceptor.lastSentText = payload.text ?? null

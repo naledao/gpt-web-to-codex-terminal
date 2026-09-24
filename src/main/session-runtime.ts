@@ -391,6 +391,17 @@ export class SessionRuntime {
     // The renderer measured the slot long before this view existed; see `lastBounds`.
     if (this.lastBounds) entry.embed.setBounds(this.lastBounds)
     entry.embed.setBaselinePolicy(this.runner?.getAutomation().mode === 'auto')
+    /*
+     * A NEW EMBED STARTS WITH THE FALLBACK PROMPT, so the runtime's real one has to be pushed
+     * into it here.
+     *
+     * `ChatGptEmbed` holds the prefix per view, and every other call site pushes it to the
+     * ACTIVE view (`this.embed.setPromptPrefix(...)`). A view created later therefore keeps the
+     * generic fallback — which does not describe this machine — and switching to it would
+     * inject the wrong prompt, or (when the fallback is identical to what the page already has)
+     * look like nothing was injected at all.
+     */
+    entry.embed.setPromptPrefix(buildTerminalPrefix(this.environment))
     return entry
   }
 
@@ -440,8 +451,29 @@ export class SessionRuntime {
     // Created here on first switch, and kept alive after that so its conversation survives.
     const created = this.ensureEmbed(platformId)
     const embed = created.embed as ChatGptEmbed
+    /*
+     * Re-pushed on every switch, not just at creation: this view may have been created before
+     * the last environment probe or SSH handover, in which case its copy of the prompt is stale
+     * and the page would inject a description of the wrong machine.
+     */
+    embed.setPromptPrefix(buildTerminalPrefix(this.environment))
     this.applyVisibility()
     void embed.armCommandBaseline()
+    /*
+     * One line naming the platform, the prompt length, and whether the environment behind it is
+     * the real probe result or the generic fallback.
+     *
+     * The prompt is stored per view, so "this view has the wrong prompt" has no symptom other
+     * than messages going out un-prefixed — which looks exactly like terminal mode being off.
+     * `detected` is what separates a probed machine from `FALLBACK_ENVIRONMENT`; the length
+     * alone does not, because the two can coincide.
+     */
+    const prefix = buildTerminalPrefix(this.environment)
+    console.info(
+      `[session] ${this.id.slice(0, 8)} switched to ${entry.platform.label} ` +
+        `(prompt=${prefix.length} detected=${this.environment.detected} ` +
+        `os=${JSON.stringify(this.environment.osCaption)})`
+    )
     /*
      * Push the new view's state immediately instead of waiting for its next event: a page that
      * is already loaded and idle emits nothing, so the address bar and the interceptor panel
