@@ -1,12 +1,12 @@
 import { Client } from 'ssh2'
 import type { ClientChannel, SFTPWrapper } from 'ssh2'
 import { randomUUID } from 'node:crypto'
-import { unlink } from 'node:fs/promises'
+import { stat, unlink } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { Socket } from 'node:net'
 import { basename, posix } from 'node:path'
-import type { SshDownloadTask, SshFileEntry, SshState, TerminalLine } from '../shared/types'
+import type { SshDownloadTask, SshFileEntry, SshState, SshUploadTask, TerminalLine } from '../shared/types'
 import { REMOTE_SHELL_COMMAND, RemoteShell } from './remote-shell'
 
 /** Strips ANSI/VT escape sequences — there is no terminal emulator to render them. */
@@ -149,10 +149,14 @@ export class SshManager {
   private readonly downloads = new Map<string, SshDownloadTask>()
   private readonly downloadChannels = new Map<string, SFTPWrapper>()
   private readonly downloadEmitAt = new Map<string, number>()
+  private readonly uploads = new Map<string, SshUploadTask>()
+  private readonly uploadChannels = new Map<string, SFTPWrapper>()
+  private readonly uploadEmitAt = new Map<string, number>()
 
   constructor(
     private readonly onChanged: (state: SshState) => void,
-    private readonly onDownloadsChanged: (items: SshDownloadTask[]) => void
+    private readonly onDownloadsChanged: (items: SshDownloadTask[]) => void,
+    private readonly onUploadsChanged: (items: SshUploadTask[]) => void
   ) {}
 
   getState(): SshState {
@@ -488,10 +492,16 @@ export class SshManager {
   private emitDownloads(): void {
     this.onDownloadsChanged(this.getDownloads())
   }
-  /** Upload local files into the model shell's current remote directory over SFTP. */
-  async uploadFiles(localPaths: string[]): Promise<SshState> {
-    const client = this.client
-    if (!client || this.state.status !== 'connected') {
+  /** Current and recently finished uploads, newest first. */
+  getUploads(): SshUploadTask[] {
+    return [...this.uploads.values()]
+      .sort((a, b) => b.startedAt - a.startedAt)
+      .map((item) => ({ ...item }))
+  }
+
+  /** Start one task per selected file and return immediately. */
+  uploadFiles(localPaths: string[]): SshState {
+    if (!this.client || this.state.status !== 'connected') {
       this.pushLine('error', '当前没有已连接的 SSH 会话，无法上传文件。')
       this.emit()
       return this.getState()
@@ -501,33 +511,119 @@ export class SshManager {
     if (files.length === 0) return this.getState()
 
     const remoteDir = this.exec?.cwd || '.'
+    for (const localPath of files) {
+      const name = basename(localPath)
+      const task: SshUploadTask = {
+        id: randomUUID(),
+        name,
+        localPath,
+        remotePath: posix.join(remoteDir, name),
+        status: 'uploading',
+        transferred: 0,
+        total: 0,
+        startedAt: Date.now(),
+        finishedAt: null,
+        error: ''
+      }
+      this.uploads.set(task.id, task)
+      void this.runUpload(task.id)
+    }
     this.pushLine('notice', `正在上传 ${files.length} 个文件到 ${remoteDir}…`)
+    this.emitUploads()
     this.emit()
+    return this.getState()
+  }
 
+  /** Cancel one upload by closing its dedicated SFTP channel. */
+  cancelUpload(id: string): boolean {
+    const task = this.uploads.get(id)
+    if (!task || task.status !== 'uploading') return false
+    task.status = 'cancelled'
+    task.finishedAt = Date.now()
+    this.emitUploads()
     try {
-      const sftp = await new Promise<import('ssh2').SFTPWrapper>((resolve, reject) => {
+      this.uploadChannels.get(id)?.destroy()
+    } catch {
+      /* the transfer may already be closing */
+    }
+    return true
+  }
+
+  private async runUpload(id: string): Promise<void> {
+    const task = this.uploads.get(id)
+    const client = this.client
+    if (!task || !client) return
+
+    let sftp: SFTPWrapper | null = null
+    try {
+      const info = await stat(task.localPath)
+      if (task.status !== 'uploading') return
+      task.total = info.size
+      this.emitUploads()
+
+      sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
         client.sftp((error, channel) => (error ? reject(error) : resolve(channel)))
       })
+      if (task.status !== 'uploading') return
+      this.uploadChannels.set(id, sftp)
 
-      try {
-        for (const localPath of files) {
-          const name = basename(localPath)
-          const remotePath = posix.join(remoteDir, name)
-          await new Promise<void>((resolve, reject) => {
-            sftp.fastPut(localPath, remotePath, (error) => (error ? reject(error) : resolve()))
-          })
-          this.pushLine('notice', `已上传 ${name} → ${remotePath}`)
-          this.emit()
-        }
-      } finally {
-        sftp.end()
+      await new Promise<void>((resolve, reject) => {
+        sftp!.fastPut(
+          task.localPath,
+          task.remotePath,
+          {
+            fileSize: task.total,
+            step: (transferred, _chunk, total) => {
+              const active = this.uploads.get(id)
+              if (!active || active.status !== 'uploading') return
+              active.transferred = transferred
+              active.total = total
+              const now = Date.now()
+              const last = this.uploadEmitAt.get(id) ?? 0
+              if (now - last >= 100 || (total > 0 && transferred >= total)) {
+                this.uploadEmitAt.set(id, now)
+                this.emitUploads()
+              }
+            }
+          },
+          (error) => (error ? reject(error) : resolve())
+        )
+      })
+
+      const completed = this.uploads.get(id)
+      if (completed?.status === 'uploading') {
+        completed.status = 'completed'
+        completed.finishedAt = Date.now()
+        if (completed.total > 0) completed.transferred = completed.total
+        this.pushLine('notice', `已上传 ${completed.name} → ${completed.remotePath}`)
+        this.emitUploads()
+        this.emit()
       }
     } catch (error) {
-      this.pushLine('error', `上传失败：${(error as Error).message}`)
-      this.emit()
+      const failed = this.uploads.get(id)
+      if (failed?.status === 'uploading') {
+        failed.status = 'failed'
+        failed.finishedAt = Date.now()
+        failed.error = (error as Error).message
+        this.pushLine('error', `上传失败：${failed.name}：${failed.error}`)
+        this.emitUploads()
+        this.emit()
+      }
+    } finally {
+      this.uploadChannels.delete(id)
+      this.uploadEmitAt.delete(id)
+      if (sftp) {
+        try {
+          sftp.end()
+        } catch {
+          /* already closed */
+        }
+      }
     }
+  }
 
-    return this.getState()
+  private emitUploads(): void {
+    this.onUploadsChanged(this.getUploads())
   }
   /** Send one line to the remote shell. */
   write(text: string): void {
@@ -631,6 +727,9 @@ export class SshManager {
   private teardown(): void {
     for (const task of this.downloads.values()) {
       if (task.status === 'downloading') this.cancelDownload(task.id)
+    }
+    for (const task of this.uploads.values()) {
+      if (task.status === 'uploading') this.cancelUpload(task.id)
     }
 
     if (this.mirrorTimer) {

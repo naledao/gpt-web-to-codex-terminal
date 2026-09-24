@@ -19,6 +19,7 @@ import type {
   SshHostDraft,
   SshFileEntry,
   SshDownloadTask,
+  SshUploadTask,
   SshState,
   TerminalNotes,
   TerminalState
@@ -183,6 +184,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
   const [sshFilesLoading, setSshFilesLoading] = useState(false)
   const [sshFilesError, setSshFilesError] = useState('')
   const [sshDownloads, setSshDownloads] = useState<SshDownloadTask[]>([])
+  const [sshUploads, setSshUploads] = useState<SshUploadTask[]>([])
   const [sshDraft, setSshDraft] = useState<SshHostDraft>({
     id: null,
     name: '',
@@ -753,13 +755,17 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
     if (ssh?.status !== 'connected' || sshUploading) return
     setSshUploading(true)
     try {
+      const before = sshUploads.length
       setSsh(await window.api.uploadSshFiles())
+      const uploads = await window.api.getSshUploads()
+      setSshUploads(uploads)
+      if (uploads.length > before) setSshFilesOpen(true)
     } catch {
       /* upload errors are reported in the SSH transcript when possible */
     } finally {
       setSshUploading(false)
     }
-  }, [ssh?.status, sshUploading])
+  }, [ssh?.status, sshUploading, sshUploads.length])
   const initSshFilemanager = useCallback((api: FilemanagerApi): void => {
     api.on('request-data', (event) => {
       const id = String(event?.id ?? '/')
@@ -815,6 +821,14 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
   const cancelSshDownload = useCallback(async (id: string): Promise<void> => {
     try {
       await window.api.cancelSshDownload(id)
+    } catch {
+      /* pushed state remains authoritative */
+    }
+  }, [])
+
+  const cancelSshUpload = useCallback(async (id: string): Promise<void> => {
+    try {
+      await window.api.cancelSshUpload(id)
     } catch {
       /* pushed state remains authoritative */
     }
@@ -961,6 +975,18 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
       if (!cancelled) setSshDownloads(items)
     })
     const unsubscribe = window.api.onSshDownloadsChanged(setSshDownloads)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.api.getSshUploads().then((items) => {
+      if (!cancelled) setSshUploads(items)
+    })
+    const unsubscribe = window.api.onSshUploadsChanged(setSshUploads)
     return () => {
       cancelled = true
       unsubscribe()
@@ -1760,6 +1786,52 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
           <>
             {sshActive && sshFilesOpen ? (
               <div className="ssh-files">
+                {sshUploads.length > 0 ? (
+                  <div className="ssh-downloads">
+                    <div className="ssh-downloads__head">
+                      <strong>上传任务</strong>
+                      <span>{sshUploads.filter((item) => item.status === 'uploading').length} 个进行中</span>
+                    </div>
+                    <div className="ssh-downloads__list">
+                      {sshUploads.map((item) => {
+                        const percent = item.total > 0
+                          ? Math.min(100, Math.round((item.transferred / item.total) * 100))
+                          : 0
+                        const statusLabel = item.status === 'completed'
+                          ? '已完成'
+                          : item.status === 'cancelled'
+                            ? '已取消'
+                            : item.status === 'failed'
+                              ? '失败'
+                              : item.total > 0 ? `${percent}%` : '准备中…'
+                        return (
+                          <div className="ssh-download" key={item.id} title={item.error || item.remotePath}>
+                            <div className="ssh-download__row">
+                              <span className="ssh-download__name">{item.name}</span>
+                              <span className={`ssh-download__status ssh-download__status--${item.status}`}>{statusLabel}</span>
+                              {item.status === 'uploading' ? (
+                                <button
+                                  type="button"
+                                  className="ssh-download__cancel"
+                                  onClick={() => void cancelSshUpload(item.id)}
+                                >
+                                  取消
+                                </button>
+                              ) : null}
+                            </div>
+                            <div className="ssh-download__progress" aria-label={`${item.name} 上传进度`}>
+                              <span style={{ width: `${item.total > 0 ? percent : 0}%` }} />
+                            </div>
+                            <div className="ssh-download__meta">
+                              <span>{formatBytes(item.transferred)}{item.total > 0 ? ` / ${formatBytes(item.total)}` : ''}</span>
+                              {item.error ? <span className="ssh-download__error">{item.error}</span> : null}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 {sshDownloads.length > 0 ? (
                   <div className="ssh-downloads">
                     <div className="ssh-downloads__head">

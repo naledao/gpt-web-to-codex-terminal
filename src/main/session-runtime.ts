@@ -247,6 +247,8 @@ export class SessionRuntime {
       }
     }, (downloads) => {
       this.send(IpcChannels.sshDownloadsChanged, downloads)
+    }, (uploads) => {
+      this.send(IpcChannels.sshUploadsChanged, uploads)
     })
 
     const restoredHostId = options.initialSshHostId?.trim() ?? ''

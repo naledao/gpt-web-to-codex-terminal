@@ -59,6 +59,9 @@ export const IpcChannels = {
   sshRemoveHost: 'ssh:remove-host',
   sshInput: 'ssh:input',
   sshUploadFiles: 'ssh:upload-files',
+  sshUploadsGet: 'ssh:uploads-get',
+  sshUploadCancel: 'ssh:upload-cancel',
+  sshUploadsChanged: 'ssh:uploads-changed',
   sshListFiles: 'ssh:list-files',
   sshDownloadFile: 'ssh:download-file',
   sshDownloadsGet: 'ssh:downloads-get',
@@ -870,6 +873,21 @@ export interface SshFileEntry {
   modifiedAt: number
 }
 
+export type SshUploadStatus = 'uploading' | 'completed' | 'cancelled' | 'failed'
+
+export interface SshUploadTask {
+  id: string
+  name: string
+  localPath: string
+  remotePath: string
+  status: SshUploadStatus
+  transferred: number
+  total: number
+  startedAt: number
+  finishedAt: number | null
+  error: string
+}
+
 export type SshDownloadStatus = 'downloading' | 'completed' | 'cancelled' | 'failed'
 
 export interface SshDownloadTask {
@@ -1122,6 +1140,11 @@ export interface AppApi {
   sendSshInput(text: string): Promise<SshState>
   /** Pick local files and upload them to the current remote working directory. */
   uploadSshFiles(): Promise<SshState>
+  /** Current and recently finished uploads for this SSH session. */
+  getSshUploads(): Promise<SshUploadTask[]>
+  /** Cancel one in-progress upload. */
+  cancelSshUpload(id: string): Promise<boolean>
+  onSshUploadsChanged(listener: (items: SshUploadTask[]) => void): () => void
   /** List one remote directory over SFTP. */
   listSshFiles(path: string): Promise<SshFileEntry[]>
   /** Pick a local destination and start downloading one remote file over SFTP. */

@@ -25,6 +25,7 @@ import type {
   SshHostDraft,
   SshFileEntry,
   SshDownloadTask,
+  SshUploadTask,
   SshState,
   TerminalNotes,
   TerminalState
@@ -190,6 +191,16 @@ removeConversation: (id: string): Promise<Conversation[]> =>
     ipcRenderer.invoke(IpcChannels.sshInput, text),
 
   uploadSshFiles: (): Promise<SshState> => ipcRenderer.invoke(IpcChannels.sshUploadFiles),
+
+  getSshUploads: (): Promise<SshUploadTask[]> => ipcRenderer.invoke(IpcChannels.sshUploadsGet),
+
+  cancelSshUpload: (id: string): Promise<boolean> => ipcRenderer.invoke(IpcChannels.sshUploadCancel, id),
+
+  onSshUploadsChanged: (listener: (items: SshUploadTask[]) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, items: SshUploadTask[]): void => listener(items)
+    ipcRenderer.on(IpcChannels.sshUploadsChanged, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.sshUploadsChanged, handler)
+  },
 
   listSshFiles: (path: string): Promise<SshFileEntry[]> =>
     ipcRenderer.invoke(IpcChannels.sshListFiles, path),

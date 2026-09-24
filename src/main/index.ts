@@ -31,6 +31,7 @@ import type {
   SshHost,
   SshHostDraft,
   SshDownloadTask,
+  SshUploadTask,
   SshFileEntry,
   SshState,
   TerminalNotes,
@@ -559,6 +560,10 @@ function registerIpcHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) return runtime.ssh.getState()
     return runtime.ssh.uploadFiles(result.filePaths)
   })
+  ipcMain.handle(IpcChannels.sshUploadsGet, (event): SshUploadTask[] =>
+    runtimeForEvent(event)?.ssh.getUploads() ?? [])
+  ipcMain.handle(IpcChannels.sshUploadCancel, (event, id: string): boolean =>
+    runtimeForEvent(event)?.ssh.cancelUpload(String(id ?? '')) ?? false)
   ipcMain.handle(IpcChannels.sshInput, (event, text: string): SshState => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return { ...EMPTY_SSH_STATE }
