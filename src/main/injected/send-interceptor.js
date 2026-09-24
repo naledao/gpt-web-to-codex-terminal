@@ -517,6 +517,16 @@
   const USER_TEXT_SENTINEL = '\u0000\u0001'
 
   /**
+   * True once composing this draft has failed.
+   *
+   * Cleared on the next successful injection. Without it, an injection that cannot take
+   * (a composer whose write path this site does not accept) is retried on every keystroke:
+   * the reported counter climbs into the thousands, the composer appears to be "constantly
+   * injected", and the user's own message never leaves.
+   */
+  let draftRejected = false
+
+  /**
    * Recover what the USER typed from the text that was actually submitted.
    *
    * `submitWithRetry` is handed the composed string — the injected system prompt with
@@ -539,33 +549,65 @@
     // Our own sends must pass through untouched: no prefix, no interception.
     if (state.programmatic) return false
     if (!state.enabled || !state.prefix) return false
+    // This draft already failed to compose. Attempting again on every keystroke is how the
+    // injected counter ran away; the user's text sends as-is instead.
+    if (draftRejected) return false
 
     const element = getComposer()
     if (!element) return false
-    // Already injected for this draft: let ChatGPT send it normally.
+    // Already injected for this draft: let the site send it normally.
     if (hasPrefix(element)) return false
 
     event.preventDefault()
     event.stopImmediatePropagation()
 
     const text = collapse(readComposer(element))
-    if (!insertText(element, state.prefix)) {
-      // Injection refused: never trap the user's message in the box.
+
+    /*
+     * ONE write, carrying everything.
+     *
+     * This used to be two — the prompt first, then the sentinel and the user's text — which
+     * works on a contenteditable composer because `execCommand` INSERTS at the caret. A
+     * textarea write is a whole-value REPLACE, so the second call deleted the prompt that the
+     * first had just written: the message went out with no system prompt and the app could
+     * never tell.
+     *
+     * Composing first and writing once makes both mechanisms behave the same way.
+     */
+    const composed = state.prefix + USER_TEXT_SENTINEL + text
+    const wrote = insertText(element, composed)
+
+    /*
+     * Verify, rather than assume.
+     *
+     * A REPLACE that silently did not take leaves the composer holding something other than
+     * what we composed. Submitting then would send the wrong text — and `hasPrefix` would keep
+     * failing, so every later keystroke would inject again. That is exactly how the injected
+     * counter reached four figures while nothing was actually sent.
+     */
+    const verified = wrote && collapse(readComposer(element)) === collapse(composed)
+
+    if (!verified) {
+      /*
+       * The injection did not take. Two rules, both learned the hard way:
+       *
+       *  1. NEVER trap the user's message. Fall back to sending their text as-is, without the
+       *     system prompt: a degraded terminal turn is recoverable, a composer that eats what
+       *     you type is not.
+       *  2. Do not try again on the same draft. Interception is re-entered on every keystroke,
+       *     and an injection that failed once fails every time — retrying is what produced the
+       *     runaway counter and the appearance of the prompt being "constantly injected".
+       */
+      draftRejected = true
       report({ event: 'inject-failed' })
       submitWithRetry(text, 0, false)
       return true
     }
 
-    /*
-     * The sentinel goes in right after the prompt, on the same insertion pass that puts
-     * the user's own text back. Nothing else can know where the prompt ends, and doing it
-     * here means the marker cannot drift out of sync with what is actually in the box.
-     */
-    insertText(element, USER_TEXT_SENTINEL + text)
-
+    draftRejected = false
     state.injectedCount += 1
     report({ event: 'injected', count: state.injectedCount })
-    setTimeout(() => submitWithRetry(state.prefix + USER_TEXT_SENTINEL + text, 0, false), 60)
+    setTimeout(() => submitWithRetry(composed, 0, false), 60)
     return true
   }
 
