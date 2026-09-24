@@ -133,6 +133,41 @@
   }
 
   /**
+   * The assistant's ANSWER text, from a turn element.
+   *
+   * On ChatGPT the turn's text is the answer, and this returns it unchanged. On a site
+   * whose turn also carries reasoning and search citations, the answer is a narrower
+   * descendant — and reading the whole turn would hand the JSON extractor the model's
+   * private reasoning. That is not a cosmetic difference: reasoning routinely contains
+   * braces and quoted JSON of its own, so it can parse as a command the model never issued.
+   *
+   * Falls back to the turn's own text when the marker is absent, which is the correct
+   * behaviour on a site that has none.
+   */
+  const readReplyText = (node) => {
+    if (!node) return ''
+    const markers = PAGE.assistantReplySelectors
+    if (markers && markers.length > 0) {
+      for (const selector of markers) {
+        const answer = node.querySelector(selector)
+        if (answer) return String(answer.innerText || '')
+      }
+    }
+    return String(node.innerText || '')
+  }
+
+  /** True when this turn is an ASSISTANT one, decided by structure rather than by class. */
+  const isAssistantTurn = (node) => {
+    // A missing element is not an assistant turn. The callers do not currently pass null,
+    // but `readReplyText` right above guards it and this does not — an asymmetry that would
+    // turn a future refactor into a TypeError in a page we do not control.
+    if (!node) return false
+    const markers = PAGE.assistantReplySelectors
+    if (!markers || markers.length === 0) return true
+    return markers.some((selector) => node.querySelector(selector) !== null)
+  }
+
+  /**
    * Write text into the composer, and report whether it took.
    *
    * The two paths exist for the same underlying reason — a framework owns the editor and
@@ -419,7 +454,7 @@
       return
     }
 
-    button.click()
+    pressButton(button)
 
     setTimeout(() => {
       const element = getComposer()
@@ -433,6 +468,36 @@
         finish(false)
       }
     }, 150)
+  }
+
+  /**
+   * Press a control the way a user would, whichever kind of element it is.
+   *
+   * `.click()` is enough for a real `<button>` (ChatGPT). DeepSeek's send control is a
+   * `<div role="button">` owned by a component library, and those frequently act on
+   * pointerdown/pointerup rather than on `click` — in which case `.click()` does nothing
+   * at all and the send silently never happens.
+   *
+   * So the full sequence is dispatched, and the caller still verifies by watching the
+   * composer clear. The verification is what makes this safe: a duplicate dispatch that the
+   * framework ignores is harmless, while a missing one is the difference between working
+   * and not.
+   */
+  const pressButton = (element) => {
+    if (!element) return
+    const base = { bubbles: true, cancelable: true, view: window }
+    try {
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+        const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function'
+          ? PointerEvent
+          : MouseEvent
+        element.dispatchEvent(new Ctor(type, { ...base, button: 0, buttons: 1 }))
+      }
+      if (typeof element.click === 'function') element.click()
+      else element.dispatchEvent(new MouseEvent('click', base))
+    } catch (_) {
+      /* the composer check below is the real verdict */
+    }
   }
 
   /** @returns true when the event was consumed and the send was taken over. */
@@ -718,6 +783,20 @@
     if (nodes.length === 0) return
 
     const node = nodes[nodes.length - 1]
+
+    /*
+     * Only assistant turns count, and this is checked FIRST.
+     *
+     * The turn selector is "one element per turn, either role" — it has to be, because a
+     * role is not always marked. The USER's own message is not a reply, and on a site whose
+     * turns are plain divs it is otherwise indistinguishable: the app would try to parse the
+     * user's own words as a command, and would consume the awaiting flag with them.
+     *
+     * Before the turn key, so a user turn never becomes `lastAssistantId` and never spends a
+     * content hash.
+     */
+    if (!isAssistantTurn(node)) return
+
     /*
      * `turnKeyOf`, never a raw attribute read.
      *
@@ -729,7 +808,13 @@
     const messageId = turnKeyOf(node)
     if (!messageId || messageId === state.lastCommandMessageId) return
 
-    const text = node.innerText || ''
+    /*
+     * The narrowed answer text, never the whole turn: on DeepSeek the turn's text starts
+     * with its reasoning and search citations, and that reasoning contains `ds-markdown`
+     * blocks with braces and quoted JSON of its own — perfectly capable of parsing as a
+     * command the model never issued to us.
+     */
+    const text = readReplyText(node)
     const parsed = extractCommand(text)
 
     // Nothing runnable yet. Deliberately do NOT mark it handled and do NOT
@@ -795,16 +880,22 @@
   }
 
   /**
-   * The turn key of the newest assistant turn currently in the DOM.
+   * The turn key of the newest ASSISTANT turn currently in the DOM.
    *
    * `turnKeyOf` for the same reason as above: this value becomes
    * `state.lastCommandMessageId`, and a null there would disable the suppression that
    * stops a re-rendered old reply from looking fresh.
+   *
+   * Scans backwards past any user turn: on a site with unmarked roles the newest element
+   * matching the turn selector is often the USER's message, and baselining against that
+   * would leave the real reply looking like something we had already handled.
    */
   const lastAssistantId = () => {
     const nodes = queryAllAssistant()
-    const node = nodes.length > 0 ? nodes[nodes.length - 1] : null
-    return node ? turnKeyOf(node) : null
+    for (let i = nodes.length - 1; i >= 0; i -= 1) {
+      if (isAssistantTurn(nodes[i])) return turnKeyOf(nodes[i])
+    }
+    return null
   }
 
   /**

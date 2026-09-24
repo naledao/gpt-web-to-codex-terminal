@@ -55,6 +55,19 @@ export interface PageAdapter {
   stopButtonSelectors: string[]
   /** One element per assistant turn. */
   assistantSelectors: string[]
+  /**
+   * The element holding ONLY the assistant's answer, inside a turn.
+   *
+   * A turn's own text is not the answer. DeepSeek's turn carries its reasoning
+   * ("已思考（用时 4 秒）" plus the whole think block) and search citations ("搜索到 22 个
+   * 网页", then page titles) — and that reasoning contains `ds-markdown` blocks of its own.
+   * Parsing the turn would hand all of it to the JSON extractor, which is the same class of
+   * mistake as reading Markdown-rendered text: the app would be parsing words the model
+   * never addressed to it.
+   *
+   * First match wins; empty means the turn's own text is the answer (ChatGPT).
+   */
+  assistantReplySelectors: string[]
   /** One element per turn of either role — used to locate the scroll container. */
   messageSelectors: string[]
   /**
@@ -177,6 +190,8 @@ export const CHATGPT_PAGE: PageAdapter = {
     'button[aria-label="停止生成"]'
   ],
   assistantSelectors: ['[data-message-author-role="assistant"]'],
+  // ChatGPT's turn text IS the answer; nothing to narrow.
+  assistantReplySelectors: [],
   messageSelectors: ['[data-message-author-role]'],
   messageIdAttr: 'data-message-id'
 }
@@ -206,26 +221,56 @@ export const CHATGPT_PLATFORM: ChatPlatform = {
 /**
  * The injected-page descriptor for DeepSeek.
  *
- * ⚠ NOT FILLED IN YET — deliberately empty, not guessed.
+ * Measured off the live page (tools/diag/deepseek-probe.js), not guessed. What the runs
+ * established about the thread:
  *
- * The values must come off the live page (that is what `tools/diag/deepseek-probe.js`
- * is for). Writing plausible-looking selectors here would be worse than leaving them
- * blank: a selector list that matches nothing fails SILENTLY — no error, no log, the app
- * just never fires — which is the most expensive kind of wrong, because it looks like the
- * feature was never built rather than like a bad guess.
+ *   div.ds-virtual-list-visible-items                        ← the message list
+ *   └ div[data-virtual-list-item-key="N"]                    ← ONE TURN, either role
+ *     └ div.ds-message
+ *       ├ div.ds-think-content                                (assistant only: reasoning)
+ *       └ div.ds-markdown.ds-assistant-message-main-content   (the answer)
  *
- * What is already known and therefore filled in: the site is `chat.deepseek.com`, its
- * conversation URLs are `/a/chat/s/<uuid>`, and its composer is a real `<textarea>`
- * (`<textarea ... placeholder="给 DeepSeek 发送消息 " rows="2">`) rather than
- * ProseMirror's contenteditable — so the write path has to be the native-setter one.
+ * Two consequences drive the values below:
+ *
+ *  - The per-turn wrapper carries the only stable per-item attribute, so that is what the
+ *    turn selectors point at.
+ *  - A turn's text is NOT the answer: it starts with 已思考（用时 4 秒）, then search
+ *    citations, and the reasoning contains `ds-markdown` blocks of its own. The reply is
+ *    therefore read from `.ds-assistant-message-main-content` — a SEMANTIC class, which is
+ *    why it can be trusted where the hashed ones (`_9663006`, `_4f9bf79`) cannot.
  */
 export const DEEPSEEK_PAGE: PageAdapter = {
   composerKind: 'textarea',
-  composerSelectors: [],
-  sendButtonSelectors: [],
+  composerSelectors: ['textarea[placeholder]', 'textarea'],
+  /*
+   * From the earlier DOM capture, where the composer was empty and the control read
+   * `ds-button ds-button--primary ds-button--filled ds-button--circle … ds-button--disabled`.
+   * The disabled modifier is dropped once there is text, so it is not part of the match.
+   * Narrowed by shape (circle + primary) because the page has dozens of `ds-button`
+   * elements, and a bare class match would hit a sidebar row.
+   */
+  sendButtonSelectors: [
+    '.ds-button--primary.ds-button--circle:not(.ds-button--disabled)',
+    '.ds-button--primary.ds-button--filled',
+    'button[type="submit"]'
+  ],
+  /*
+   * No stop button was found in either run: both snapshots reported null, and a
+   * label-based filter never matched. Left empty rather than filled with a guess — the
+   * settle timer covers reply-completion without it.
+   */
   stopButtonSelectors: [],
-  assistantSelectors: [],
-  messageSelectors: [],
+  // Turns of either role; the role is decided by the reply selector, not by a class.
+  assistantSelectors: ['[data-virtual-list-item-key]'],
+  assistantReplySelectors: ['.ds-assistant-message-main-content'],
+  messageSelectors: ['[data-virtual-list-item-key]'],
+  /*
+   * EMPTY on purpose. `data-virtual-list-item-key` exists but holds "1", "2", … — a
+   * position in a virtualised list, so it changes meaning as rows are recycled and is not
+   * an identity. Declaring it here would let two different replies share a key and silently
+   * suppress the second; leaving it empty routes both sides through the content hash, which
+   * is exactly what `turnKeyOf` and `executionKeyOf` were built for.
+   */
   messageIdAttr: ''
 }
 
