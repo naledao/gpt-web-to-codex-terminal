@@ -120,18 +120,18 @@ body {
 
 .address {
   /*
-   * Capped rather than `flex: 1`. The URL is short and rarely worth reading in full, but as a
-   * flex-grow item it took every spare pixel in the bar and pushed the toolbar buttons apart.
-   * It still shrinks (`flex-shrink: 1`) so a narrow window degrades instead of overflowing.
+   * The ONLY growing item in the bar, so it fills the space between the navigation buttons on
+   * its left and the model select on its right — the three of them end up touching, with no
+   * slack left anywhere to open a gap.
+   *
+   * This went: `flex: 1` → capped at 360px → capped + `margin-left: auto` → back to `flex: 1`.
+   * The two auto margins it passed through are gone with it; an auto margin on a growing item
+   * is both redundant and harmful, because it would take the free space the field is meant to
+   * fill.
+   *
+   * `min-width: 0` is what lets it shrink on a narrow window instead of overflowing the bar.
    */
-  flex: 0 1 360px;
-  /*
-   * `margin-left: auto` pulls the address, the model select and the gear together into one
-   * group at the right end of the bar, leaving the navigation buttons alone on the left. The
-   * auto margin absorbs the slack that nothing else takes, which is what keeps the three of
-   * them adjacent instead of spread across the width.
-   */
-  margin-left: auto;
+  flex: 1;
   min-width: 0;
   display: flex;
 }
