@@ -1075,30 +1075,29 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
             Which model this session is talking to. Both platforms' pages stay loaded, so this
             is a change of which one is in front — the SSH connection and the terminal are NOT
             rebuilt, and each site keeps its own conversation.
+
+            A dropdown rather than a row of buttons: the panel is narrow, the list is expected
+            to grow, and a one-of-N choice reads as a select.
           */}
           <div className="terminal__row">
             <span className="terminal__label">模型</span>
-            <span className="terminal__spacer" />
           </div>
-          <div className="mode" role="radiogroup" aria-label="模型">
-            {CHAT_PLATFORMS.map((platform) => {
-              const on = platform.id === platformId
-              return (
-                <button
-                  key={platform.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={on}
-                  className={on ? 'mode__item mode__item--on' : 'mode__item'}
-                  disabled={taskRunning || on || switchingPlatform}
-                  title={on ? `当前使用 ${platform.label}` : `切换到 ${platform.label}`}
-                  onClick={() => void switchPlatform(platform.id)}
-                >
-                  {platform.label}
-                </button>
-              )
-            })}
-          </div>
+          <select
+            className="model-select"
+            aria-label="模型"
+            value={platformId}
+            // Refused while a task is running: the main process enforces this too, and this is
+            // only so the control does not look available when it is not.
+            disabled={taskRunning || switchingPlatform}
+            title={taskRunning ? '任务运行中不能切换模型' : '切换 ChatGPT / DeepSeek'}
+            onChange={(event) => void switchPlatform(event.target.value)}
+          >
+            {CHAT_PLATFORMS.map((platform) => (
+              <option key={platform.id} value={platform.id}>
+                {platform.label}
+              </option>
+            ))}
+          </select>
 
           <div className="terminal__row">
             <span className="terminal__label">终端模式</span>
