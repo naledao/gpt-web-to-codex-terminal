@@ -301,6 +301,41 @@ body {
   color: var(--text);
 }
 
+/*
+ * The send-delay field: a small number box that sits next to the buttons.
+ *
+ * Sized to fit about three digits plus the unit so a value of 600 does not
+ * shift the buttons beside it every time it is edited.
+ */
+.panel__delay {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.panel__delay-input {
+  width: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+  outline: none;
+}
+
+.panel__delay-unit {
+  flex: none;
+}
+
 /* ---------------- SSH host switcher ---------------- */
 
 /*

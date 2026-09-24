@@ -328,6 +328,13 @@ export class CommandRunner {
    */
   private localShell: ConversationShell | null = null
   private localCwd: string
+  /**
+   * Seconds to hold a finished command before its output goes back to the model.
+   *
+   * Deliberately NOT persisted: it paces the loop, it is not a preference, and
+   * there is no sensible value to restore on the next launch but zero.
+   */
+  private sendDelaySeconds = 0
   private lines: TerminalLine[] = []
   private pushTimer: NodeJS.Timeout | null = null
   /** Message ids currently executing, so a double click cannot run one twice. */
@@ -650,6 +657,37 @@ export class CommandRunner {
       return
     }
 
+    /*
+     * Hold the finished result for as long as the user asked before handing it
+     * back. This paces the loop: the model cannot queue the next command until it
+     * has seen this output, so the delay lands between two commands, never inside
+     * one.
+     *
+     * Re-checked after the wait for the same reason the pre-flight checks exist:
+     * a delay is a window in which the user can end the task or switch
+     * conversation, and a result sent after that would land in the wrong place.
+     */
+    if (this.sendDelaySeconds > 0) {
+      this.appendLine({
+        kind: 'notice',
+        text: `等待 ${this.sendDelaySeconds} 秒后再回传给模型`
+      })
+      await new Promise<void>((resolve) => setTimeout(resolve, this.sendDelaySeconds * 1000))
+      if (request !== this.executionRequest) {
+        this.deps.store.setExecutionStatus(messageId, 'skipped')
+        this.broadcastExecutions(conversationId)
+        return
+      }
+      if (this.deps.currentConversationId() !== conversationId) {
+        this.appendLine({
+          kind: 'error',
+          text: '等待期间对话已切走，结果未回传。'
+        })
+        this.flushTerminal()
+        return
+      }
+    }
+
     const message = buildResultMessage(record.command, result)
     const outcome = await this.deps.sendRawToPage(message)
     if (outcome === 'ok') {
@@ -676,7 +714,8 @@ export class CommandRunner {
     return {
       alive: this.localShell?.alive ?? false,
       cwd: this.localShell?.cwd ?? this.localCwd,
-      lines: [...this.lines]
+      lines: [...this.lines],
+      sendDelaySeconds: this.sendDelaySeconds
     }
   }
 
@@ -733,6 +772,20 @@ export class CommandRunner {
         ? { kind: 'notice', text: `目录已切换到 ${shell.cwd || target}` }
         : summariseResult(result)
     )
+    this.flushTerminal()
+    return this.getTerminalState()
+  }
+
+  /**
+   * Set the wait between a finished command and handing its output back.
+   *
+   * Clamped rather than rejected: the value arrives from a text input, and a
+   * typo should not be able to stall the loop for an hour. Only the hand-back
+   * is affected, never the command itself.
+   */
+  setSendDelay(seconds: number): TerminalState {
+    const value = Number.isFinite(seconds) ? Math.floor(seconds) : 0
+    this.sendDelaySeconds = Math.min(Math.max(value, 0), 600)
     this.flushTerminal()
     return this.getTerminalState()
   }

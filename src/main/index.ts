@@ -105,7 +105,7 @@ const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
 }
 
 const FALLBACK_AUTOMATION: AutomationState = { mode: 'manual', paused: true }
-const FALLBACK_TERMINAL_STATE: TerminalState = { alive: false, cwd: '', lines: [] }
+const FALLBACK_TERMINAL_STATE: TerminalState = { alive: false, cwd: '', lines: [], sendDelaySeconds: 0 }
 const EMPTY_NOTES: TerminalNotes = { scope: 'local', hostId: '', label: '', text: '' }
 
 function normalizeProxy(raw: string): string {
@@ -506,6 +506,7 @@ function registerIpcHandlers(): void {
     return runtime.runner.getTerminalState()
   })
   ipcMain.handle(IpcChannels.terminalSetCwd, async (event, path: string): Promise<TerminalState> => runtimeForEvent(event)?.setTerminalCwd(String(path ?? '')) ?? FALLBACK_TERMINAL_STATE)
+  ipcMain.handle(IpcChannels.terminalSetSendDelay, (event, seconds: number): TerminalState => runtimeForEvent(event)?.setTerminalSendDelay(Number(seconds ?? 0)) ?? FALLBACK_TERMINAL_STATE)
   ipcMain.handle(IpcChannels.environmentGet, (event) => ({ ...(runtimeForEvent(event)?.environment ?? FALLBACK_ENVIRONMENT) }))
   ipcMain.handle(IpcChannels.terminalNotesGet, (event): TerminalNotes => runtimeForEvent(event)?.currentNotes() ?? EMPTY_NOTES)
   ipcMain.handle(IpcChannels.terminalNotesSet, (event, text: string): TerminalNotes => runtimeForEvent(event)?.applyTerminalNotes(String(text ?? '')) ?? EMPTY_NOTES)

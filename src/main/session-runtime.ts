@@ -673,6 +673,11 @@ export class SessionRuntime {
     return state
   }
 
+  /** Pace the loop without touching any stored state or the environment probe. */
+  setTerminalSendDelay(seconds: number): TerminalState {
+    return this.runner.setSendDelay(seconds)
+  }
+
   currentNotes(): TerminalNotes {
     return { ...this.environmentScope, text: this.readNotes() }
   }

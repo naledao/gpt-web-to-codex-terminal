@@ -46,6 +46,7 @@ export const IpcChannels = {
   terminalInterrupt: 'terminal:interrupt',
   terminalReset: 'terminal:reset',
   terminalSetCwd: 'terminal:set-cwd',
+  terminalSetSendDelay: 'terminal:set-send-delay',
   terminalChanged: 'terminal:changed',
   terminalNotesGet: 'terminal-notes:get',
   terminalNotesSet: 'terminal-notes:set',
@@ -790,6 +791,14 @@ export interface TerminalState {
   /** Current working directory reported by the shell, when known. */
   cwd: string
   lines: TerminalLine[]
+  /**
+   * Seconds to wait after a model-driven command finishes, before its output is
+   * handed back to the model. 0 sends it straight away.
+   *
+   * In-memory and per session on purpose: it paces the loop, it is not a stored
+   * preference, and a restart going back to 0 is the safe default.
+   */
+  sendDelaySeconds: number
 }
 
 /* ------------------------------------------------------------------ *
@@ -1041,6 +1050,11 @@ export interface AppApi {
    * about, so the probe is re-run and the prompt rebuilt.
    */
   setTerminalCwd(path: string): Promise<TerminalState>
+  /**
+   * How long to wait after a model-driven command finishes before its output goes
+   * back to the model. Clamped to 0..600 seconds; 0 disables the wait.
+   */
+  setTerminalSendDelay(seconds: number): Promise<TerminalState>
   onTerminalChanged(listener: (state: TerminalState) => void): () => void
 
   /**

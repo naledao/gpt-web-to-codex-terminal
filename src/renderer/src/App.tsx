@@ -133,6 +133,14 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
   const [commandDraft, setCommandDraft] = useState('')
   /** Non-null while the working directory is being edited inline. */
   const [cwdDraft, setCwdDraft] = useState<string | null>(null)
+  /**
+   * Non-null while the send-delay field is being edited.
+   *
+   * The committed value lives in main and arrives back over terminal:changed, so
+   * without a local draft every push would rewrite the box while it is being
+   * typed into.
+   */
+  const [sendDelayDraft, setSendDelayDraft] = useState<string | null>(null)
   const [ssh, setSsh] = useState<SshState | null>(null)
   const [sshHosts, setSshHosts] = useState<SshHost[]>([])
   /** The per-machine note editor, shown inside the terminal pane. */
@@ -769,6 +777,27 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
     setTerminal(next)
   }, [])
 
+  /**
+   * Commit the send-delay field.
+   *
+   * The draft is read and dropped before the await so a push landing mid-flight
+   * cannot leave the box holding text the user already submitted. Reading it
+   * first is also what makes Escape work: it clears the draft, and by the time
+   * blur fires there is nothing left to commit.
+   */
+  const commitSendDelay = useCallback(async (): Promise<void> => {
+    const raw = sendDelayDraft
+    setSendDelayDraft(null)
+    if (raw === null) return
+    const seconds = raw.trim() === '' ? 0 : Number(raw)
+    if (!Number.isFinite(seconds)) return
+    try {
+      setTerminal(await window.api.setTerminalSendDelay(seconds))
+    } catch {
+      /* main keeps the previous value */
+    }
+  }, [sendDelayDraft])
+
   const resetTerminal = useCallback(async (): Promise<void> => {
     try {
       setTerminal(await window.api.resetTerminal())
@@ -1322,6 +1351,28 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
             }
           />
           <span className="panel__spacer" />
+          {terminalCollapsed ? null : (
+            <span className="panel__delay">
+              <input
+                type="text"
+                className="panel__delay-input"
+                inputMode="numeric"
+                value={sendDelayDraft ?? String(terminal?.sendDelaySeconds ?? 0)}
+                title="命令执行完成后，等待这么多秒再把结果回传给模型（0 表示立即发送）"
+                aria-label="回传前的等待秒数"
+                onChange={(event) => setSendDelayDraft(event.target.value)}
+                onBlur={() => void commitSendDelay()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void commitSendDelay()
+                  }
+                  if (event.key === 'Escape') setSendDelayDraft(null)
+                }}
+              />
+              <span className="panel__delay-unit">秒</span>
+            </span>
+          )}
           {terminalCollapsed ? null : (
             <button
               type="button"

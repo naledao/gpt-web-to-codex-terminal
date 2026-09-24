@@ -245,6 +245,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   setTerminalCwd: (path: string): Promise<TerminalState> =>
     ipcRenderer.invoke(IpcChannels.terminalSetCwd, path),
 
+  setTerminalSendDelay: (seconds: number): Promise<TerminalState> =>
+    ipcRenderer.invoke(IpcChannels.terminalSetSendDelay, seconds),
+
   onTerminalChanged: (listener: (state: TerminalState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: TerminalState): void => listener(state)
     ipcRenderer.on(IpcChannels.terminalChanged, handler)
