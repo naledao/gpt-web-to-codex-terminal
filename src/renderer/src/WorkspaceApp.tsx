@@ -54,7 +54,18 @@ export default function WorkspaceApp(): ReactElement {
       </nav>
       <section className="workspace__content">
         {workspace.view === 'session' && workspace.sessionId ? (
-          <App key={workspace.sessionId} initialSshDialogOpen={workspace.openSshDialog} />
+          <App
+            key={workspace.sessionId}
+            initialSshDialogOpen={workspace.openSshDialog}
+            /*
+             * Read from the session list rather than held as its own state: the main process
+             * republishes the list whenever a session changes, including on a platform switch,
+             * so this stays right without a second copy to keep in sync.
+             */
+            platformId={
+              sessions.find((item) => item.id === workspace.sessionId)?.platformId ?? ''
+            }
+          />
         ) : (
           <ManagerApp />
         )}

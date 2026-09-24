@@ -218,6 +218,46 @@ shape, the sidebar scraper, and a `PageAdapter` of DOM selectors — and the
 interceptor is platform-independent logic wrapped around those values. Adding a
 third site should mean adding a descriptor, not editing the interceptor.
 
+### Sessions are created for a machine; the model is switched inside the chat
+
+A session answers "which machine is the model driving" — this one, or a host over
+SSH — so the manager offers exactly `+ 本机会话` and `+ SSH 会话`. Which chat site
+that session talks to is a separate choice, made with the **模型** switcher in the
+terminal panel, because wanting to ask the other model about the same terminal is
+not a reason to open a new session.
+
+**Both platforms' pages stay loaded**, so switching is a change of which view is in
+front:
+
+- the SSH connection and the terminal scrollback are **untouched** — the session
+  owns the machine, and the machine does not change because you changed website;
+- each site keeps its **own conversation**, and switching back returns to it;
+- conversations are **not moved between sites**: separate accounts, separate history.
+
+The second platform's view is created the first time you switch to it, and kept
+from then on, so a session that is never switched loads exactly one site.
+
+```
+                  SessionRuntime   (owns: terminal, SSH, environment probe)
+                   │
+     ┌─────────────┴─────────────┐
+ChatGPT embed              DeepSeek embed
+(created at start)         (created on first switch, then kept)
+     └─────────────┬─────────────┘
+          only the visible one is shown — and only the
+          visible one feeds the command loop
+```
+
+Only the visible view drives the command loop, deliberately: two live pages with
+automation on would be two sources of "the model asked for this", and
+`executions.message_id` is what makes a command run exactly once — so a hidden tab
+replaying its history into the same terminal would be untraceable.
+
+The switch is refused while a task is running, and that guard lives in
+`switchPlatform` rather than only on the button: switching mid-task would hide the
+page whose reply the loop is waiting on, and the command it eventually produced
+would be attributed to a conversation that is no longer in front.
+
 Differences from ChatGPT that the code has to respect:
 
 | | ChatGPT | DeepSeek |

@@ -38,11 +38,8 @@ const api: AppApi = {
   listManagedSessions: (): Promise<ManagedSessionSummary[]> =>
     ipcRenderer.invoke(IpcChannels.managerSessionsList),
 
-  createManagedSession: (
-    kind: 'local' | 'ssh',
-    platformId: string
-  ): Promise<ManagedSessionSummary | null> =>
-    ipcRenderer.invoke(IpcChannels.managerSessionCreate, kind, platformId),
+  createManagedSession: (kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null> =>
+    ipcRenderer.invoke(IpcChannels.managerSessionCreate, kind),
 
   openManagedSession: (id: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.managerSessionOpen, id),
@@ -52,6 +49,9 @@ const api: AppApi = {
 
   destroyManagedSession: (id: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.managerSessionDestroy, id),
+
+  switchSessionPlatform: (platformId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.sessionSwitchPlatform, platformId),
 
   onManagedSessionsChanged: (listener: (items: ManagedSessionSummary[]) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, items: ManagedSessionSummary[]): void => listener(items)

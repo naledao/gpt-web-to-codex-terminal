@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { SESSION_COOKIE_NAME } from '@shared/types'
+import { CHAT_PLATFORMS } from '@shared/platforms'
 import type {
   AppInfo,
   AppSettings,
@@ -90,9 +91,11 @@ function formatDuration(milliseconds: number): string {
 }
 interface AppProps {
   initialSshDialogOpen?: boolean
+  /** Which chat platform this session is showing, from the main process's session list. */
+  platformId?: string
 }
 
-export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Element {
+export default function App({ initialSshDialogOpen = false, platformId = '' }: AppProps): JSX.Element {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
@@ -108,6 +111,7 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
   const [terminalWidth, setTerminalWidth] = useState(TERMINAL_DEFAULT_WIDTH)
   const [terminalCollapsed, setTerminalCollapsed] = useState(false)
   const [panelCollapsed, setPanelCollapsed] = useState(false)
+  const [switchingPlatform, setSwitchingPlatform] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [proxyDraft, setProxyDraft] = useState('')
@@ -569,6 +573,25 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
       setAutomation(await window.api.setAutomationMode(mode))
     } catch {
       /* leave the previous state in place */
+    }
+  }, [])
+
+  /**
+   * Bring the other platform's page to the front.
+   *
+   * No state is set from the result: the main process republishes the session list, and
+   * `platformId` comes from there — so the button only moves if the switch actually happened.
+   * The main process also re-sends `embed:state` for the newly shown view, which is what
+   * updates the address bar and the conversation list.
+   */
+  const switchPlatform = useCallback(async (next: string): Promise<void> => {
+    setSwitchingPlatform(true)
+    try {
+      await window.api.switchSessionPlatform(next)
+    } catch {
+      /* leave the previous state in place */
+    } finally {
+      setSwitchingPlatform(false)
     }
   }, [])
 
@@ -1048,6 +1071,35 @@ export default function App({ initialSshDialogOpen = false }: AppProps): JSX.Ele
           </button>
         </div>
         <div className="terminal-controls">
+          {/*
+            Which model this session is talking to. Both platforms' pages stay loaded, so this
+            is a change of which one is in front — the SSH connection and the terminal are NOT
+            rebuilt, and each site keeps its own conversation.
+          */}
+          <div className="terminal__row">
+            <span className="terminal__label">模型</span>
+            <span className="terminal__spacer" />
+          </div>
+          <div className="mode" role="radiogroup" aria-label="模型">
+            {CHAT_PLATFORMS.map((platform) => {
+              const on = platform.id === platformId
+              return (
+                <button
+                  key={platform.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  className={on ? 'mode__item mode__item--on' : 'mode__item'}
+                  disabled={taskRunning || on || switchingPlatform}
+                  title={on ? `当前使用 ${platform.label}` : `切换到 ${platform.label}`}
+                  onClick={() => void switchPlatform(platform.id)}
+                >
+                  {platform.label}
+                </button>
+              )
+            })}
+          </div>
+
           <div className="terminal__row">
             <span className="terminal__label">终端模式</span>
             <span className={interceptor?.installed ? 'terminal__dot' : 'terminal__dot terminal__dot--wait'} />

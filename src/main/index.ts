@@ -8,7 +8,7 @@ import {
   IpcChannels,
   isConversationId
 } from '../shared/types'
-import { CHAT_PLATFORMS, CHATGPT_PLATFORM, platformById } from '../shared/platforms'
+import { CHAT_PLATFORMS, CHATGPT_PLATFORM, DEFAULT_PLATFORM_ID, platformById } from '../shared/platforms'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
   AppInfo,
@@ -348,13 +348,19 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(
     IpcChannels.managerSessionCreate,
-    (event, kind: string, platformId: string): ManagedSessionSummary | null => {
+    (event, kind: string): ManagedSessionSummary | null => {
       if (!fromManager(event)) return null
-      // An unknown platform id falls back to the default rather than refusing: the
-      // renderer only sends ids it read from the shared registry, so a mismatch means a
-      // stale build, and creating nothing is a worse answer than creating a ChatGPT one.
-      const platform = platformById(String(platformId ?? '')) ?? CHATGPT_PLATFORM
-      const runtime = createSession(kind === 'ssh' ? 'ssh' : 'local', true, undefined, platform)
+      /*
+       * No platform parameter: a session is created for a purpose (this machine, or a host over
+       * SSH) and the model is switched inside the chat. `DEFAULT_PLATFORM_ID` is used rather
+       * than a literal so the default lives with the platform registry.
+       */
+      const runtime = createSession(
+        kind === 'ssh' ? 'ssh' : 'local',
+        true,
+        undefined,
+        platformById(DEFAULT_PLATFORM_ID) ?? CHATGPT_PLATFORM
+      )
       return runtime?.summary() ?? null
     }
   )
@@ -372,6 +378,23 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.managerSessionDestroy, (event, id: string): boolean => {
     if (!fromManager(event)) return false
     return destroySession(String(id))
+  })
+  ipcMain.handle(IpcChannels.sessionSwitchPlatform, (event, platformId: string): boolean => {
+    if (!fromManager(event)) return false
+    const runtime = currentSessionId === null ? undefined : runtimes.get(currentSessionId)
+    if (!runtime) return false
+    /*
+     * Only ids in the registry are accepted. Unlike session creation there is no sensible
+     * fallback here: silently showing a different site than the one asked for would look like
+     * the switch button doing nothing.
+     */
+    const platform = platformById(String(platformId ?? ''))
+    if (!platform) return false
+    const switched = runtime.switchPlatform(platform.id)
+    // Persist immediately: the stored platformId/url is what a restart reopens, and a switch
+    // that is not written back would come back as the old site.
+    if (switched) persistManagedSession(runtime)
+    return switched
   })
 
   ipcMain.on(IpcChannels.embedSetBounds, (event, bounds: EmbedBounds) => runtimeForEvent(event)?.setEmbedBounds(bounds))

@@ -65,6 +65,7 @@ export const IpcChannels = {
   managerSessionRename: 'manager:session-rename',
   managerSessionDestroy: 'manager:session-destroy',
   managerSessionsChanged: 'manager:sessions-changed',
+  sessionSwitchPlatform: 'session:switch-platform',
   workspaceGetState: 'workspace:get-state',
   workspaceShowManager: 'workspace:show-manager',
   workspaceSetOpenSshDialog: 'workspace:set-open-ssh-dialog',
@@ -913,19 +914,25 @@ export interface AppApi {
   /** Sessions currently owned by the outer manager. */
   listManagedSessions(): Promise<ManagedSessionSummary[]>
   /**
-   * Create a managed session bound to one chat platform.
+   * Create a managed session.
    *
-   * `platformId` is explicit rather than defaulted: the renderer shows one button per
-   * platform, and a default would silently create the wrong site's session whenever a
-   * button forgot to pass it.
+   * A session is created for a PURPOSE — this machine, or a host over SSH — and the model it
+   * talks to is chosen inside the chat (see `switchSessionPlatform`). So the platform is not a
+   * parameter: every new session starts on the default and the user switches from there.
    */
-  createManagedSession(
-    kind: 'local' | 'ssh',
-    platformId: string
-  ): Promise<ManagedSessionSummary | null>
+  createManagedSession(kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null>
   openManagedSession(id: string): Promise<boolean>
   renameManagedSession(id: string, title: string): Promise<boolean>
   destroyManagedSession(id: string): Promise<boolean>
+  /**
+   * Show a different chat platform inside the CURRENT session.
+   *
+   * Both platforms' views stay alive, so this preserves the SSH connection, the terminal
+   * scrollback and each side's conversation. What it does NOT do is move a conversation from
+   * one site to the other — the sites have separate accounts and separate history, so each
+   * keeps its own and switching is a change of which one is in front.
+   */
+  switchSessionPlatform(platformId: string): Promise<boolean>
   onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
   getWorkspaceState(): Promise<WorkspaceState>
   showWorkspaceManager(): Promise<boolean>

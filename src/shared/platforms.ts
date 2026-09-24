@@ -333,6 +333,16 @@ export const DEEPSEEK_PLATFORM: ChatPlatform = {
 
 export const CHAT_PLATFORMS: ChatPlatform[] = [CHATGPT_PLATFORM, DEEPSEEK_PLATFORM]
 
+/**
+ * The platform a new session starts on.
+ *
+ * A session is created for a PURPOSE (this machine, or a host over SSH); which model it talks
+ * to is a choice made inside the chat and can change later. So creation always uses this and no
+ * call site passes a platform id — a "default" that every caller overrode anyway would only be
+ * a way to create the wrong site's session by forgetting to pass one.
+ */
+export const DEFAULT_PLATFORM_ID: ChatPlatform['id'] = CHATGPT_PLATFORM.id
+
 export function platformById(id: string): ChatPlatform | null {
   return CHAT_PLATFORMS.find((platform) => platform.id === id) ?? null
 }

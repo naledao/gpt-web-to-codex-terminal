@@ -34,11 +34,17 @@ export default function ManagerApp(): ReactElement {
     return window.api.onManagedSessionsChanged(setSessions)
   }, [])
 
-  const createSession = async (kind: 'local' | 'ssh', platformId: string): Promise<void> => {
+  /**
+   * A session is created for a PURPOSE — this machine, or a host reached over SSH — and the
+   * model it talks to is chosen inside the chat, not here. So the platform is not part of this
+   * call at all; the stored `platformId` only records which site that session is showing, and
+   * the switcher in the chat is what changes it.
+   */
+  const createSession = async (kind: 'local' | 'ssh'): Promise<void> => {
     if (creating !== null) return
     setCreating(kind)
     try {
-      await window.api.createManagedSession(kind, platformId)
+      await window.api.createManagedSession(kind)
     } finally {
       setCreating(null)
     }
@@ -85,17 +91,14 @@ export default function ManagerApp(): ReactElement {
         <div>
           <h1 style={{ margin: 0, fontSize: 22 }}>会话管理</h1>
           <div style={{ marginTop: 6, color: '#8b949e', fontSize: 13 }}>
-            每个会话拥有独立的 ChatGPT、终端、SSH 和自动执行 loop。
+            每个会话拥有独立的对话、终端、SSH 和自动执行 loop。
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        <button style={button} disabled={creating !== null} onClick={() => void createSession('local', 'chatgpt')}>
-          {creating === 'local' ? '创建中…' : '+ ChatGPT 会话'}
+        <button style={button} disabled={creating !== null} onClick={() => void createSession('local')}>
+          {creating === 'local' ? '创建中…' : '+ 本机会话'}
         </button>
-        <button style={button} disabled={creating !== null} onClick={() => void createSession('local', 'deepseek')}>
-          {creating === 'local' ? '创建中…' : '+ DeepSeek 会话'}
-        </button>
-        <button style={button} disabled={creating !== null} onClick={() => void createSession('ssh', 'chatgpt')}>
+        <button style={button} disabled={creating !== null} onClick={() => void createSession('ssh')}>
           {creating === 'ssh' ? '创建中…' : '+ SSH 会话'}
         </button>
       </div>

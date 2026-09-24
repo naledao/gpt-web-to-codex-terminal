@@ -673,6 +673,35 @@ Windows PowerShell 5.1 的 `Get-Content` 对**没有 BOM 的 UTF-8 文件是按 
   多个 ChatGptEmbed 的 WebContentsView 挂在同一个窗口上，但任何时刻只能让当前 SessionRuntime 的 view 可见；renderer IPC
   也只能路由到当前选中的 runtime，绝不能退回全局 runner/embed。切换时先停用旧 runtime 的 UI 投递，再激活新 runtime。
   同一个 SessionRuntime 内仍保留对话 id 回传校验：如果用户在该会话里切走 ChatGPT 对话，旧命令结果不能误发进新对话。
+- **会话按「用途」创建（本机 / SSH），模型在聊天里切换 —— 这两件事不能混在一个按钮里。**
+  会话列表只有 `+ 本机会话` 和 `+ SSH 会话`；`createManagedSession` **不接受 platformId**，
+  新建的一律从 `DEFAULT_PLATFORM_ID` 开始。理由：会话是为"驱动哪台机器"建的，
+  机器不会因为你换了个网站就换掉。以前那三个按钮（ChatGPT / DeepSeek / SSH）把两件事焊在一起，
+  结果是"我想在同一个终端上换个模型问"要新建一个会话。
+- **一个 SessionRuntime 持有每个平台各一个 embed，全部保活；切换只改可见性。**
+  这是刻意的，**不要退回"切换时重建 runtime"**：`dispose()` 会 `ssh.dispose()` +
+  `runner.disposeAll()`，所以重建会**静默掐掉正在用的 SSH 连接、清空终端历史、两边对话一起丢**。
+  runtime 拥有的是"那台机器"（终端、SSH、环境探测），chat 才是可以就地换的那部分 ——
+  和"整个应用只有一个终端，绝不按对话分家"是同一条理由。
+  - **非当前平台的 embed 是懒创建的**（`ensureEmbed`），创建后一直保活。
+    不在构造时全建，是因为那样每个会话都会白加载两个网站（还包含两套后台 beacon）。
+    但 `attach()` **只 attach 当前平台**，不要图整齐写成遍历全部 —— 那等于把懒创建又取消掉。
+  - **`ensureEmbed` 是幂等的**，且必须保持：同一个平台建出两个 view 会让 `getState()` 含义不明。
+  - **切走再切回来必须重新 `armCommandBaseline()`**（`switchPlatform` 里做了）。
+    新显示的页面上有很久以前的回复，不重置基线，下一次检查会把最后一条当成 live 命令执行。
+  - **`switchPlatform` 在任务运行期间拒绝切换**，而且这个闸门在**方法里**，不能只靠按钮 disabled：
+    中途切换会把 loop 正在等回复的那个页面藏起来，等它真产出命令时，归属的对话已经不是前台那个了。
+  - **只有可见平台的 embed 才喂命令循环**（handlers 里的 `isActive()` 判断）。
+    两个活着的页面同时开着自动执行 = 两个"模型要了这个"的来源，
+    而 `executions.message_id` 正是"只跑一次"的依据 —— 隐藏的标签页把历史重放进同一个终端，是查不出来的。
+  - **handlers 里的 `isActive` 必须是函数，不能是构造时捕获的布尔值。** handlers 活得比一次切换长，
+    捕获的话前台那个 view 会永远拿着旧答案。
+  - **`setEmbedBounds` 只发给前台那个 view，并把矩形记在 `lastBounds`**；
+    平台 view 可能是渲染层最后一次测量**之后**才建的，不补这一下它会以默认尺寸出现。
+  - **`persistentState()` 存的是「当前平台」的 url/conversationId/platformId。**
+    一个会话只能存一个位置，所以恢复时必须回到用户最后看的那个网站 ——
+    存"起始平台"会导致即使用户切到 DeepSeek 并留在那儿，重启后还是打开 ChatGPT。
+  - 两个平台的对话**不会互相搬运**：账号和历史本来就是分开的，切换只是换前台。
 - 回传的文本必须包含**命令、目录、自然语言结论**三段，再跟输出：
 
   ```
