@@ -213,12 +213,10 @@
   const queryAllMessages = () => queryAll(PAGE.messageSelectors)
 
   /**
-   * A stable id for one message, or null.
+   * A stable id for one message, or null when the site has no such attribute.
    *
-   * This is the idempotency key the main process stores executions under, so a page that
-   * re-renders every old message on reload cannot re-run any of them. A site with no such
-   * attribute returns null for every message, which disables that protection — report it
-   * once rather than pretending the messages are distinct.
+   * Used only to look for the attribute; `turnKeyOf` below is what callers should use,
+   * because an empty answer here must never become an empty identity.
    */
   const messageIdOf = (node) => {
     if (!node || !PAGE.messageIdAttr) return null
@@ -226,6 +224,38 @@
   }
 
   const pageMessageIdAttrs = () => (PAGE.messageIdAttr ? [PAGE.messageIdAttr] : [])
+
+  /**
+   * Identity for one assistant turn — and it must NEVER be empty.
+   *
+   * A site that gives every turn a stable id (ChatGPT) is the easy case. A site that does
+   * not would be unusable rather than merely less safe: the scan below bails out on an
+   * empty id, so no command would ever be detected, and the main process keys executions
+   * by this value, so an empty id would also collapse every command into a single row.
+   *
+   * So when there is no attribute, the turn is identified by its CONTENT. That is sound
+   * here precisely because the scan only runs after the reply has been quiet for
+   * `REPLY_SETTLE_MS`: the text is final by then, so re-rendering the same reply hashes
+   * the same and stays suppressed, while a genuinely new reply differs and fires.
+   *
+   * The cost is real and worth stating: two byte-identical replies inside one conversation
+   * become indistinguishable and the second is skipped. That needs the same command AND
+   * the same description twice — and the alternative, an empty key, loses every command
+   * after the first instead of one duplicate.
+   */
+  const turnKeyOf = (node) => {
+    const attribute = messageIdOf(node)
+    if (attribute) return attribute
+    const text = String(node.innerText || '')
+    if (text === '') return ''
+    // djb2: tiny, synchronous, and stable across reloads — unlike a counter, which would
+    // hand the same reply a new identity every time the page re-rendered.
+    let hash = 5381
+    for (let i = 0; i < text.length; i += 1) {
+      hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0
+    }
+    return `text:${(hash >>> 0).toString(16)}:${text.length}`
+  }
 
   /* ------------------------------------------------------------------ *
    * Keeping the newest message in view
@@ -688,7 +718,15 @@
     if (nodes.length === 0) return
 
     const node = nodes[nodes.length - 1]
-    const messageId = messageIdOf(node) || ''
+    /*
+     * `turnKeyOf`, never a raw attribute read.
+     *
+     * This used to be `messageIdOf(node) || ''` followed by `if (!messageId) return` —
+     * which on a site without the attribute means the function returns immediately,
+     * forever: no command is ever detected, and nothing anywhere reports a problem. That
+     * is the exact failure this guard exists to prevent now.
+     */
+    const messageId = turnKeyOf(node)
     if (!messageId || messageId === state.lastCommandMessageId) return
 
     const text = node.innerText || ''
@@ -756,11 +794,17 @@
     })
   }
 
-  /** The message id of the newest assistant turn currently in the DOM. */
+  /**
+   * The turn key of the newest assistant turn currently in the DOM.
+   *
+   * `turnKeyOf` for the same reason as above: this value becomes
+   * `state.lastCommandMessageId`, and a null there would disable the suppression that
+   * stops a re-rendered old reply from looking fresh.
+   */
   const lastAssistantId = () => {
     const nodes = queryAllAssistant()
     const node = nodes.length > 0 ? nodes[nodes.length - 1] : null
-    return node ? messageIdOf(node) : null
+    return node ? turnKeyOf(node) : null
   }
 
   /**

@@ -282,6 +282,36 @@ function shortId(id: string): string {
   return id.slice(0, 8)
 }
 
+/**
+ * A durable identity for a detected command — never empty.
+ *
+ * `message_id` is the primary key of the executions table, so an empty one is not a
+ * cosmetic problem: the first command would be stored under it and EVERY later command
+ * would be judged "already known" and silently dropped, leaving the user with a terminal
+ * that runs one command and then appears dead.
+ *
+ * The injected script already guarantees a non-empty key (`turnKeyOf` falls back to a
+ * content hash on sites that expose no message id). This repeats the guarantee on the
+ * main-process side because the consequence of losing it is silent, and because the two
+ * sides can drift.
+ *
+ * The fallback includes the description: two identical commands issued for different
+ * reasons stay distinct, so only a truly identical command-and-explanation pair is
+ * treated as one. The value is scoped to the conversation so the same command in two
+ * conversations cannot suppress the other.
+ */
+export function executionKeyOf(parsed: ParsedCommand, conversationId: string): string {
+  const raw = parsed.messageId.trim()
+  if (raw !== '') return raw
+
+  const material = `${conversationId}\u0000${parsed.command}\u0000${parsed.description}`
+  let hash = 5381
+  for (let i = 0; i < material.length; i += 1) {
+    hash = ((hash << 5) + hash + material.charCodeAt(i)) | 0
+  }
+  return `derived:${(hash >>> 0).toString(16)}:${material.length}`
+}
+
 export class CommandRunner {
   /**
    * The one local PowerShell session.
@@ -412,8 +442,11 @@ export class CommandRunner {
     if (!conversationId) return false
 
     const danger = findDanger(parsed.command)
+    // Never the raw `parsed.messageId`: an empty key would make the primary key collide
+    // with itself and drop every command after the first.
+    const key = executionKeyOf(parsed, conversationId)
     const created = this.deps.store.createExecution({
-      messageId: parsed.messageId,
+      messageId: key,
       conversationId,
       command: parsed.command,
       description: parsed.description,
@@ -429,7 +462,7 @@ export class CommandRunner {
     // before the generic notice so the log does not say "检测到命令" and then
     // immediately "任务完成".
     if (parsed.command.trim() === '') {
-      this.deps.store.setExecutionStatus(parsed.messageId, 'skipped')
+      this.deps.store.setExecutionStatus(key, 'skipped')
       this.appendLine({ kind: 'notice', text: '模型报告任务完成（command 为空）' })
       this.broadcastExecutions(conversationId)
       this.deps.onTaskCompleted(parsed.description)
@@ -445,7 +478,7 @@ export class CommandRunner {
      * trip. The user still needs to see it, hence the loud line.
      */
     if (isPlaceholderCommand(parsed.command)) {
-      this.deps.store.setExecutionStatus(parsed.messageId, 'skipped')
+      this.deps.store.setExecutionStatus(key, 'skipped')
       this.appendLine({
         kind: 'error',
         text:
@@ -498,7 +531,7 @@ export class CommandRunner {
      * and 暂停 are the remaining brakes.
      */
     if (autoRun) {
-      void this.execute(parsed.messageId)
+      void this.execute(key)
     }
     return true
   }
