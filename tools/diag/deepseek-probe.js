@@ -97,6 +97,60 @@ const INSPECT = `(() => {
   /** Rendered markdown blocks — one per reply body, by observation. */
   const markdownBlocks = [...document.querySelectorAll('[class*="markdown"]')]
 
+  /**
+   * The ancestor chain of a marker element, with how many markers each level contains.
+   *
+   * Walking UP is the only way to name the per-turn wrapper and the list: a container's own
+   * attributes say nothing about what it holds, and the interesting elements have hashed
+   * class names that cannot be guessed. The markersInside count is what identifies the list
+   * — the level where the count stops growing is the one holding every turn.
+   */
+  const ancestorChain = (element, markerSelector) => {
+    const chain = []
+    let node = element
+    let guard = 0
+    while (node && node !== document.body && guard < 20) {
+      const cls = typeof node.className === 'string' ? node.className : ''
+      chain.push({
+        tag: node.tagName.toLowerCase(),
+        class: cls.slice(0, 90),
+        childCount: node.children.length,
+        markersInside: markerSelector ? node.querySelectorAll(markerSelector).length : 0,
+        dataAttrs: [...(node.attributes || [])]
+          .filter((a) => a.name.startsWith('data-'))
+          // String concatenation, NOT a template literal: this code lives inside one, and
+          // an inner backtick would either terminate it or interpolate against this file's
+          // variables instead of the page's.
+          .map((a) => a.name + '=' + String(a.value).slice(0, 40))
+      })
+      node = node.parentElement
+      guard += 1
+    }
+    return chain
+  }
+
+  /**
+   * Every button-like element, fully described.
+   *
+   * "The button whose label says send" produced null even with text sitting in the
+   * composer, so that assumption is simply wrong on this site. Listing them all beats
+   * guessing a second filter and burning another run.
+   */
+  const allButtons = [...document.querySelectorAll('button, [role="button"], [class*="ds-button"]')]
+    .slice(0, 40)
+    .map((el) => {
+      const cls = typeof el.className === 'string' ? el.className : ''
+      return {
+        tag: el.tagName.toLowerCase(),
+        class: cls.slice(0, 110),
+        ariaLabel: el.getAttribute('aria-label') || '',
+        title: el.getAttribute('title') || '',
+        disabled: el.getAttribute('aria-disabled') === 'true' || /disabled/.test(cls),
+        text: (el.innerText || '').trim().slice(0, 24),
+        svgPaths: el.querySelectorAll('svg path').length
+      }
+    })
+
   // Every element that the framework tagged with a data-* attribute, grouped by name.
   // The message list is in here somewhere; this is how we find it without guessing.
   const dataAttrHistogram = {}
@@ -161,6 +215,17 @@ const INSPECT = `(() => {
     firstItem: describe(keyedItems[0]),
     markdownCount: markdownBlocks.length,
     markdownFirst: describe(markdownBlocks[0]),
+    /*
+     * The structures that actually decide the adapter: the chain of ancestors above one
+     * reply body, and the full button inventory.
+     */
+    replyAncestors: markdownBlocks[0] ? ancestorChain(markdownBlocks[0], '[class*="markdown"]') : [],
+    itemAncestors: keyedItems[0] ? ancestorChain(keyedItems[0], '[data-virtual-list-item-key]') : [],
+    allButtons,
+    /* Composer text, so a snapshot proves whether the input was filled when it was taken. */
+    composerText: composerCandidate
+      ? String(composerCandidate.value ?? composerCandidate.innerText ?? '').slice(0, 60)
+      : '',
     // Sidebar conversation links, for the "sync conversations" feature.
     sidebarLinks: [...document.querySelectorAll('a[href^="/a/chat/s/"]')]
       .slice(0, 5)
@@ -238,6 +303,19 @@ async function inspect(wc, label) {
     log(`${label} messageList=`, JSON.stringify(info.messageList))
     log(`${label} firstItem=`, JSON.stringify(info.firstItem))
     log(`${label} markdown=`, String(info.markdownCount), JSON.stringify(info.markdownFirst))
+    log(`${label} composerText=`, JSON.stringify(info.composerText))
+    log(`${label} reply ancestors (innermost → body):`)
+    for (const [i, step] of (info.replyAncestors || []).entries()) {
+      log(`    ${String(i).padStart(2)} <${step.tag} class="${step.class}"> children=${step.childCount} markdownInside=${step.markersInside} ${step.dataAttrs.join(' ')}`)
+    }
+    log(`${label} item ancestors:`)
+    for (const [i, step] of (info.itemAncestors || []).entries()) {
+      log(`    ${String(i).padStart(2)} <${step.tag} class="${step.class}"> children=${step.childCount} keysInside=${step.markersInside} ${step.dataAttrs.join(' ')}`)
+    }
+    log(`${label} buttons (${(info.allButtons || []).length}):`)
+    for (const [i, b] of (info.allButtons || []).entries()) {
+      log(`    ${String(i).padStart(2)} <${b.tag}> class="${b.class}" aria="${b.ariaLabel}" title="${b.title}" disabled=${b.disabled} svgPaths=${b.svgPaths} text=${JSON.stringify(b.text)}`)
+    }
     log(`${label} message containers:`)
     for (const row of info.messageish) log(`    ${JSON.stringify(row)}`)
     dumpMarkup(label, info.messageHtml)
