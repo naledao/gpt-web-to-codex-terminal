@@ -140,9 +140,54 @@ const INSPECT = `(() => {
     sidebarLinks: [...document.querySelectorAll('a[href^="/a/chat/s/"]')]
       .slice(0, 5)
       .map((a) => ({ href: a.getAttribute('href'), text: (a.innerText || '').trim().slice(0, 40) })),
-    sidebarLinkCount: document.querySelectorAll('a[href^="/a/chat/s/"]').length
+    sidebarLinkCount: document.querySelectorAll('a[href^="/a/chat/s/"]').length,
+    /*
+     * The raw markup of the reply container, so the adapter can be written even if the
+     * generic scan above fails to name it.
+     *
+     * Text is replaced with a marker and attribute values are truncated: the goal is the
+     * SHAPE (tag names, class names, which element holds one turn), and shipping the
+     * user's actual conversation out of the page is not part of that. Dumped to its own
+     * file rather than the log, because a single reply's markup is tens of kilobytes.
+     */
+    messageHtml: (() => {
+      const containers = [...document.querySelectorAll('[class]')].filter(
+        (el) => el.children.length >= 2 && (el.innerText || '').length > 200
+      )
+      // The smallest container that still holds a whole thread: the outermost one is the
+      // app root and carries no useful structure.
+      const target = containers.sort((a, b) => a.innerHTML.length - b.innerHTML.length)[0]
+      if (!target) return ''
+      return target.outerHTML
+        .replace(/>[^<]{40,}</g, '>«text»<')
+        .replace(/="[^"]{80,}"/g, '="«long»"')
+        .slice(0, 60000)
+    })()
   }
 })()`
+
+/**
+ * Write the captured markup next to the log.
+ *
+ * Separate file on purpose: it is the one artefact that lets the adapter be written
+ * without another run, and a reply's markup would bury the readable log lines.
+ */
+function dumpMarkup(label, html) {
+  if (!html) {
+    log(`${label} markup: (empty — no thread container found yet)`)
+    return
+  }
+  const file = LOG_FILE.replace(/\.log$/, '.markup.html')
+  try {
+    fs.appendFileSync(
+      file,
+      `\n<!-- ===== ${label} @ ${new Date().toISOString()} ===== -->\n${html}\n`
+    )
+    log(`${label} markup appended to`, file, `(${html.length} chars)`)
+  } catch (error) {
+    log(`${label} markup write failed:`, error.message)
+  }
+}
 
 async function inspect(wc, label) {
   try {
@@ -159,6 +204,7 @@ async function inspect(wc, label) {
     log(`${label} idLike=`, JSON.stringify(info.idLike))
     log(`${label} message containers:`)
     for (const row of info.messageish) log(`    ${JSON.stringify(row)}`)
+    dumpMarkup(label, info.messageHtml)
     return info
   } catch (error) {
     log(`${label} inspect failed:`, error.message)
