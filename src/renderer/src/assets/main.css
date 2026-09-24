@@ -1674,6 +1674,7 @@ body {
 .workspace {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1945,5 +1946,106 @@ body {
 }
 
 .ssh-files__error {
+  color: var(--danger);
+}
+
+/* ---------------- global SSH transfers ---------------- */
+.workspace__transferbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 3px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-chrome);
+}
+
+.workspace__transfer-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workspace__transfer-button:hover {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.workspace__transfer-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.workspace__transfer-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.transfer-modal__box {
+  width: min(680px, calc(100vw - 48px));
+}
+
+.transfer-modal__summary {
+  margin-left: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.transfer-modal__body {
+  padding: 10px 12px 12px;
+}
+
+.transfer-modal__empty {
+  padding: 28px 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.transfer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.transfer-item {
+  border: 1px solid var(--border);
+}
+
+.transfer-item__direction {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.transfer-item__direction--upload {
+  background: rgba(63, 185, 80, 0.14);
+  color: #7ee787;
+}
+
+.transfer-item__direction--download {
+  background: var(--accent-soft);
+  color: #a8c7ff;
+}
+
+.ssh-download__status--uploading,
+.ssh-download__status--downloading {
+  color: #a8c7ff;
+}
+
+.transfer-item .ssh-download__error {
+  margin-top: 4px;
+  font-size: 10px;
   color: var(--danger);
 }

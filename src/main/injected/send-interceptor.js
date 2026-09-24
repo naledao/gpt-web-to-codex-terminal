@@ -822,11 +822,23 @@
    * its quotes" from "the model had nothing to say". It then looks like the app
    * simply stopped working.
    */
+  const normalizeTimeoutSeconds = (value, command) => {
+    if (!String(command || '').trim()) return 0
+    const seconds = Number(value)
+    if (!Number.isFinite(seconds)) return 120
+    return Math.min(Math.max(Math.floor(seconds), 1), 1800)
+  }
+
   const lenientCommand = (candidate) => {
     const command = readJsonishString(candidate, 'command')
     if (command === null) return null
     const description = readJsonishString(candidate, 'description')
-    return { command: command.trim(), description: (description ?? '').trim() }
+    const timeoutMatch = candidate.match(/"timeout_seconds"\s*:\s*(\d+)/)
+    return {
+      command: command.trim(),
+      description: (description ?? '').trim(),
+      timeoutSeconds: normalizeTimeoutSeconds(timeoutMatch?.[1], command)
+    }
   }
 
   const toCommand = (candidate) => {
@@ -841,7 +853,8 @@
       if (typeof parsed.command !== 'string') continue
       return {
         command: parsed.command.trim(),
-        description: typeof parsed.description === 'string' ? parsed.description.trim() : ''
+        description: typeof parsed.description === 'string' ? parsed.description.trim() : '',
+        timeoutSeconds: normalizeTimeoutSeconds(parsed.timeout_seconds, parsed.command)
       }
     }
 
@@ -975,6 +988,7 @@
       messageId,
       command: parsed.command,
       description: parsed.description,
+      timeoutSeconds: parsed.timeoutSeconds,
       live
     })
   }

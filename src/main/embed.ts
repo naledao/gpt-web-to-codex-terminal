@@ -776,6 +776,7 @@ export class ChatGptEmbed {
             messageId: payload.messageId,
             command: payload.command,
             description: payload.description ?? '',
+            timeoutSeconds: Number(payload.timeoutSeconds ?? 120),
             live: payload.live === true
           })
         }

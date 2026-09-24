@@ -1,4 +1,4 @@
-﻿appId: com.example.gptweb2codexterminal
+appId: com.example.gptweb2codexterminal
 productName: GPT Web to Codex Terminal
 
 directories:
@@ -14,6 +14,9 @@ files:
   - '!**/*.map'
 
 asar: true
+extraResources:
+  - from: build/icon.png
+    to: tray-icon.png
 # ssh2's native accelerators (cpu-features/nan) are OPTIONAL and were never built
 # 鈥?npm's allow-scripts gate skips them, and the pure-JS path is what runs. So
 # there is nothing to rebuild.

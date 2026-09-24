@@ -111,7 +111,7 @@ export class RemoteShell implements ExecutionShell {
     if (path !== '') this.currentCwd = path
   }
 
-  run(command: string): Promise<ShellResult> {
+  run(command: string, timeoutMs?: number): Promise<ShellResult> {
     if (this.disposed) return Promise.resolve(this.reject('远端会话已关闭。'))
     if (this.closed) return Promise.resolve(this.reject('远端会话已结束，请重新连接后重试。'))
     if (this.pending) return Promise.resolve(this.reject('远端终端正忙，忽略了这条命令。'))
@@ -137,10 +137,13 @@ export class RemoteShell implements ExecutionShell {
         this.terminate()
       }, IDLE_TIMEOUT_MS)
 
+      const ceilingMs = Number.isFinite(timeoutMs)
+        ? Math.min(Math.max(Math.floor(Number(timeoutMs)), 1000), MAX_RUNTIME_MS)
+        : MAX_RUNTIME_MS
       const ceilingTimer = setTimeout(() => {
         if (this.pending) this.pending.timedOut = 'ceiling'
         this.terminate()
-      }, MAX_RUNTIME_MS)
+      }, ceilingMs)
 
       this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false, interrupted: false }
 

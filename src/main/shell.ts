@@ -184,7 +184,7 @@ export interface ExecutionShell {
   readonly running: boolean
   /** Working directory after the last command; it persists between commands. */
   readonly cwd: string
-  run(command: string): Promise<ShellResult>
+  run(command: string, timeoutMs?: number): Promise<ShellResult>
   /** Stop the command currently in flight. Returns false when there was nothing to stop. */
   interrupt(): Promise<boolean>
   dispose(): void
@@ -273,7 +273,7 @@ export class ConversationShell implements ExecutionShell {
     return this.pending !== null
   }
 
-  async run(command: string): Promise<ShellResult> {
+  async run(command: string, timeoutMs?: number): Promise<ShellResult> {
     if (this.disposed) {
       return this.reject('终端已关闭，请重置后重试。')
     }
@@ -306,10 +306,13 @@ export class ConversationShell implements ExecutionShell {
         this.killChild(child)
       }, IDLE_TIMEOUT_MS)
 
+      const ceilingMs = Number.isFinite(timeoutMs)
+        ? Math.min(Math.max(Math.floor(Number(timeoutMs)), 1000), MAX_RUNTIME_MS)
+        : MAX_RUNTIME_MS
       const ceilingTimer = setTimeout(() => {
         if (this.pending) this.pending.timedOut = 'ceiling'
         this.killChild(child)
-      }, MAX_RUNTIME_MS)
+      }, ceilingMs)
 
       // Set before writing: the reply can arrive before write() returns.
       this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false, interrupted: false }

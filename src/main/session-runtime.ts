@@ -85,11 +85,13 @@ export interface SessionRuntimeOptions {
   initialSshAttached?: boolean
   initialSshReconnect?: boolean
   initialSshCwd?: string
+  initialSendDelaySeconds?: number
   store: ConversationStore
   localMachineId: string
   initialMode: ExecutionMode
   settings: () => { embedProxy: string; sshProxy: string }
   onSummaryChanged: () => void
+  onTransfersChanged: () => void
   onActivate: (id: string) => void
 }
 
@@ -230,6 +232,7 @@ export class SessionRuntime {
 
     this.runner.restoreMode(options.initialMode)
     this.runner.restorePaused(options.initialPaused ?? false)
+    this.runner.setSendDelay(options.initialSendDelaySeconds ?? 0)
     this.embed.setBaselinePolicy(options.initialMode === 'auto')
 
     this.ssh = new SshManager((state) => {
@@ -247,8 +250,10 @@ export class SessionRuntime {
       }
     }, (downloads) => {
       this.send(IpcChannels.sshDownloadsChanged, downloads)
+      this.options.onTransfersChanged()
     }, (uploads) => {
       this.send(IpcChannels.sshUploadsChanged, uploads)
+      this.options.onTransfersChanged()
     })
 
     const restoredHostId = options.initialSshHostId?.trim() ?? ''
@@ -537,6 +542,7 @@ export class SessionRuntime {
     sshAttached: boolean
     sshReconnect: boolean
     sshCwd: string
+    sendDelaySeconds: number
     createdAt: number
   } {
     const automation = this.runner.getAutomation()
@@ -561,6 +567,7 @@ export class SessionRuntime {
       sshAttached: sshState.attached,
       sshReconnect: sshState.attached && sshState.status !== 'disconnected',
       sshCwd: this.sshCwd,
+      sendDelaySeconds: terminal.sendDelaySeconds,
       createdAt: this.createdAt
     }
   }
@@ -718,7 +725,9 @@ export class SessionRuntime {
 
   /** Pace the loop without touching any stored state or the environment probe. */
   setTerminalSendDelay(seconds: number): TerminalState {
-    return this.runner.setSendDelay(seconds)
+    const state = this.runner.setSendDelay(seconds)
+    this.options.onSummaryChanged()
+    return state
   }
 
   currentNotes(): TerminalNotes {

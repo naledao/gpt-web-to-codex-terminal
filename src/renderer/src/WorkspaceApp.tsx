@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import type { ManagedSessionSummary, WorkspaceState } from '../../shared/types'
+import type { ManagedSessionSummary, SshTransferTask, WorkspaceState } from '../../shared/types'
 import App from './App'
 import ManagerApp from './ManagerApp'
 
@@ -10,19 +10,44 @@ const INITIAL_WORKSPACE: WorkspaceState = {
   openSshDialog: false
 }
 
+function formatBytes(bytes: number): string {
+  const value = Math.max(0, bytes)
+  if (value < 1024) return `${value} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let size = value
+  let index = -1
+  do {
+    size /= 1024
+    index += 1
+  } while (size >= 1024 && index < units.length - 1)
+  return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${units[index]}`
+}
+
+function transferStatus(item: SshTransferTask, percent: number): string {
+  if (item.status === 'completed') return '已完成'
+  if (item.status === 'cancelled') return '已取消'
+  if (item.status === 'failed') return '失败'
+  return item.total > 0 ? `${percent}%` : '准备中…'
+}
+
 export default function WorkspaceApp(): ReactElement {
   const [workspace, setWorkspace] = useState<WorkspaceState>(INITIAL_WORKSPACE)
   const [sessions, setSessions] = useState<ManagedSessionSummary[]>([])
+  const [transfers, setTransfers] = useState<SshTransferTask[]>([])
+  const [transfersOpen, setTransfersOpen] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     void window.api.getWorkspaceState().then(setWorkspace)
     void window.api.listManagedSessions().then(setSessions)
+    void window.api.getSshTransfers().then(setTransfers)
     const offWorkspace = window.api.onWorkspaceChanged(setWorkspace)
     const offSessions = window.api.onManagedSessionsChanged(setSessions)
+    const offTransfers = window.api.onSshTransfersChanged(setTransfers)
     return () => {
       offWorkspace()
       offSessions()
+      offTransfers()
     }
   }, [])
 
@@ -37,6 +62,23 @@ export default function WorkspaceApp(): ReactElement {
       setDeletingId(null)
     }
   }
+
+  const cancelTransfer = async (item: SshTransferTask): Promise<void> => {
+    try {
+      await window.api.cancelSshTransfer(item.sessionId, item.direction, item.id)
+    } catch {
+      /* pushed global transfer state remains authoritative */
+    }
+  }
+
+  const activeTransfers = transfers.filter(
+    (item) => item.status === 'uploading' || item.status === 'downloading'
+  )
+  const activeTotal = activeTransfers.reduce((sum, item) => sum + item.total, 0)
+  const activeTransferred = activeTransfers.reduce((sum, item) => sum + item.transferred, 0)
+  const activePercent = activeTotal > 0
+    ? Math.min(100, Math.round((activeTransferred / activeTotal) * 100))
+    : 0
 
   return (
     <div className="workspace">
@@ -79,11 +121,13 @@ export default function WorkspaceApp(): ReactElement {
           ))}
         </div>
       </nav>
+
       <section className="workspace__content">
         {workspace.view === 'session' && workspace.sessionId ? (
           <App
             key={workspace.sessionId}
             initialSshDialogOpen={workspace.openSshDialog}
+            globalModalOpen={transfersOpen}
             /*
              * Read from the session list rather than held as its own state: the main process
              * republishes the list whenever a session changes, including on a platform switch,
@@ -97,6 +141,105 @@ export default function WorkspaceApp(): ReactElement {
           <ManagerApp />
         )}
       </section>
+
+      <footer className="workspace__transferbar">
+        <button
+          type="button"
+          className="workspace__transfer-button"
+          onClick={() => setTransfersOpen(true)}
+          title="查看所有会话的上传和下载任务"
+        >
+          <span className={activeTransfers.length > 0 ? 'dot dot--busy' : 'dot'} />
+          <span className="workspace__transfer-title">传输任务</span>
+          <span className="workspace__transfer-summary">
+            {activeTransfers.length > 0
+              ? `${activeTransfers.length} 个进行中${activeTotal > 0 ? ` · ${activePercent}%` : ''}`
+              : transfers.length > 0
+                ? `${transfers.length} 个任务`
+                : '暂无任务'}
+          </span>
+        </button>
+      </footer>
+
+      {transfersOpen ? (
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="传输任务"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setTransfersOpen(false)
+          }}
+        >
+          <div className="modal__box transfer-modal__box">
+            <div className="modal__head">
+              <span className="panel__title">传输任务</span>
+              <span className="transfer-modal__summary">
+                {activeTransfers.length > 0 ? `${activeTransfers.length} 个进行中` : '当前没有进行中的任务'}
+              </span>
+              <span className="panel__spacer" />
+              <button
+                type="button"
+                className="panel__sync"
+                aria-label="关闭"
+                onClick={() => setTransfersOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal__body transfer-modal__body">
+              {transfers.length === 0 ? (
+                <div className="transfer-modal__empty">暂无上传或下载任务。</div>
+              ) : (
+                <div className="transfer-list">
+                  {transfers.map((item) => {
+                    const percent = item.total > 0
+                      ? Math.min(100, Math.round((item.transferred / item.total) * 100))
+                      : 0
+                    const active = item.status === 'uploading' || item.status === 'downloading'
+                    const session = sessions.find((candidate) => candidate.id === item.sessionId)
+                    const sessionLabel = session?.title || session?.target || item.sessionId.slice(0, 8)
+                    return (
+                      <div
+                        className="ssh-download transfer-item"
+                        key={`${item.sessionId}:${item.direction}:${item.id}`}
+                        title={item.error || (item.direction === 'upload' ? item.remotePath : item.localPath)}
+                      >
+                        <div className="ssh-download__row">
+                          <span className={`transfer-item__direction transfer-item__direction--${item.direction}`}>
+                            {item.direction === 'upload' ? '上传' : '下载'}
+                          </span>
+                          <span className="ssh-download__name">{item.name}</span>
+                          <span className={`ssh-download__status ssh-download__status--${item.status}`}>
+                            {transferStatus(item, percent)}
+                          </span>
+                          {active ? (
+                            <button
+                              type="button"
+                              className="ssh-download__cancel"
+                              onClick={() => void cancelTransfer(item)}
+                            >
+                              取消
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="ssh-download__progress" aria-label={`${item.name} ${item.direction === 'upload' ? '上传' : '下载'}进度`}>
+                          <span style={{ width: `${item.total > 0 ? percent : 0}%` }} />
+                        </div>
+                        <div className="ssh-download__meta">
+                          <span>{sessionLabel}</span>
+                          <span>{formatBytes(item.transferred)}{item.total > 0 ? ` / ${formatBytes(item.total)}` : ''}</span>
+                        </div>
+                        {item.error ? <div className="ssh-download__error">{item.error}</div> : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

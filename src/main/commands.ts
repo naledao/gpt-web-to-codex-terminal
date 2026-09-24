@@ -331,8 +331,8 @@ export class CommandRunner {
   /**
    * Seconds to hold a finished command before its output goes back to the model.
    *
-   * Deliberately NOT persisted: it paces the loop, it is not a preference, and
-   * there is no sensible value to restore on the next launch but zero.
+   * Persisted with the managed session so the user's pacing preference survives
+   * app restarts independently for each session.
    */
   private sendDelaySeconds = 0
   private lines: TerminalLine[] = []
@@ -457,6 +457,7 @@ export class CommandRunner {
       conversationId,
       command: parsed.command,
       description: parsed.description,
+      timeoutSeconds: parsed.timeoutSeconds,
       status: danger ? 'blocked' : 'pending',
       createdAt: Date.now()
     })
@@ -598,7 +599,7 @@ export class CommandRunner {
     this.appendLine({ kind: 'command', text: record.command })
     this.broadcastExecutions(conversationId)
 
-    const result = await this.runOnShell(shell, record.command)
+    const result = await this.runOnShell(shell, record.command, record.timeoutSeconds)
 
     this.deps.store.finishExecution(messageId, {
       status: result.rejected
@@ -870,7 +871,7 @@ export class CommandRunner {
   /* ---------------- internals ---------------- */
 
   /** Track the backend currently executing so it can be interrupted immediately. */
-  private async runOnShell(shell: ExecutionShell, command: string): Promise<ShellResult> {
+  private async runOnShell(shell: ExecutionShell, command: string, timeoutSeconds?: number): Promise<ShellResult> {
     // Never let a second helper call overwrite the identity of the command that
     // is actually in flight; that would make the 中断 button lose its target.
     if (this.activeShell) {
@@ -888,7 +889,10 @@ export class CommandRunner {
     const runId = (this.activeRunId += 1)
     this.activeShell = shell
     try {
-      return await shell.run(command)
+      const timeoutMs = Number.isFinite(timeoutSeconds)
+        ? Math.min(Math.max(Math.floor(Number(timeoutSeconds)) * 1000, 1000), MAX_RUNTIME_MS)
+        : undefined
+      return await shell.run(command, timeoutMs)
     } finally {
       if (shell === this.localShell) this.localCwd = shell.cwd
       // A local PowerShell restart reuses the same ConversationShell object.

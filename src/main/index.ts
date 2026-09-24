@@ -1,6 +1,6 @@
 import { join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_LOGIN_URL,
@@ -32,6 +32,8 @@ import type {
   SshHostDraft,
   SshDownloadTask,
   SshUploadTask,
+  SshTransferDirection,
+  SshTransferTask,
   SshFileEntry,
   SshState,
   TerminalNotes,
@@ -81,6 +83,8 @@ const SETTING_WORKSPACE_SESSION_ID = 'workspaceSessionId'
 const SETTING_WORKSPACE_OPEN_SSH_DIALOG = 'workspaceOpenSshDialog'
 
 let managerWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let quitting = false
 let store: ConversationStore | null = null
 let localMachineId = ''
 let settings: AppSettings = { embedProxy: '', sshProxy: '' }
@@ -146,6 +150,24 @@ function managedSessions(): ManagedSessionSummary[] {
 function broadcastManagedSessions(): void {
   if (!managerWindow || managerWindow.isDestroyed()) return
   managerWindow.webContents.send(IpcChannels.managerSessionsChanged, managedSessions())
+}
+
+function sshTransfers(): SshTransferTask[] {
+  const items: SshTransferTask[] = []
+  for (const runtime of runtimes.values()) {
+    for (const task of runtime.ssh.getUploads()) {
+      items.push({ sessionId: runtime.id, direction: 'upload', ...task })
+    }
+    for (const task of runtime.ssh.getDownloads()) {
+      items.push({ sessionId: runtime.id, direction: 'download', ...task })
+    }
+  }
+  return items.sort((a, b) => b.startedAt - a.startedAt)
+}
+
+function broadcastSshTransfers(): void {
+  if (!managerWindow || managerWindow.isDestroyed()) return
+  managerWindow.webContents.send(IpcChannels.sshTransfersChanged, sshTransfers())
 }
 
 function workspaceState(): WorkspaceState {
@@ -225,6 +247,7 @@ function createSession(
     initialSshAttached: restored?.sshAttached ?? false,
     initialSshReconnect: restored?.sshReconnect ?? false,
     initialSshCwd: restored?.sshCwd ?? '',
+    initialSendDelaySeconds: restored?.sendDelaySeconds ?? 0,
     store,
     localMachineId,
     initialMode,
@@ -233,6 +256,7 @@ function createSession(
       if (runtime) persistManagedSession(runtime)
       broadcastManagedSessions()
     },
+    onTransfersChanged: broadcastSshTransfers,
     onActivate: (id) => { selectSession(id) }
   })
   runtimes.set(runtime.id, runtime)
@@ -262,11 +286,35 @@ function destroySession(id: string): boolean {
   store?.removeManagedSession(id)
   runtime.dispose()
   broadcastManagedSessions()
+  broadcastSshTransfers()
   if (wasCurrent) {
     persistWorkspaceState()
     broadcastWorkspaceState()
   }
   return true
+}
+
+function createTray(): void {
+  if (tray) return
+
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, 'tray-icon.png')
+    : join(app.getAppPath(), 'build', 'icon.png')
+
+  tray = new Tray(iconPath)
+  tray.setToolTip(app.getName())
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示主窗口', click: () => createManagerWindow() },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        quitting = true
+        app.quit()
+      }
+    }
+  ]))
+  tray.on('click', () => createManagerWindow())
 }
 
 function createManagerWindow(): void {
@@ -295,6 +343,11 @@ function createManagerWindow(): void {
   })
   managerWindow = window
   window.once('ready-to-show', () => window.show())
+  window.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    window.hide()
+  })
   window.on('closed', () => {
     for (const runtime of runtimes.values()) runtime.dispose()
     runtimes.clear()
@@ -349,6 +402,22 @@ function registerIpcHandlers(): void {
     workspaceOpenSshDialog = Boolean(open)
     persistWorkspaceState()
   })
+  ipcMain.handle(IpcChannels.sshTransfersGet, (event): SshTransferTask[] =>
+    fromManager(event) ? sshTransfers() : [])
+  ipcMain.handle(
+    IpcChannels.sshTransferCancel,
+    (event, sessionId: string, direction: SshTransferDirection, id: string): boolean => {
+      if (!fromManager(event)) return false
+      const runtime = runtimes.get(String(sessionId ?? ''))
+      if (!runtime) return false
+      return direction === 'upload'
+        ? runtime.ssh.cancelUpload(String(id ?? ''))
+        : direction === 'download'
+          ? runtime.ssh.cancelDownload(String(id ?? ''))
+          : false
+    }
+  )
+
   ipcMain.handle(
     IpcChannels.managerSessionCreate,
     (event, kind: string): ManagedSessionSummary | null => {
@@ -634,6 +703,7 @@ if (!app.requestSingleInstanceLock()) {
     await applyEmbedProxy(settings.embedProxy)
 
     registerIpcHandlers()
+    createTray()
     createManagerWindow()
     const savedWorkspaceSessionId = conversationStore.getSetting(SETTING_WORKSPACE_SESSION_ID) ?? ''
     const savedWorkspaceOpenSshDialog = conversationStore.getSetting(SETTING_WORKSPACE_OPEN_SSH_DIALOG) === '1'
@@ -665,11 +735,13 @@ if (!app.requestSingleInstanceLock()) {
   })
 }
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+app.on('before-quit', () => {
+  quitting = true
 })
 
 app.on('will-quit', () => {
+  tray?.destroy()
+  tray = null
   for (const runtime of runtimes.values()) runtime.dispose()
   runtimes.clear()
   store?.close()

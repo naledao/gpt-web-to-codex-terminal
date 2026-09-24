@@ -67,6 +67,9 @@ export const IpcChannels = {
   sshDownloadsGet: 'ssh:downloads-get',
   sshDownloadCancel: 'ssh:download-cancel',
   sshDownloadsChanged: 'ssh:downloads-changed',
+  sshTransfersGet: 'ssh:transfers-get',
+  sshTransferCancel: 'ssh:transfer-cancel',
+  sshTransfersChanged: 'ssh:transfers-changed',
   sshChanged: 'ssh:changed',
   managerSessionsList: 'manager:sessions-list',
   managerSessionCreate: 'manager:session-create',
@@ -444,10 +447,13 @@ const OUTPUT_FORMAT_SECTION = [
   '【输出格式】',
   '任务还没完成时，把 JSON 放进一个 ```json 代码块里输出，代码块之外不要有任何文字：',
   '```json',
-  '{"command":"","description":""}',
+  '{"command":"","description":"","timeout_seconds":0}',
   '```',
   '- command：要执行的命令。',
   '- description：这条命令在做什么，用中文一句话说明。',
+  '- timeout_seconds：只要 command 非空就**必须填写**，由你根据这条命令的实际工作量估算合理的整数秒数，不要所有命令机械使用同一个值。',
+  '  简单读取/检查通常几十秒；构建、测试、网络操作、大范围搜索应合理放宽。允许 1-1800 秒；command 为空表示任务完成时填 0。',
+  '  这是本条命令的绝对运行上限：必须给出有限值，禁止无限等待，并应留出合理余量避免正常任务被过早终止。',
   '**必须用代码块包裹**：ChatGPT 的界面会把回复按 Markdown 渲染，而命令行里大量使用',
   '下划线（$_、$env:、$()）和星号（*.txt、*）—— 不放进代码块的话，这些字符会被当成',
   'Markdown 的斜体/加粗标记而**从命令里消失**，我就只能执行一条被改坏的命令。',
@@ -717,6 +723,8 @@ export interface InterceptorPageEvent {
   messageId?: string
   command?: string
   description?: string
+  /** Present on command events: absolute runtime limit selected for this command, in seconds. */
+  timeoutSeconds?: number
   /** Present on `command` events: true when it answers a message we just sent. */
   live?: boolean
   /** Present on `task-finished`: true only for an explicitly marked completed task. */
@@ -744,6 +752,8 @@ export interface ExecutionRecord {
   conversationId: string
   command: string
   description: string
+  /** Absolute runtime limit selected for this command, in seconds. */
+  timeoutSeconds: number
   status: ExecutionStatus
   exitCode: number | null
   output: string
@@ -758,6 +768,8 @@ export interface ParsedCommand {
   messageId: string
   command: string
   description: string
+  /** Absolute runtime limit selected for this command, in seconds. */
+  timeoutSeconds: number
   /**
    * The only thing that matters for safety: is this reply an answer to a message
    * the app just sent, or is it history that happened to be on screen?
@@ -903,6 +915,23 @@ export interface SshDownloadTask {
   error: string
 }
 
+export type SshTransferDirection = 'upload' | 'download'
+
+export interface SshTransferTask {
+  sessionId: string
+  direction: SshTransferDirection
+  id: string
+  name: string
+  localPath: string
+  remotePath: string
+  status: SshUploadStatus | SshDownloadStatus
+  transferred: number
+  total: number
+  startedAt: number
+  finishedAt: number | null
+  error: string
+}
+
 export interface SshState {
   status: SshStatus
   /**
@@ -1006,6 +1035,11 @@ export interface AppApi {
   showWorkspaceManager(): Promise<boolean>
   setWorkspaceSshDialogOpen(open: boolean): void
   onWorkspaceChanged(listener: (state: WorkspaceState) => void): () => void
+  /** Upload and download tasks across every managed SSH session. */
+  getSshTransfers(): Promise<SshTransferTask[]>
+  /** Cancel one global transfer by owning session, direction and task id. */
+  cancelSshTransfer(sessionId: string, direction: SshTransferDirection, id: string): Promise<boolean>
+  onSshTransfersChanged(listener: (items: SshTransferTask[]) => void): () => void
   /** Position the native embedded view under the renderer's placeholder. */
   setEmbedBounds(bounds: EmbedBounds): void
   /** Hide/show the native view (needed while a modal covers it). */

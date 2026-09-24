@@ -26,6 +26,8 @@ import type {
   SshFileEntry,
   SshDownloadTask,
   SshUploadTask,
+  SshTransferDirection,
+  SshTransferTask,
   SshState,
   TerminalNotes,
   TerminalState
@@ -74,6 +76,18 @@ const api: AppApi = {
     const handler = (_event: IpcRendererEvent, state: WorkspaceState): void => listener(state)
     ipcRenderer.on(IpcChannels.workspaceChanged, handler)
     return () => ipcRenderer.removeListener(IpcChannels.workspaceChanged, handler)
+  },
+
+  getSshTransfers: (): Promise<SshTransferTask[]> =>
+    ipcRenderer.invoke(IpcChannels.sshTransfersGet),
+
+  cancelSshTransfer: (sessionId: string, direction: SshTransferDirection, id: string): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.sshTransferCancel, sessionId, direction, id),
+
+  onSshTransfersChanged: (listener: (items: SshTransferTask[]) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, items: SshTransferTask[]): void => listener(items)
+    ipcRenderer.on(IpcChannels.sshTransfersChanged, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.sshTransfersChanged, handler)
   },
 
   setEmbedBounds: (bounds: EmbedBounds): void => {
