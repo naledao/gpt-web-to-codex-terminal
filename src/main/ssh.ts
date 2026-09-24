@@ -359,6 +359,25 @@ export class SshManager {
     }
   }
 
+  /** Download one remote file to a local path over SFTP. */
+  async downloadFile(remotePath: string, localPath: string): Promise<void> {
+    const client = this.client
+    if (!client || this.state.status !== 'connected') throw new Error('当前没有已连接的 SSH 会话。')
+    const source = remotePath.trim()
+    const destination = localPath.trim()
+    if (source === '' || destination === '') throw new Error('下载路径不能为空。')
+    const sftp = await new Promise<import('ssh2').SFTPWrapper>((resolve, reject) => {
+      client.sftp((error, channel) => (error ? reject(error) : resolve(channel)))
+    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        sftp.fastGet(source, destination, (error) => (error ? reject(error) : resolve()))
+      })
+    } finally {
+      sftp.end()
+    }
+  }
+
   /** Upload local files into the model shell's current remote directory over SFTP. */
   async uploadFiles(localPaths: string[]): Promise<SshState> {
     const client = this.client

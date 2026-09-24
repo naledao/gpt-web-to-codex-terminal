@@ -193,6 +193,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   listSshFiles: (path: string): Promise<SshFileEntry[]> =>
     ipcRenderer.invoke(IpcChannels.sshListFiles, path),
 
+  downloadSshFile: (path: string): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.sshDownloadFile, path),
+
   onSshChanged: (listener: (state: SshState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: SshState): void => listener(state)
     ipcRenderer.on(IpcChannels.sshChanged, handler)

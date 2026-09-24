@@ -757,6 +757,16 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
           void api.exec('provide-data', { id, data: [] })
         })
     })
+    const downloadFile = (event: { id?: string } | null): void => {
+      const id = String(event?.id ?? '')
+      if (id === '') return
+      setSshFilesError('')
+      void window.api.downloadSshFile(id).catch((error: unknown) => {
+        setSshFilesError(error instanceof Error ? error.message : '下载远程文件失败')
+      })
+    }
+    api.on('download-file', downloadFile)
+    api.on('open-file', downloadFile)
   }, [])
 
   useEffect(() => {
@@ -1556,16 +1566,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
         {terminalCollapsed ? null : sshActive ? (
           <div className="terminal-pane__meta">
             <span className="terminal-pane__id">{ssh?.name || 'SSH'}</span>
-            <span
-              className={ssh?.remoteExec ? 'badge badge--remote' : 'badge'}
-              title={
-                ssh?.remoteExec
-                  ? `模型发出的命令在这台主机上执行\n模型 shell 的工作目录：${ssh.modelCwd || '尚未确定'}`
-                  : '命令通道未就绪——模型命令目前仍在本地机器上执行'
-              }
-            >
-              {ssh?.remoteExec ? '模型命令在此执行' : '模型命令仍在本地'}
-            </span>
             {ssh?.status === 'connected' ? (
               cwdDraft !== null ? (
                 <form className="terminal-pane__cwd-form" onSubmit={submitCwd}>

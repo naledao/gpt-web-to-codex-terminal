@@ -1740,6 +1740,40 @@ body {
   overflow: auto;
 }
 
+.workspace__session-row {
+  position: relative;
+  min-width: 0;
+}
+
+.workspace__session-row .workspace__session {
+  padding-right: 30px;
+}
+
+.workspace__session-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.workspace__session-delete:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.workspace__session-delete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .workspace__session {
   display: flex;
   flex-direction: column;
@@ -1762,6 +1796,11 @@ body {
 .workspace__session-meta {
   font-size: 10px;
   color: var(--text-muted);
+}
+
+.workspace__session-running {
+  color: #3fb950;
+  font-weight: 600;
 }
 
 .workspace__content {

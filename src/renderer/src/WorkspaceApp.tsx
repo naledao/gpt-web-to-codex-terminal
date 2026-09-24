@@ -13,6 +13,7 @@ const INITIAL_WORKSPACE: WorkspaceState = {
 export default function WorkspaceApp(): ReactElement {
   const [workspace, setWorkspace] = useState<WorkspaceState>(INITIAL_WORKSPACE)
   const [sessions, setSessions] = useState<ManagedSessionSummary[]>([])
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     void window.api.getWorkspaceState().then(setWorkspace)
@@ -24,6 +25,18 @@ export default function WorkspaceApp(): ReactElement {
       offSessions()
     }
   }, [])
+
+  const deleteSession = async (item: ManagedSessionSummary): Promise<void> => {
+    if (deletingId !== null) return
+    const title = item.title || '会话'
+    if (!window.confirm(`删除“${title}”？\n\n该会话的终端进程和 SSH 连接会立即结束，ChatGPT 对话历史不会因此删除。`)) return
+    setDeletingId(item.id)
+    try {
+      await window.api.destroyManagedSession(item.id)
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   return (
     <div className="workspace">
@@ -39,16 +52,30 @@ export default function WorkspaceApp(): ReactElement {
         <div className="workspace__nav-label">会话</div>
         <div className="workspace__sessions">
           {sessions.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              className={workspace.sessionId === item.id ? 'workspace__session workspace__session--active' : 'workspace__session'}
-              onClick={() => void window.api.openManagedSession(item.id)}
-              title={item.title || item.target}
-            >
-              <span className="workspace__session-title">{item.title || '会话'}</span>
-              <span className="workspace__session-meta">{item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}</span>
-            </button>
+            <div className="workspace__session-row" key={item.id}>
+              <button
+                type="button"
+                className={workspace.sessionId === item.id ? 'workspace__session workspace__session--active' : 'workspace__session'}
+                onClick={() => void window.api.openManagedSession(item.id)}
+                title={item.title || item.target}
+              >
+                <span className="workspace__session-title">{item.title || '会话'}</span>
+                <span className="workspace__session-meta">
+                  {item.taskRunning ? <span className="workspace__session-running">● 执行中 · </span> : null}
+                  {item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="workspace__session-delete"
+                disabled={deletingId !== null}
+                title={`删除 ${item.title || '会话'}`}
+                aria-label={`删除 ${item.title || '会话'}`}
+                onClick={() => void deleteSession(item)}
+              >
+                {deletingId === item.id ? '…' : '×'}
+              </button>
+            </div>
           ))}
         </div>
       </nav>

@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
@@ -523,6 +523,21 @@ function registerIpcHandlers(): void {
     if (!runtime) return []
     return runtime.ssh.listFiles(String(path ?? '/'))
   })
+  ipcMain.handle(IpcChannels.sshDownloadFile, async (event, remotePath: string): Promise<boolean> => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime) return false
+    const source = String(remotePath ?? '').trim()
+    if (source === '') return false
+    const window = runtime.window
+    const options = { title: '保存 SSH 文件', defaultPath: posix.basename(source) || 'download' }
+    const result = window && !window.isDestroyed()
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return false
+    await runtime.ssh.downloadFile(source, result.filePath)
+    return true
+  })
+
   ipcMain.handle(IpcChannels.sshUploadFiles, async (event): Promise<SshState> => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return { ...EMPTY_SSH_STATE }

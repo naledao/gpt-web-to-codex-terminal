@@ -158,6 +158,7 @@ export class SessionRuntime {
   private lastPersistedLocalCwd: string
   private disposed = false
   private active = false
+  private lastSummaryTaskRunning = false
   private embedVisible = true
   /**
    * Last rectangle the renderer reported for the slot.
@@ -334,6 +335,11 @@ export class SessionRuntime {
       },
       onInterceptor: (status) => {
         this.captureGoal(status.lastSentText)
+        const taskRunning = status.taskStartedAt !== null && status.taskFinishedAt === null
+        if (isActive() && taskRunning !== this.lastSummaryTaskRunning) {
+          this.lastSummaryTaskRunning = taskRunning
+          this.options.onSummaryChanged()
+        }
         if (isActive()) this.send(IpcChannels.interceptorEvent, status)
       },
       onTaskCompleted: () => {
@@ -576,6 +582,7 @@ export class SessionRuntime {
       target: usingSsh ? sshState.name || sshState.target || 'SSH' : '本机',
       conversationId: state.conversationId,
       platformId: this.activeEmbed().platform.id,
+      taskRunning: this.taskRunning(),
       createdAt: this.createdAt
     }
   }
@@ -875,7 +882,7 @@ export class SessionRuntime {
 
   private notifyTaskCompleted(body: string): void {
     const window = this.window
-    if (window && !window.isDestroyed() && window.isFocused()) return
+    if (this.active && window && !window.isDestroyed() && window.isFocused()) return
     if (!Notification.isSupported()) return
     const notification = new Notification({ title: 'GPT Web to Codex Terminal', body })
     notification.on('click', () => this.focus())

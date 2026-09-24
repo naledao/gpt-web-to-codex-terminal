@@ -60,6 +60,7 @@ export const IpcChannels = {
   sshInput: 'ssh:input',
   sshUploadFiles: 'ssh:upload-files',
   sshListFiles: 'ssh:list-files',
+  sshDownloadFile: 'ssh:download-file',
   sshChanged: 'ssh:changed',
   managerSessionsList: 'manager:sessions-list',
   managerSessionCreate: 'manager:session-create',
@@ -98,6 +99,8 @@ export interface ManagedSessionSummary {
    * written by a future version cannot make the app unopenable.
    */
   platformId: string
+  /** True while this session has an unfinished model task. */
+  taskRunning: boolean
   createdAt: number
 }
 
@@ -1103,5 +1106,7 @@ export interface AppApi {
   uploadSshFiles(): Promise<SshState>
   /** List one remote directory over SFTP. */
   listSshFiles(path: string): Promise<SshFileEntry[]>
+  /** Pick a local destination and download one remote file over SFTP. */
+  downloadSshFile(path: string): Promise<boolean>
   onSshChanged(listener: (state: SshState) => void): () => void
 }
