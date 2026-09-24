@@ -44,7 +44,7 @@ import { embedAuthState, importSessionToken, previewSessionImport } from './sess
 import { ConversationStore } from './db'
 import { EMPTY_SSH_STATE, SessionRuntime } from './session-runtime'
 import { installAppLog, installNetLog } from './app-log'
-import { applyUpdateProxy, checkForUpdates, downloadUpdate, getUpdateStatus, installUpdate, setUpdaterBroadcast } from './updater'
+import { applyUpdateProxy, checkForUpdates, downloadUpdate, getUpdateStatus, installUpdate, setUpdaterBroadcast, startUpdateSchedule } from './updater'
 
 /*
  * Before anything else, so a failure during startup is itself recorded.
@@ -730,6 +730,8 @@ if (!app.requestSingleInstanceLock()) {
     registerIpcHandlers()
     createTray()
     createManagerWindow()
+    // First check fires immediately, then every 30 minutes (packaged builds only).
+    startUpdateSchedule()
     const savedWorkspaceSessionId = conversationStore.getSetting(SETTING_WORKSPACE_SESSION_ID) ?? ''
     const savedWorkspaceOpenSshDialog = conversationStore.getSetting(SETTING_WORKSPACE_OPEN_SSH_DIALOG) === '1'
     const savedSessions = conversationStore.listManagedSessions()

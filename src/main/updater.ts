@@ -107,3 +107,31 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
 export function installUpdate(): void {
   autoUpdater.quitAndInstall()
 }
+
+/** How often a running app re-checks for a new release. */
+const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000
+
+let scheduleTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Check for updates now, then every 30 minutes while the app runs.
+ *
+ * Skipped in development: checkForUpdates refuses to run unpackaged, and a
+ * timer would otherwise set the error state over and over with nothing to show.
+ * The timer is unref-ed so it never keeps the process alive on its own.
+ */
+export function startUpdateSchedule(): void {
+  if (!app.isPackaged || scheduleTimer !== null) return
+
+  void checkForUpdates()
+
+  scheduleTimer = setInterval(() => {
+    // A download in flight (or one already finished waiting to install) is not
+    // something a background check should stomp on.
+    if (status.phase === 'downloading' || status.phase === 'downloaded') return
+    void checkForUpdates()
+  }, UPDATE_CHECK_INTERVAL_MS)
+
+  // Do not hold the event loop open just for this.
+  scheduleTimer.unref?.()
+}
