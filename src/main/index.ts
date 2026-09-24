@@ -30,6 +30,7 @@ import type {
   SessionImportResult,
   SshHost,
   SshHostDraft,
+  SshFileEntry,
   SshState,
   TerminalNotes,
   TerminalState
@@ -517,6 +518,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.sshConnect, (event, draft: SshHostDraft): SshState => runtimeForEvent(event)?.connectSsh(draft) ?? { ...EMPTY_SSH_STATE })
   ipcMain.handle(IpcChannels.sshDisconnect, (event): SshState => runtimeForEvent(event)?.ssh.disconnect() ?? { ...EMPTY_SSH_STATE })
   ipcMain.handle(IpcChannels.sshDismiss, (event): SshState => runtimeForEvent(event)?.ssh.dismiss() ?? { ...EMPTY_SSH_STATE })
+  ipcMain.handle(IpcChannels.sshListFiles, async (event, path: string): Promise<SshFileEntry[]> => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime) return []
+    return runtime.ssh.listFiles(String(path ?? '/'))
+  })
   ipcMain.handle(IpcChannels.sshUploadFiles, async (event): Promise<SshState> => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return { ...EMPTY_SSH_STATE }

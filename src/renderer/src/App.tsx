@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Filemanager, WillowDark } from '@svar-ui/react-filemanager'
+import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { SESSION_COOKIE_NAME } from '@shared/types'
 import { CHAT_PLATFORMS } from '@shared/platforms'
 import type {
-  AppInfo,
   AppSettings,
   AutomationState,
   Conversation,
@@ -16,6 +17,7 @@ import type {
   SessionImportResult,
   SshHost,
   SshHostDraft,
+  SshFileEntry,
   SshState,
   TerminalNotes,
   TerminalState
@@ -32,6 +34,16 @@ const INITIAL_EMBED_STATE: EmbedState = {
 
 const TERMINAL_MIN_WIDTH = 220
 const TERMINAL_DEFAULT_WIDTH = 400
+
+function toFilemanagerEntities(entries: SshFileEntry[]): FilemanagerEntity[] {
+  return entries.map((entry) => ({
+    id: entry.id,
+    type: entry.type,
+    size: entry.size,
+    date: new Date(entry.modifiedAt),
+    lazy: entry.type === 'folder'
+  }))
+}
 
 const STATUS_LABEL: Record<ExecutionStatus, string> = {
   pending: '待执行',
@@ -96,7 +108,6 @@ interface AppProps {
 }
 
 export default function App({ initialSshDialogOpen = false, platformId = '' }: AppProps): JSX.Element {
-  const [info, setInfo] = useState<AppInfo | null>(null)
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -153,6 +164,10 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
   const [sshPickerOpen, setSshPickerOpen] = useState(false)
   const [sshBusy, setSshBusy] = useState(false)
   const [sshUploading, setSshUploading] = useState(false)
+  const [sshFilesOpen, setSshFilesOpen] = useState(false)
+  const [sshFileData, setSshFileData] = useState<FilemanagerEntity[]>([])
+  const [sshFilesLoading, setSshFilesLoading] = useState(false)
+  const [sshFilesError, setSshFilesError] = useState('')
   const [sshDraft, setSshDraft] = useState<SshHostDraft>({
     id: null,
     name: '',
@@ -224,23 +239,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
     const timer = window.setInterval(() => setDurationNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [interceptor?.taskStartedAt, interceptor?.taskFinishedAt])
-  // Runtime info, kept as a working example of a renderer -> main IPC call.
-  useEffect(() => {
-    let cancelled = false
-
-    window.api
-      .getAppInfo()
-      .then((value) => {
-        if (!cancelled) setInfo(value)
-      })
-      .catch(() => {
-        /* the status bar simply stays empty */
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   // Third-party OAuth must run in the system browser. Pull the last notice once
   // as well as subscribing so a redirect that happened before React mounted is
@@ -747,6 +745,48 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
       setSshUploading(false)
     }
   }, [ssh?.status, sshUploading])
+  const initSshFilemanager = useCallback((api: FilemanagerApi): void => {
+    api.on('request-data', (event) => {
+      const id = String(event?.id ?? '/')
+      setSshFilesError('')
+      void window.api
+        .listSshFiles(id)
+        .then((entries) => api.exec('provide-data', { id, data: toFilemanagerEntities(entries) }))
+        .catch((error: unknown) => {
+          setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败')
+          void api.exec('provide-data', { id, data: [] })
+        })
+    })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!sshFilesOpen || ssh?.status !== 'connected') {
+      setSshFileData([])
+      setSshFilesError('')
+      setSshFilesLoading(false)
+      return () => {
+        cancelled = true
+      }
+    }
+    setSshFilesError('')
+    setSshFilesLoading(true)
+    void window.api
+      .listSshFiles('/')
+      .then((entries) => {
+        if (!cancelled) setSshFileData(toFilemanagerEntities(entries))
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败')
+      })
+      .finally(() => {
+        if (!cancelled) setSshFilesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sshFilesOpen, ssh?.status, ssh?.hostId])
+
   const disconnectSsh = useCallback(async (): Promise<void> => {
     try {
       setSsh(await window.api.disconnectSsh())
@@ -1566,6 +1606,15 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
             </button>
             <button
               type="button"
+              className={sshFilesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
+              disabled={ssh?.status !== 'connected'}
+              title="浏览远程主机文件"
+              onClick={() => setSshFilesOpen((value) => !value)}
+            >
+              文件
+            </button>
+            <button
+              type="button"
               className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
               title={`写一段只针对这台机器的说明，会拼在系统提示词后面${notesSet ? '（已设置）' : ''}`}
               onClick={() => setNotesOpen((value) => !value)}
@@ -1674,6 +1723,26 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
 
         {terminalCollapsed ? null : (
           <>
+            {sshActive && sshFilesOpen ? (
+              <div className="ssh-files">
+                {sshFilesError ? <div className="ssh-files__error">{sshFilesError}</div> : null}
+                {sshFilesLoading ? (
+                  <div className="ssh-files__loading">正在读取远程文件…</div>
+                ) : (
+                  <WillowDark>
+                    <Filemanager
+                      data={sshFileData}
+                      readonly
+                      mode="table"
+                      preview={false}
+                      icons="simple"
+                      init={initSshFilemanager}
+                    />
+                  </WillowDark>
+                )}
+              </div>
+            ) : (
+              <>
             {/*
               The step the loop is on, on its own.
 
@@ -1781,6 +1850,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
                 onChange={(event) => setCommandDraft(event.target.value)}
               />
             </form>
+              </>
+            )}
           </>
         )}
 
@@ -1839,13 +1910,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '' }: A
           </span>
         ) : null}
         <span className="statusbar__spacer" />
-        <span className="statusbar__meta">
-          {info
-            ? `Electron ${info.electron} · Chromium ${info.chrome} · ${
-                info.usingDevServer ? 'dev server' : 'bundled'
-              }`
-            : '…'}
-        </span>
       </footer>
 
       {settingsOpen ? (

@@ -23,6 +23,7 @@ import type {
   SessionImportResult,
   SshHost,
   SshHostDraft,
+  SshFileEntry,
   SshState,
   TerminalNotes,
   TerminalState
@@ -188,6 +189,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
     ipcRenderer.invoke(IpcChannels.sshInput, text),
 
   uploadSshFiles: (): Promise<SshState> => ipcRenderer.invoke(IpcChannels.sshUploadFiles),
+
+  listSshFiles: (path: string): Promise<SshFileEntry[]> =>
+    ipcRenderer.invoke(IpcChannels.sshListFiles, path),
 
   onSshChanged: (listener: (state: SshState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: SshState): void => listener(state)

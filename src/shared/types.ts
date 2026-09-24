@@ -59,6 +59,7 @@ export const IpcChannels = {
   sshRemoveHost: 'ssh:remove-host',
   sshInput: 'ssh:input',
   sshUploadFiles: 'ssh:upload-files',
+  sshListFiles: 'ssh:list-files',
   sshChanged: 'ssh:changed',
   managerSessionsList: 'manager:sessions-list',
   managerSessionCreate: 'manager:session-create',
@@ -853,6 +854,16 @@ export interface SshHostDraft {
 
 export type SshStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
+export interface SshFileEntry {
+  /** Absolute remote path, also used as the FileManager id. */
+  id: string
+  name: string
+  type: 'file' | 'folder'
+  size: number
+  /** Unix epoch milliseconds. */
+  modifiedAt: number
+}
+
 export interface SshState {
   status: SshStatus
   /**
@@ -1090,5 +1101,7 @@ export interface AppApi {
   sendSshInput(text: string): Promise<SshState>
   /** Pick local files and upload them to the current remote working directory. */
   uploadSshFiles(): Promise<SshState>
+  /** List one remote directory over SFTP. */
+  listSshFiles(path: string): Promise<SshFileEntry[]>
   onSshChanged(listener: (state: SshState) => void): () => void
 }

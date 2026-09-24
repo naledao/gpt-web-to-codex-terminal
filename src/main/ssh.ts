@@ -4,7 +4,7 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { Socket } from 'node:net'
 import { basename, posix } from 'node:path'
-import type { SshState, TerminalLine } from '../shared/types'
+import type { SshFileEntry, SshState, TerminalLine } from '../shared/types'
 import { REMOTE_SHELL_COMMAND, RemoteShell } from './remote-shell'
 
 /** Strips ANSI/VT escape sequences — there is no terminal emulator to render them. */
@@ -330,6 +330,33 @@ export class SshManager {
     this.state = { ...EMPTY, lines: [] }
     this.emit()
     return this.getState()
+  }
+
+  /** List one remote directory over SFTP for the file manager. */
+  async listFiles(remotePath: string): Promise<SshFileEntry[]> {
+    const client = this.client
+    if (!client || this.state.status !== 'connected') throw new Error('当前没有已连接的 SSH 会话。')
+    const dir = remotePath.trim() || '/'
+    const sftp = await new Promise<import('ssh2').SFTPWrapper>((resolve, reject) => {
+      client.sftp((error, channel) => (error ? reject(error) : resolve(channel)))
+    })
+    try {
+      const entries = await new Promise<import('ssh2').FileEntryWithStats[]>((resolve, reject) => {
+        sftp.readdir(dir, (error, list) => (error ? reject(error) : resolve(list)))
+      })
+      return entries
+        .filter((entry) => entry.filename !== '.' && entry.filename !== '..')
+        .map((entry): SshFileEntry => ({
+          id: dir === '/' ? '/' + entry.filename : posix.join(dir, entry.filename),
+          name: entry.filename,
+          type: entry.attrs.isDirectory() ? 'folder' : 'file',
+          size: entry.attrs.size,
+          modifiedAt: entry.attrs.mtime * 1000
+        }))
+        .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1))
+    } finally {
+      sftp.end()
+    }
   }
 
   /** Upload local files into the model shell's current remote directory over SFTP. */

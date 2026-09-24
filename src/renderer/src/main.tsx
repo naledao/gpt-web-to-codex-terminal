@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import WorkspaceApp from './WorkspaceApp'
+import '@svar-ui/react-filemanager/all.css'
 import './assets/main.css'
 
 const container = document.getElementById('root')
