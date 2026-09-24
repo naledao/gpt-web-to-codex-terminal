@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS managed_sessions (
   title           TEXT NOT NULL DEFAULT '',
   url             TEXT NOT NULL DEFAULT '',
   conversation_id TEXT,
+  platform_id     TEXT NOT NULL DEFAULT 'chatgpt',
   paused          INTEGER NOT NULL DEFAULT 0,
   local_cwd       TEXT NOT NULL DEFAULT '',
   ssh_host_id     TEXT NOT NULL DEFAULT '',
@@ -130,6 +131,8 @@ export interface ManagedSessionRecord {
   title: string
   url: string
   conversationId: string | null
+  /** Which chat site this session drives. See `ManagedSessionSummary.platformId`. */
+  platformId: string
   paused: boolean
   localCwd: string
   sshHostId: string
@@ -220,6 +223,18 @@ export class ConversationStore {
     }
     if (!conversationColumns.some((column) => column.name === 'goal')) {
       this.db.exec("ALTER TABLE conversations ADD COLUMN goal TEXT NOT NULL DEFAULT ''")
+    }
+    /*
+     * `managed_sessions.platform_id` — which chat site a session drives.
+     *
+     * Existing rows were all ChatGPT, so the default is not just a placeholder: it is the
+     * correct value for every row written before this column existed.
+     */
+    const managedColumns = this.db
+      .prepare('PRAGMA table_info(managed_sessions)')
+      .all() as unknown as Array<{ name: string }>
+    if (!managedColumns.some((column) => column.name === 'platform_id')) {
+      this.db.exec("ALTER TABLE managed_sessions ADD COLUMN platform_id TEXT NOT NULL DEFAULT 'chatgpt'")
     }
     this.db.exec(
       'CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations (project_id, updated_at DESC)'
@@ -606,7 +621,7 @@ export class ConversationStore {
   listManagedSessions(): ManagedSessionRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT id, title, url, conversation_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, created_at, updated_at
+        `SELECT id, title, url, conversation_id, platform_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, created_at, updated_at
            FROM managed_sessions ORDER BY created_at ASC`
       )
       .all() as unknown as Array<{
@@ -614,6 +629,7 @@ export class ConversationStore {
       title: string
       url: string
       conversation_id: string | null
+      platform_id: string
       paused: number
       local_cwd: string
       ssh_host_id: string
@@ -629,6 +645,7 @@ export class ConversationStore {
       title: row.title,
       url: row.url,
       conversationId: row.conversation_id,
+      platformId: row.platform_id,
       paused: row.paused !== 0,
       localCwd: row.local_cwd,
       sshHostId: row.ssh_host_id,
@@ -644,12 +661,13 @@ export class ConversationStore {
     const now = Date.now()
     this.db
       .prepare(
-        `INSERT INTO managed_sessions (id, title, url, conversation_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO managed_sessions (id, title, url, conversation_id, platform_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            url = excluded.url,
            conversation_id = excluded.conversation_id,
+           platform_id = excluded.platform_id,
            paused = excluded.paused,
            local_cwd = excluded.local_cwd,
            ssh_host_id = excluded.ssh_host_id,
@@ -663,6 +681,7 @@ export class ConversationStore {
         record.title,
         record.url,
         record.conversationId,
+        record.platformId,
         record.paused ? 1 : 0,
         record.localCwd,
         record.sshHostId,

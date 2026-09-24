@@ -1,14 +1,7 @@
 import { BrowserWindow, WebContentsView, shell } from 'electron'
 import interceptorSource from './injected/send-interceptor.js?raw'
-import {
-  CHATGPT_ORIGIN,
-  EMBED_HOME_URL,
-  EMBED_PARTITION,
-  FALLBACK_ENVIRONMENT,
-  buildTerminalPrefix,
-  conversationIdFromUrl,
-  isConversationId
-} from '../shared/types'
+import { FALLBACK_ENVIRONMENT, buildTerminalPrefix, isConversationId } from '../shared/types'
+import type { ChatPlatform } from '../shared/platforms'
 import type {
   EmbedBounds,
   EmbedCommand,
@@ -22,23 +15,42 @@ import type {
 } from '../shared/types'
 
 /**
- * Hosts chatgpt.com in a native `WebContentsView` layered on top of the React
+ * Hosts one chat site in a native `WebContentsView` layered on top of the React
  * renderer.
  *
- * Why not an `<iframe>`: chatgpt.com refuses to be framed (`X-Frame-Options` /
+ * Which site is decided by the `ChatPlatform` descriptor it is constructed with; nothing
+ * in here may assume ChatGPT. The site-specific pieces (URLs, navigation policy,
+ * conversation-id shape, sidebar scraper, and the page descriptor the injected script
+ * runs against) all live in `shared/platforms.ts`.
+ *
+ * Why not an `<iframe>`: these sites refuse to be framed (`X-Frame-Options` /
  * CSP `frame-ancestors`), so the page can only be embedded out-of-process.
  *
  * Why a dedicated partition: the embedded page gets its own cookie jar, so
- * third-party content can never touch the app's own session.
+ * third-party content can never touch the app's own session — and the two platforms get
+ * a jar each, so signing into one never signs into the other.
  *
  * IMPORTANT: a native view is not a DOM node. It always paints *above* the
  * renderer, so React must keep the measured slot clear of overlapping UI.
  */
-const ALLOWED_NAVIGATION =
-  /^https:\/\/([a-z0-9-]+\.)*(chatgpt\.com|openai\.com|oaistatic\.com|oaiusercontent\.com)(\/|$)/i
 
 /** Tag the injected page script prefixes its console reports with. */
 const INTERCEPTOR_LOG_TAG = '[cmd-terminal] '
+
+/**
+ * Conversation id of a URL, for whichever platform this view drives.
+ *
+ * A URL that will not parse is not an error worth reporting — the page navigates through
+ * intermediate states constantly — so it answers "not a conversation", which is the safe
+ * reading: nothing gets written to the database.
+ */
+function conversationIdOf(platform: ChatPlatform, url: string): string | null {
+  try {
+    return platform.conversationIdFromPath(new URL(url).pathname)
+  } catch {
+    return null
+  }
+}
 
 /**
  * A stock Electron UA advertises `Electron/44.4.3`; Cloudflare's bot rules on
@@ -75,9 +87,12 @@ function normalizeUrl(input: string): string | null {
  * OAuth commonly reaches the provider through a server-side redirect rather
  * than a user navigation, so this policy is shared by `will-navigate`,
  * `will-redirect`, and the main-frame branch of `will-frame-navigate`.
+ *
+ * Takes the pattern rather than closing over one: two platforms now share this class, and
+ * a module-level pattern would silently pin both to the first one constructed.
  */
-function isAllowedNavigation(url: string): boolean {
-  return ALLOWED_NAVIGATION.test(url)
+function isAllowedNavigation(platform: ChatPlatform, url: string): boolean {
+  return platform.allowedOriginPattern.test(url)
 }
 
 function externalAuthProvider(url: string): ExternalAuthProvider | null {
@@ -103,31 +118,10 @@ function externalAuthProvider(url: string): ExternalAuthProvider | null {
  * The aria-label carries the conversation name; textContent is the fallback for
  * the unordered history list, which renders the label differently.
  *
- * Only the raw path segment is extracted here — validating it is left to
- * `isConversationId()` in shared/types so the rule lives in exactly one place.
- * Written without regex-literal escapes so it survives a TS template literal.
+ * The script itself now lives on the platform descriptor (`sidebarScript`), because the
+ * link shape differs per site. Only the raw path segment is extracted there — validating
+ * it is left to `isConversationId()` so that rule lives in exactly one place.
  */
-const SCRAPE_SIDEBAR_SCRIPT = `(() => {
-  const found = []
-  const seen = new Set()
-  const anchors = document.querySelectorAll('a[data-sidebar-item][href^="/c/"], a[href^="/c/"]')
-
-  for (const anchor of anchors) {
-    const href = anchor.getAttribute('href') || ''
-    if (!href.startsWith('/c/')) continue
-
-    const id = href.slice(3).split(/[?#]/)[0]
-    if (id === '' || seen.has(id)) continue
-
-    const title = ((anchor.getAttribute('aria-label') || '') || (anchor.textContent || '')).trim()
-    if (title === '') continue
-
-    seen.add(id)
-    found.push({ id, title })
-  }
-
-  return found
-})()`
 
 interface ScrapeResult {
   id: string
@@ -201,7 +195,18 @@ export class ChatGptEmbed {
    */
   private armBaselineOnInstall = false
 
-  constructor(private readonly handlers: EmbedHandlers, private readonly initialUrl = EMBED_HOME_URL) {}
+  /**
+   * Which site this view drives.
+   *
+   * Required, not defaulted: a default would let a second platform silently inherit
+   * ChatGPT's partition and URL patterns, which is the exact kind of mix-up that is
+   * invisible until someone is signed into the wrong account.
+   */
+  constructor(
+    private readonly platform: ChatPlatform,
+    private readonly handlers: EmbedHandlers,
+    private readonly initialUrl: string = platform.homeUrl
+  ) {}
 
   /** Create the view and add it to the window. Safe to call more than once. */
   attach(parent: BrowserWindow): void {
@@ -209,7 +214,7 @@ export class ChatGptEmbed {
 
     const view = new WebContentsView({
       webPreferences: {
-        partition: EMBED_PARTITION,
+        partition: this.platform.partition,
         // Untrusted third-party content: no bridge, no Node, sandboxed.
         nodeIntegration: false,
         contextIsolation: true,
@@ -255,7 +260,7 @@ export class ChatGptEmbed {
     })
 
     const openExternalNavigation = (event: Electron.Event, url: string): void => {
-      if (isAllowedNavigation(url)) return
+      if (isAllowedNavigation(this.platform, url)) return
 
       event.preventDefault()
       openExternalUrl(url)
@@ -272,7 +277,7 @@ export class ChatGptEmbed {
     contents.on('will-frame-navigate', (details) => {
       if (details.isMainFrame) {
         openExternalNavigation(details, details.url)
-      } else if (!isAllowedNavigation(details.url)) {
+      } else if (!isAllowedNavigation(this.platform, details.url)) {
         // Do not let an embedded third-party frame start an OAuth flow. It has
         // no usable route back to the app and Google will reject the webview.
         details.preventDefault()
@@ -313,7 +318,7 @@ export class ChatGptEmbed {
     })
     contents.on('render-process-gone', () => this.publishState())
 
-    void contents.loadURL(this.initialUrl || EMBED_HOME_URL)
+    void contents.loadURL(this.initialUrl || this.platform.homeUrl)
     this.applyBounds()
   }
 
@@ -416,7 +421,7 @@ export class ChatGptEmbed {
         contents.stop()
         break
       case 'home':
-        void contents.loadURL(EMBED_HOME_URL)
+        void contents.loadURL(this.platform.homeUrl)
         break
     }
   }
@@ -503,7 +508,10 @@ export class ChatGptEmbed {
       prefix: this.interceptor.prefix,
       // A full page (re)load must also suppress whatever it restores from
       // history, otherwise an old reply would look like a fresh command.
-      armBaseline: this.armBaselineOnInstall
+      armBaseline: this.armBaselineOnInstall,
+      // Which site's DOM to work against. The injected script is source text, so the
+      // platform cannot be imported there — this is the only route it has.
+      page: this.platform.page
     })
 
     try {
@@ -611,20 +619,22 @@ export class ChatGptEmbed {
   async scrapeConversations(): Promise<ScrapedConversation[]> {
     const contents = this.liveContents()
     if (!contents) return []
+    // A platform without a sidebar scraper simply has no "sync" feature.
+    if (this.platform.sidebarScript === '') return []
 
     try {
-      const raw = (await contents.executeJavaScript(SCRAPE_SIDEBAR_SCRIPT)) as unknown
+      const raw = (await contents.executeJavaScript(this.platform.sidebarScript)) as unknown
       if (!Array.isArray(raw)) return []
 
       return (raw as ScrapeResult[])
         .filter((item) => item && typeof item.id === 'string' && typeof item.title === 'string')
-        // Placeholder routes such as /c/WEB are linked in the UI but are not
-        // conversations, so they must never reach the database.
+        // Placeholder routes (ChatGPT's /c/WEB, for instance) are linked in the UI but
+        // are not conversations, so they must never reach the database.
         .filter((item) => isConversationId(item.id))
         .map((item) => ({
           id: item.id,
           title: item.title.trim(),
-          url: `${CHATGPT_ORIGIN}/c/${item.id}`
+          url: this.platform.conversationUrl(item.id)
         }))
         .filter((item) => item.title !== '')
     } catch (error) {
@@ -662,7 +672,7 @@ export class ChatGptEmbed {
       isLoading: contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
-      conversationId: conversationIdFromUrl(url)
+      conversationId: conversationIdOf(this.platform, url)
     }
   }
 
@@ -752,19 +762,27 @@ export class ChatGptEmbed {
     if (!contents) return
 
     const url = contents.getURL()
-    const id = conversationIdFromUrl(url)
+    const id = conversationIdOf(this.platform, url)
     if (!id) return
 
-    // "ChatGPT" is the shell's generic title, not a conversation name. Storing
-    // it as blank lets the sidebar scrape fill in the real one later.
+    /*
+     * Every one of these sites uses its own product name as the generic document title
+     * ("ChatGPT", "DeepSeek") — that is the shell, not a conversation name. Storing the
+     * product name as the conversation's title would then outrank the real one from the
+     * sidebar scrape, because a non-empty title is never overwritten.
+     */
     const rawTitle = contents.getTitle()
-    const title = rawTitle === 'ChatGPT' || rawTitle.startsWith('ChatGPT:') ? '' : rawTitle
+    const label = this.platform.label
+    const title =
+      rawTitle === label || rawTitle.startsWith(`${label}:`) || rawTitle.startsWith(`${label} -`)
+        ? ''
+        : rawTitle
 
     const key = `${id}\u0000${title}`
     if (key === this.lastCaptured) return
     this.lastCaptured = key
 
-    this.handlers.onConversation({ id, url: `${CHATGPT_ORIGIN}/c/${id}`, title })
+    this.handlers.onConversation({ id, url: this.platform.conversationUrl(id), title })
   }
 
   /**

@@ -1,9 +1,10 @@
 import { session } from 'electron'
-import { EMBED_PARTITION, SESSION_COOKIE_NAME } from '../shared/types'
+import { SESSION_COOKIE_NAME } from '../shared/types'
+import type { ChatPlatform } from '../shared/platforms'
 import type { EmbedAuthState, SessionImportDraft, SessionImportResult } from '../shared/types'
 
 /**
- * Moving a browser's ChatGPT login into the embedded partition.
+ * Moving a browser's login into an embedded platform's partition.
  *
  * WHY THIS EXISTS
  * ---------------
@@ -17,7 +18,11 @@ import type { EmbedAuthState, SessionImportDraft, SessionImportResult } from '..
  *
  * What DOES move is the session token itself. It is a bearer credential: whoever
  * presents it over HTTPS on the right domain is signed in. So the user copies it out
- * of their browser once and this module writes it into `persist:chatgpt`.
+ * of their browser once and this module writes it into the platform's partition.
+ *
+ * The cookie NAMES below are ChatGPT's (NextAuth). The host, the domain and the jar are
+ * all taken from the platform, so this path stays correct if another site ever needs it —
+ * but a site with an entirely different session scheme will need its own name list.
  *
  * WHY THE USER MUST COPY IT BY HAND
  * ---------------------------------
@@ -32,16 +37,6 @@ import type { EmbedAuthState, SessionImportDraft, SessionImportResult } from '..
  * renderer. It arrives as an argument, is written to the cookie jar, and is gone
  * when the call returns.
  */
-
-/**
- * Host the cookie is written for. The leading dot covers the `www` subdomain too.
- *
- * NOTE: a `__Host-` cookie must NOT carry a Domain attribute — that prefix means
- * "this exact host, no subdomains" and Chromium rejects the write outright if one is
- * supplied. `cookieAttributes()` is what keeps that straight.
- */
-const COOKIE_HOST = 'https://chatgpt.com/'
-const COOKIE_DOMAIN = '.chatgpt.com'
 
 /**
  * A session token is a JWT-ish blob; anything wildly outside this is a paste error.
@@ -366,18 +361,22 @@ export function assembleSession(
  * subdomains", and Chromium refuses the write if one is present. A bare `.chatgpt.com`
  * domain is used for everything else so the cookie also covers `www`.
  */
-function cookieAttributes(name: string): Electron.CookiesSetDetails {
+function cookieAttributes(
+  name: string,
+  host: string,
+  domain: string
+): Electron.CookiesSetDetails {
   return {
-    url: COOKIE_HOST,
+    url: host,
     name,
     path: '/',
     // `__Secure-` / `__Host-` names are only accepted with this flag set.
     secure: true,
     httpOnly: true,
-    // A session cookie, matching how ChatGPT hands it out: it dies with the browser
+    // A session cookie, matching how these sites hand it out: it dies with the browser
     // rather than pretending to have an expiry we do not know.
     expirationDate: undefined,
-    ...(name.startsWith('__Host-') ? {} : { domain: COOKIE_DOMAIN })
+    ...(name.startsWith('__Host-') || domain === '' ? {} : { domain })
   }
 }
 
@@ -441,21 +440,44 @@ export async function isEmbedSignedIn(
   return false
 }
 
-/** Cookie names held for OpenAI properties. Names only — never values. */
+/**
+ * Cookie names held for this platform's properties. Names only — never values.
+ *
+ * The host filter comes from the platform rather than a hardcoded `chatgpt.com|openai.com`:
+ * reporting ChatGPT's cookies while the user is looking at a DeepSeek session would be
+ * worse than reporting nothing.
+ */
 export async function embedAuthState(
+  platform: ChatPlatform,
   contents: Electron.WebContents | null
 ): Promise<EmbedAuthState> {
-  const cookies = await session.fromPartition(EMBED_PARTITION).cookies.get({})
+  const cookies = await session.fromPartition(platform.partition).cookies.get({})
+  const hostRe = hostPatternFor(platform)
   const names = [
     ...new Set(
       cookies
         // `domain` is optional in Electron's typings; a cookie without one is not
         // ours to report.
-        .filter((cookie) => /chatgpt\.com$|openai\.com$/.test(cookie.domain ?? ''))
+        .filter((cookie) => hostRe.test(cookie.domain ?? ''))
         .map((cookie) => `${cookie.domain ?? '?'} ${cookie.name}`)
     )
   ]
   return { signedIn: await isEmbedSignedIn(contents, 5000), cookieNames: names.sort() }
+}
+
+/**
+ * A regex matching the cookie domains that belong to this platform.
+ *
+ * Taken from the descriptor's `cookieDomainSuffixes` rather than parsed out of
+ * `allowedOriginPattern`: the two mean different things (where the view may navigate vs
+ * which cookies are this session's), and deriving one from the other breaks quietly the
+ * first time the pattern is edited.
+ */
+function hostPatternFor(platform: ChatPlatform): RegExp {
+  const suffixes = platform.cookieDomainSuffixes.filter((suffix) => suffix !== '')
+  if (suffixes.length === 0) return /$^/
+  const escaped = suffixes.map((suffix) => suffix.replace(/\./g, '\\.'))
+  return new RegExp(`(${escaped.join('|')})$`, 'i')
 }
 
 /**
@@ -465,6 +487,7 @@ export async function embedAuthState(
  * to know how the view is built.
  */
 export async function importSessionToken(
+  platform: ChatPlatform,
   draft: SessionImportDraft,
   contents: Electron.WebContents | null,
   reloadAndWait: () => Promise<void>
@@ -487,7 +510,18 @@ export async function importSessionToken(
     console.warn(`[session] importing a non-standard cookie name: ${name}`)
   }
 
-  const ses = session.fromPartition(EMBED_PARTITION)
+  /*
+   * The jar and the cookie's host come from the platform, not from constants.
+   *
+   * Writing a ChatGPT token into the DeepSeek partition (or the reverse) would look like
+   * a successful import and then not sign anyone in, which is the most confusing possible
+   * outcome — no error, wrong account.
+   */
+  const ses = session.fromPartition(platform.partition)
+  const cookieHost = platform.homeUrl
+  const cookieDomain = platform.cookieDomainSuffixes[0]
+    ? `.${platform.cookieDomainSuffixes[0].replace(/^\./, '')}`
+    : ''
   const toWrite: ParsedCookie[] = cookies ?? [{ name, value }]
 
   try {
@@ -495,7 +529,10 @@ export async function importSessionToken(
     // single cookie cannot be stored at all: Chromium caps the name=value pair at
     // 4096 bytes, which is precisely why NextAuth split it.
     for (const cookie of toWrite) {
-      await ses.cookies.set({ ...cookieAttributes(cookie.name), value: cookie.value })
+      await ses.cookies.set({
+        ...cookieAttributes(cookie.name, cookieHost, cookieDomain),
+        value: cookie.value
+      })
     }
   } catch (error) {
     const sizeHint =

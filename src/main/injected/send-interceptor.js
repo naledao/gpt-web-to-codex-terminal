@@ -24,23 +24,35 @@
  */
 ;(() => {
   const STATE_KEY = '__cmdTerminalInterceptor'
-  const COMPOSER_SELECTOR = '#prompt-textarea'
-  const SEND_BUTTON_SELECTORS = [
-    '[data-testid="send-button"]',
-    'button[aria-label="Send message"]',
-    'button[aria-label="发送消息"]'
-  ]
-  const ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]'
-  const STOP_BUTTON_SELECTORS = [
-    '[data-testid="stop-button"]',
-    'button[aria-label="Stop generating"]',
-    'button[aria-label="Stop streaming"]',
-    'button[aria-label="停止生成"]'
-  ]
-  /** Any turn, either role — used to locate the thread's scroll container. */
-  const MESSAGE_SELECTOR = '[data-message-author-role]'
-  const MESSAGE_ID_ATTR = 'data-message-id'
   const LOG_TAG = '[cmd-terminal] '
+
+  /*
+   * Which site this copy is running against.
+   *
+   * These are ChatGPT's values, and they are the DEFAULT rather than a constant because
+   * the same script now drives more than one site: the main process pushes the site's
+   * descriptor through `configure({ page })` right after injection. Everything
+   * site-specific is reachable from here — nothing below this block may contain a
+   * ChatGPT selector.
+   */
+  let PAGE = {
+    composerKind: 'contenteditable',
+    composerSelectors: ['#prompt-textarea', 'div[contenteditable="true"]'],
+    sendButtonSelectors: [
+      '[data-testid="send-button"]',
+      'button[aria-label="Send message"]',
+      'button[aria-label="发送消息"]'
+    ],
+    stopButtonSelectors: [
+      '[data-testid="stop-button"]',
+      'button[aria-label="Stop generating"]',
+      'button[aria-label="Stop streaming"]',
+      'button[aria-label="停止生成"]'
+    ],
+    assistantSelectors: ['[data-message-author-role="assistant"]'],
+    messageSelectors: ['[data-message-author-role]'],
+    messageIdAttr: 'data-message-id'
+  }
 
   /**
    * How long the reply text must stop changing before we treat it as final.
@@ -88,23 +100,132 @@
 
   const collapse = (value) => (value || '').replace(/\s+/g, ' ').trim()
 
-  const getComposer = () => document.querySelector(COMPOSER_SELECTOR)
-
-  const findSendButton = () => {
-    for (const selector of SEND_BUTTON_SELECTORS) {
-      const button = document.querySelector(selector)
-      if (button) return button
+  /** First element matching any of a selector list. Lists, so a rename degrades. */
+  const queryFirst = (selectors) => {
+    for (const selector of selectors) {
+      const found = document.querySelector(selector)
+      if (found) return found
     }
     return null
   }
 
-  const findStopButton = () => {
-    for (const selector of STOP_BUTTON_SELECTORS) {
-      const button = document.querySelector(selector)
-      if (button) return button
+  const getComposer = () => queryFirst(PAGE.composerSelectors)
+
+  /**
+   * Read the composer.
+   *
+   * TWO mechanisms, and using the wrong one reads an empty string forever:
+   *
+   *   - contenteditable (ChatGPT/ProseMirror): the text lives in the DOM, so `innerText`
+   *     is the only view of it — `.value` is `undefined` on a div.
+   *   - textarea (DeepSeek): a real form control, where `innerText` is always empty and
+   *     `.value` holds the text.
+   *
+   * Detected from the ELEMENT rather than trusted from the descriptor alone: a site that
+   * swaps its composer would otherwise leave this reading nothing, silently.
+   */
+  const readComposer = (element) => {
+    if (!element) return ''
+    if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+      return String(element.value || '')
     }
-    return null
+    return String(element.innerText || '')
   }
+
+  /**
+   * Write text into the composer, and report whether it took.
+   *
+   * The two paths exist for the same underlying reason — a framework owns the editor and
+   * ignores a direct DOM write — but the escape hatch differs:
+   *
+   *   - contenteditable: `document.execCommand('insertText')` goes through the browser's
+   *     editing pipeline, so ProseMirror records a normal user edit.
+   *   - textarea: React tracks the previous value on the node itself, so assigning
+   *     `.value` makes React treat the change as a no-op and the send button stays
+   *     disabled. Going through the prototype's native setter and then dispatching
+   *     `input` is what makes React see it.
+   */
+  const writeComposer = (element, text) => {
+    if (!element) return false
+
+    if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+      try {
+        const proto = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement : HTMLInputElement
+        const setter = Object.getOwnPropertyDescriptor(proto.prototype, 'value')?.set
+        element.focus()
+        if (setter) setter.call(element, text)
+        else element.value = text
+        element.dispatchEvent(new Event('input', { bubbles: true }))
+        return readComposer(element) === text
+      } catch (_) {
+        return false
+      }
+    }
+
+    element.focus()
+    placeCaretAtStart(element)
+    // Keep focus/selection honest so ProseMirror records a real edit.
+    return document.execCommand('insertText', false, text)
+  }
+
+  const findSendButton = () => queryFirst(PAGE.sendButtonSelectors)
+
+  const findStopButton = () => queryFirst(PAGE.stopButtonSelectors)
+
+  /* ------------------------------------------------------------------ *
+   * Site-specific element lookup
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Every element matching any selector in a list, de-duplicated and in DOCUMENT ORDER.
+   *
+   * Lists overlap by design — a site may be matched by both a test id and a structural
+   * selector — and a duplicated node would make the same turn look like two, which breaks
+   * "the newest reply" and the once-per-message dedupe with it. Document order is
+   * restored with `compareDocumentPosition` because concatenating per-selector results
+   * would otherwise return them grouped by selector.
+   */
+  const queryAll = (selectors) => {
+    const seen = new Set()
+    const found = []
+    for (const selector of selectors) {
+      let matches = []
+      try {
+        matches = [...document.querySelectorAll(selector)]
+      } catch (_) {
+        continue
+      }
+      for (const element of matches) {
+        if (seen.has(element)) continue
+        seen.add(element)
+        found.push(element)
+      }
+    }
+    return found.sort((a, b) => {
+      const relation = a.compareDocumentPosition(b)
+      if (relation & Node.DOCUMENT_POSITION_FOLLOWING) return -1
+      if (relation & Node.DOCUMENT_POSITION_PRECEDING) return 1
+      return 0
+    })
+  }
+
+  const queryAllAssistant = () => queryAll(PAGE.assistantSelectors)
+  const queryAllMessages = () => queryAll(PAGE.messageSelectors)
+
+  /**
+   * A stable id for one message, or null.
+   *
+   * This is the idempotency key the main process stores executions under, so a page that
+   * re-renders every old message on reload cannot re-run any of them. A site with no such
+   * attribute returns null for every message, which disables that protection — report it
+   * once rather than pretending the messages are distinct.
+   */
+  const messageIdOf = (node) => {
+    if (!node || !PAGE.messageIdAttr) return null
+    return node.getAttribute(PAGE.messageIdAttr) || null
+  }
+
+  const pageMessageIdAttrs = () => (PAGE.messageIdAttr ? [PAGE.messageIdAttr] : [])
 
   /* ------------------------------------------------------------------ *
    * Keeping the newest message in view
@@ -120,7 +241,7 @@
    * for the case where that chain has nothing scrollable in it.
    */
   const findScroller = () => {
-    const nodes = document.querySelectorAll(MESSAGE_SELECTOR)
+    const nodes = queryAllMessages()
     let element = nodes.length > 0 ? nodes[nodes.length - 1].parentElement : null
 
     while (element) {
@@ -197,7 +318,7 @@
   const hasPrefix = (element) => {
     if (!state.prefix) return true
     const head = collapse(state.prefix).slice(0, 40)
-    return collapse(element.innerText).startsWith(head)
+    return collapse(readComposer(element)).startsWith(head)
   }
 
   const placeCaretAtStart = (element) => {
@@ -209,12 +330,7 @@
     selection.addRange(range)
   }
 
-  const insertText = (element, text) => {
-    element.focus()
-    placeCaretAtStart(element)
-    // Keep focus/selection honest so ProseMirror records a real edit.
-    return document.execCommand('insertText', false, text)
-  }
+  const insertText = (element, text) => writeComposer(element, text)
 
   /**
    * Clicking send is NOT proof that the message went out. ChatGPT ignores the
@@ -277,7 +393,7 @@
 
     setTimeout(() => {
       const element = getComposer()
-      if (!element || collapse(element.innerText) === '') {
+      if (!element || collapse(readComposer(element)) === '') {
         finish(true)
         return
       }
@@ -337,7 +453,7 @@
     event.preventDefault()
     event.stopImmediatePropagation()
 
-    const text = collapse(element.innerText)
+    const text = collapse(readComposer(element))
     if (!insertText(element, state.prefix)) {
       // Injection refused: never trap the user's message in the box.
       report({ event: 'inject-failed' })
@@ -377,7 +493,7 @@
     (event) => {
       const target = event.target
       if (!target || typeof target.closest !== 'function') return
-      if (!SEND_BUTTON_SELECTORS.some((selector) => target.closest(selector))) return
+      if (!PAGE.sendButtonSelectors.some((selector) => target.closest(selector))) return
       intercept(event)
     },
     true
@@ -568,11 +684,11 @@
    * once — the main process does the durable deduplication against SQLite.
    */
   const checkForCommand = () => {
-    const nodes = document.querySelectorAll(ASSISTANT_SELECTOR)
+    const nodes = queryAllAssistant()
     if (nodes.length === 0) return
 
     const node = nodes[nodes.length - 1]
-    const messageId = node.getAttribute(MESSAGE_ID_ATTR) || ''
+    const messageId = messageIdOf(node) || ''
     if (!messageId || messageId === state.lastCommandMessageId) return
 
     const text = node.innerText || ''
@@ -642,9 +758,9 @@
 
   /** The message id of the newest assistant turn currently in the DOM. */
   const lastAssistantId = () => {
-    const nodes = document.querySelectorAll(ASSISTANT_SELECTOR)
+    const nodes = queryAllAssistant()
     const node = nodes.length > 0 ? nodes[nodes.length - 1] : null
-    return node ? node.getAttribute(MESSAGE_ID_ATTR) || null : null
+    return node ? messageIdOf(node) : null
   }
 
   /**
@@ -706,7 +822,7 @@
     // observing that attribute, a fully rendered reply can remain invisible to
     // the scanner if no later text mutation happens.
     attributes: true,
-    attributeFilter: [MESSAGE_ID_ATTR]
+    attributeFilter: pageMessageIdAttrs()
   })
 
   /* ------------------------------------------------------------------ *
@@ -718,6 +834,19 @@
       if (!config) return { ...state }
       if (typeof config.enabled === 'boolean') state.enabled = config.enabled
       if (typeof config.prefix === 'string') state.prefix = config.prefix
+      /*
+       * The site's selectors arrive with the config, because this script is injected as
+       * source and cannot import anything: the main process is the only place that knows
+       * which platform this page is. Merged rather than replaced so a partial descriptor
+       * keeps ChatGPT's defaults instead of matching nothing at all.
+       */
+      if (config.page && typeof config.page === 'object') {
+        // `composerKind` is accepted for documentation but deliberately not used: the
+        // read/write path decides from the ELEMENT (see readComposer), so a site that
+        // changes its composer still works without a descriptor update.
+        const { composerKind: _kind, ...selectors } = config.page
+        PAGE = { ...PAGE, ...selectors }
+      }
       // A freshly (re)loaded page has no message of ours outstanding, so nothing
       // it renders can be a reply to us.
       if (config.armBaseline === true) {
@@ -760,7 +889,7 @@
       const element = getComposer()
       if (!element) return Promise.resolve('no-composer')
       // Never clobber something the user is in the middle of typing.
-      if (collapse(element.innerText) !== '') return Promise.resolve('busy')
+      if (collapse(readComposer(element)) !== '') return Promise.resolve('busy')
 
       const payload = String(text)
 

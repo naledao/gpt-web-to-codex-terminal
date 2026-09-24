@@ -5,6 +5,7 @@ import {
   IpcChannels,
   buildTerminalPrefix
 } from '../shared/types'
+import type { ChatPlatform } from '../shared/platforms'
 import type {
   AutomationState,
   Conversation,
@@ -45,6 +46,13 @@ export const EMPTY_SSH_STATE: SshState = {
 }
 
 export interface SessionRuntimeOptions {
+  /**
+   * Which chat site this session drives.
+   *
+   * Required. A default would let a DeepSeek session inherit ChatGPT's partition and URL
+   * patterns, which fails as "signed into the wrong account" rather than as an error.
+   */
+  platform: ChatPlatform
   id?: string
   createdAt?: number
   customTitle?: string
@@ -134,7 +142,7 @@ export class SessionRuntime {
     this.sshCwd = options.initialSshCwd?.trim() ?? ''
     this.lastPersistedLocalCwd = options.initialLocalCwd?.trim() ?? ''
 
-    this.embed = new ChatGptEmbed({
+    this.embed = new ChatGptEmbed(options.platform, {
       onState: (state) => {
         if (state.url !== '') this.lastKnownUrl = state.url
         this.send(IpcChannels.embedState, state)
@@ -170,7 +178,7 @@ export class SessionRuntime {
       onTaskCompleted: () => this.notifyTaskCompleted('任务已完成'),
       onCommand: (command) => this.handleDetectedCommand(command),
       onParseFailed: (text) => this.runner.noteParseFailure(text)
-    }, options.initialUrl)
+    }, options.initialUrl || options.platform.homeUrl)
 
     this.runner = new CommandRunner({
       store: options.store,
@@ -272,6 +280,7 @@ export class SessionRuntime {
     title: string
     url: string
     conversationId: string | null
+    platformId: string
     paused: boolean
     localCwd: string
     sshHostId: string
@@ -288,6 +297,7 @@ export class SessionRuntime {
       title: this.customTitle,
       url: this.lastKnownUrl,
       conversationId: this.lastConversationId,
+      platformId: this.options.platform.id,
       paused: automation.paused,
       localCwd: terminal.cwd,
       sshHostId: sshState.hostId,
@@ -297,6 +307,11 @@ export class SessionRuntime {
       createdAt: this.createdAt
     }
   }
+  /** Which chat site this session drives. */
+  get chatPlatform(): ChatPlatform {
+    return this.options.platform
+  }
+
   summary(): ManagedSessionSummary {
     const state = this.embed.getState()
     const sshState = this.ssh.getState()
@@ -307,6 +322,7 @@ export class SessionRuntime {
       kind: usingSsh ? 'ssh' : 'local',
       target: usingSsh ? sshState.name || sshState.target || 'SSH' : '本机',
       conversationId: state.conversationId,
+      platformId: this.options.platform.id,
       createdAt: this.createdAt
     }
   }

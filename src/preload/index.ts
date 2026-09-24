@@ -38,8 +38,11 @@ const api: AppApi = {
   listManagedSessions: (): Promise<ManagedSessionSummary[]> =>
     ipcRenderer.invoke(IpcChannels.managerSessionsList),
 
-  createManagedSession: (kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null> =>
-    ipcRenderer.invoke(IpcChannels.managerSessionCreate, kind),
+  createManagedSession: (
+    kind: 'local' | 'ssh',
+    platformId: string
+  ): Promise<ManagedSessionSummary | null> =>
+    ipcRenderer.invoke(IpcChannels.managerSessionCreate, kind, platformId),
 
   openManagedSession: (id: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.managerSessionOpen, id),

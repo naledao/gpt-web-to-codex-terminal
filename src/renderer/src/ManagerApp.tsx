@@ -34,11 +34,11 @@ export default function ManagerApp(): ReactElement {
     return window.api.onManagedSessionsChanged(setSessions)
   }, [])
 
-  const createSession = async (kind: 'local' | 'ssh'): Promise<void> => {
+  const createSession = async (kind: 'local' | 'ssh', platformId: string): Promise<void> => {
     if (creating !== null) return
     setCreating(kind)
     try {
-      await window.api.createManagedSession(kind)
+      await window.api.createManagedSession(kind, platformId)
     } finally {
       setCreating(null)
     }
@@ -89,10 +89,13 @@ export default function ManagerApp(): ReactElement {
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        <button style={button} disabled={creating !== null} onClick={() => void createSession('local')}>
-          {creating === 'local' ? '创建中…' : '+ 本地会话'}
+        <button style={button} disabled={creating !== null} onClick={() => void createSession('local', 'chatgpt')}>
+          {creating === 'local' ? '创建中…' : '+ ChatGPT 会话'}
         </button>
-        <button style={button} disabled={creating !== null} onClick={() => void createSession('ssh')}>
+        <button style={button} disabled={creating !== null} onClick={() => void createSession('local', 'deepseek')}>
+          {creating === 'local' ? '创建中…' : '+ DeepSeek 会话'}
+        </button>
+        <button style={button} disabled={creating !== null} onClick={() => void createSession('ssh', 'chatgpt')}>
           {creating === 'ssh' ? '创建中…' : '+ SSH 会话'}
         </button>
       </div>
@@ -111,6 +114,7 @@ export default function ManagerApp(): ReactElement {
                 <div>
                   <div style={{ fontWeight: 650, fontSize: 15 }}>{item.title || '会话'}</div>
                   <div style={{ marginTop: 5, color: '#8b949e', fontSize: 12 }}>
+                    {item.platformId === 'deepseek' ? 'DeepSeek' : 'ChatGPT'} ·{' '}
                     {item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
                   </div>
                   {item.conversationId ? (

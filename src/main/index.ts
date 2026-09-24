@@ -3,13 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
-  EMBED_HOME_URL,
   EMBED_LOGIN_URL,
-  EMBED_PARTITION,
   FALLBACK_ENVIRONMENT,
   IpcChannels,
   isConversationId
 } from '../shared/types'
+import { CHAT_PLATFORMS, CHATGPT_PLATFORM, platformById } from '../shared/platforms'
+import type { ChatPlatform } from '../shared/platforms'
 import type {
   AppInfo,
   AppSettings,
@@ -85,13 +85,22 @@ function normalizeProxy(raw: string): string {
 }
 
 async function applyEmbedProxy(proxy: string): Promise<void> {
-  const embedSession = session.fromPartition(EMBED_PARTITION)
-  try {
-    if (proxy === '') await embedSession.setProxy({ mode: 'direct' })
-    else await embedSession.setProxy({ proxyRules: proxy })
-    await embedSession.closeAllConnections()
-  } catch (error) {
-    console.warn('[settings] failed to apply embed proxy:', (error as Error).message)
+  /*
+   * Applied to EVERY platform's partition, not just the active one.
+   *
+   * Each embedded site has its own Electron session, so a proxy set on one of them
+   * leaves the other going direct — which looks like "the proxy works for ChatGPT but
+   * not DeepSeek" and is really just half-applied configuration.
+   */
+  for (const platform of CHAT_PLATFORMS) {
+    const embedSession = session.fromPartition(platform.partition)
+    try {
+      if (proxy === '') await embedSession.setProxy({ mode: 'direct' })
+      else await embedSession.setProxy({ proxyRules: proxy })
+      await embedSession.closeAllConnections()
+    } catch (error) {
+      console.warn(`[settings] failed to apply embed proxy to ${platform.id}:`, (error as Error).message)
+    }
   }
 }
 
@@ -160,12 +169,18 @@ function persistManagedSession(runtime: SessionRuntime): void {
   if (!store) return
   store.upsertManagedSession(runtime.persistentState())
 }
-function createSession(kind: 'local' | 'ssh' = 'local', activate = true, restored?: ReturnType<ConversationStore['listManagedSessions']>[number]): SessionRuntime | null {
+function createSession(
+  kind: 'local' | 'ssh' = 'local',
+  activate = true,
+  restored?: ReturnType<ConversationStore['listManagedSessions']>[number],
+  platform: ChatPlatform = CHATGPT_PLATFORM
+): SessionRuntime | null {
   if (!store) return null
   const savedMode = store.getSetting(SETTING_EXECUTION_MODE)
   const initialMode: ExecutionMode = savedMode === 'auto' ? 'auto' : 'manual'
   let runtime: SessionRuntime | null = null
   runtime = new SessionRuntime({
+    platform,
     id: restored?.id,
     createdAt: restored?.createdAt,
     customTitle: restored?.title,
@@ -298,9 +313,13 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(
     IpcChannels.managerSessionCreate,
-    (event, kind: string): ManagedSessionSummary | null => {
+    (event, kind: string, platformId: string): ManagedSessionSummary | null => {
       if (!fromManager(event)) return null
-      const runtime = createSession(kind === 'ssh' ? 'ssh' : 'local', true)
+      // An unknown platform id falls back to the default rather than refusing: the
+      // renderer only sends ids it read from the shared registry, so a mismatch means a
+      // stale build, and creating nothing is a worse answer than creating a ChatGPT one.
+      const platform = platformById(String(platformId ?? '')) ?? CHATGPT_PLATFORM
+      const runtime = createSession(kind === 'ssh' ? 'ssh' : 'local', true, undefined, platform)
       return runtime?.summary() ?? null
     }
   )
@@ -330,7 +349,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.embedImportSession, async (event, draft: SessionImportDraft): Promise<SessionImportResult> => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
-    return importSessionToken(draft, runtime.embed.contents(), () => runtime.embed.reloadAndWait())
+    return importSessionToken(runtime.chatPlatform, draft, runtime.embed.contents(), () =>
+      runtime.embed.reloadAndWait()
+    )
   })
   ipcMain.handle(IpcChannels.embedPreviewSession, (event, draft: SessionImportDraft): SessionImportResult => {
     if (!runtimeForEvent(event)) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
@@ -338,10 +359,15 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(IpcChannels.embedGetAuthState, async (event): Promise<EmbedAuthState> => {
     const runtime = runtimeForEvent(event)
-    return runtime ? embedAuthState(runtime.embed.contents()) : { signedIn: false, cookieNames: [] }
+    return runtime
+      ? embedAuthState(runtime.chatPlatform, runtime.embed.contents())
+      : { signedIn: false, cookieNames: [] }
   })
   ipcMain.on(IpcChannels.openChatgptExternal, (event) => {
-    if (runtimeForEvent(event)) void shell.openExternal(EMBED_HOME_URL)
+    const runtime = runtimeForEvent(event)
+    // The active session's OWN site: opening chatgpt.com from a DeepSeek session would
+    // send the user somewhere they are not working.
+    if (runtime) void shell.openExternal(runtime.chatPlatform.homeUrl)
   })
 
   ipcMain.handle(IpcChannels.conversationsList, (event): Conversation[] => runtimeForEvent(event)?.currentMachineConversations() ?? [])
@@ -505,7 +531,15 @@ if (!app.requestSingleInstanceLock()) {
     const savedWorkspaceOpenSshDialog = conversationStore.getSetting(SETTING_WORKSPACE_OPEN_SSH_DIALOG) === '1'
     const savedSessions = conversationStore.listManagedSessions()
     if (savedSessions.length === 0) createSession('local', false)
-    else for (const savedSession of savedSessions) createSession('local', false, savedSession)
+    else {
+      for (const savedSession of savedSessions) {
+        // Restore each session onto the site it was created on. An id this build does not
+        // know (a row from a newer version, or a removed platform) falls back to the
+        // default rather than throwing — a bad id must not make the app unopenable.
+        const platform = platformById(savedSession.platformId) ?? CHATGPT_PLATFORM
+        createSession('local', false, savedSession, platform)
+      }
+    }
 
     if (savedWorkspaceSessionId !== '' && runtimes.has(savedWorkspaceSessionId)) {
       selectSession(savedWorkspaceSessionId, savedWorkspaceOpenSshDialog)

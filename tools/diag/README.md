@@ -159,6 +159,39 @@ node --experimental-sqlite tools\diag\clear-embed-cookies.mjs
 > session cookie is gone" nor "auth cookies are present" tells you anything on its own —
 > the import path therefore verifies by probing the page, not by reading the jar.
 
+## deepseek-probe.js
+
+Records what the embed needs to know about `chat.deepseek.com` before an adapter can be
+written: composer structure, send/stop buttons, which element holds one assistant turn,
+whether a stable per-message id exists, and the conversation URL shape.
+
+Selectors cannot be guessed here. A selector list that matches nothing fails SILENTLY —
+no error, no log — so a wrong guess looks like a feature that was never built.
+
+**Run (from the repo root):**
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\deepseek-probe.js
+```
+
+A window opens on chat.deepseek.com. **Send one message** (anything that gets a text
+reply), leave it on screen ~15 seconds, close the window. The probe only reads the DOM —
+it never types, clicks, or sends.
+
+Log: `%TEMP%\gpt-login-diag\deepseek-<timestamp>.log`
+
+### What to look for in the log
+
+| Line | Meaning |
+| --- | --- |
+| `composer=` | tag + attributes of the input. A `textarea` means the write path must use the native-setter approach, not `execCommand` |
+| `sendButton=` | the send control, and whether it carries a stable attribute |
+| `stopButton=` | whether a stop-generating button exists — its disappearance is the only reliable "reply finished" signal |
+| `data-* histogram` | every `data-` attribute on the page, counted; the per-turn attribute is usually visible here |
+| `idLike=` | elements with id-ish attributes. A stable per-message id is what makes execution idempotent across reloads |
+| `message containers:` | candidate thread containers with child tag/class and text length |
+| `sidebar links` | conversation links, for the "sync conversations" feature |
+
 ## Cleanup
 
 Delete `%TEMP%\gpt-login-diag` when the investigation is over — the logs name the

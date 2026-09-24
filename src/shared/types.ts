@@ -86,6 +86,15 @@ export interface ManagedSessionSummary {
   kind: 'local' | 'ssh'
   target: string
   conversationId: string | null
+  /**
+   * Which chat site this session drives (`'chatgpt'` / `'deepseek'`).
+   *
+   * Persisted, not inferred: a session restored after a restart must reopen the site its
+   * conversation actually lives on, and the id is also what the manager UI labels the
+   * card with. Unknown ids resolve to the default platform rather than failing, so a row
+   * written by a future version cannot make the app unopenable.
+   */
+  platformId: string
   createdAt: number
 }
 
@@ -903,7 +912,17 @@ export interface AppApi {
   getAppInfo(): Promise<AppInfo>
   /** Sessions currently owned by the outer manager. */
   listManagedSessions(): Promise<ManagedSessionSummary[]>
-  createManagedSession(kind: 'local' | 'ssh'): Promise<ManagedSessionSummary | null>
+  /**
+   * Create a managed session bound to one chat platform.
+   *
+   * `platformId` is explicit rather than defaulted: the renderer shows one button per
+   * platform, and a default would silently create the wrong site's session whenever a
+   * button forgot to pass it.
+   */
+  createManagedSession(
+    kind: 'local' | 'ssh',
+    platformId: string
+  ): Promise<ManagedSessionSummary | null>
   openManagedSession(id: string): Promise<boolean>
   renameManagedSession(id: string, title: string): Promise<boolean>
   destroyManagedSession(id: string): Promise<boolean>
