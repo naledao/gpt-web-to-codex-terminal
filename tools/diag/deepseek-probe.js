@@ -83,6 +83,20 @@ const INSPECT = `(() => {
     return /send|发送/i.test(label)
   })
 
+  /*
+   * Every element carrying a per-item key.
+   *
+   * This is the one signal that identifies the message list WITHOUT guessing at hashed
+   * class names — and it is why the thread gets captured at all. The first version of this
+   * probe picked "the smallest container with text", which selected the SIDEBAR (100 short
+   * rows) and left the thread, smaller still, out of the dump entirely.
+   */
+  const keyedItems = [...document.querySelectorAll('[data-virtual-list-item-key]')]
+  const messageList = keyedItems.length > 0 ? keyedItems[0].parentElement : null
+
+  /** Rendered markdown blocks — one per reply body, by observation. */
+  const markdownBlocks = [...document.querySelectorAll('[class*="markdown"]')]
+
   // Every element that the framework tagged with a data-* attribute, grouped by name.
   // The message list is in here somewhere; this is how we find it without guessing.
   const dataAttrHistogram = {}
@@ -136,6 +150,17 @@ const INSPECT = `(() => {
     dataAttrHistogram,
     messageish: messageish.slice(0, 8),
     idLike,
+    /*
+     * The message-list facts, reported as their own fields so they are readable even when
+     * the outline below is noisy: how many keyed rows exist, what the list element looks
+     * like, and the shape of one row.
+     */
+    keyedItemCount: keyedItems.length,
+    keyedItemKeys: keyedItems.slice(0, 6).map((el) => el.getAttribute('data-virtual-list-item-key')),
+    messageList: describe(messageList),
+    firstItem: describe(keyedItems[0]),
+    markdownCount: markdownBlocks.length,
+    markdownFirst: describe(markdownBlocks[0]),
     // Sidebar conversation links, for the "sync conversations" feature.
     sidebarLinks: [...document.querySelectorAll('a[href^="/a/chat/s/"]')]
       .slice(0, 5)
@@ -151,17 +176,23 @@ const INSPECT = `(() => {
      * file rather than the log, because a single reply's markup is tens of kilobytes.
      */
     messageHtml: (() => {
-      const containers = [...document.querySelectorAll('[class]')].filter(
-        (el) => el.children.length >= 2 && (el.innerText || '').length > 200
-      )
-      // The smallest container that still holds a whole thread: the outermost one is the
-      // app root and carries no useful structure.
-      const target = containers.sort((a, b) => a.innerHTML.length - b.innerHTML.length)[0]
-      if (!target) return ''
-      return target.outerHTML
-        .replace(/>[^<]{40,}</g, '>«text»<')
-        .replace(/="[^"]{80,}"/g, '="«long»"')
-        .slice(0, 60000)
+      /*
+       * Priority order, most specific first.
+       *
+       * The sidebar must never win: it is full of short rows and passes any "has text"
+       * test, which is exactly how the first version of this probe captured the
+       * conversation list instead of the conversation.
+       */
+      const targets = [messageList, markdownBlocks[0]?.parentElement, markdownBlocks[0]].filter(Boolean)
+      for (const target of targets) {
+        const html = target.outerHTML
+        if (html.length < 500) continue
+        return html
+          .replace(/>[^<]{40,}</g, '>«text»<')
+          .replace(/="[^"]{80,}"/g, '="«long»"')
+          .slice(0, 60000)
+      }
+      return ''
     })()
   }
 })()`
@@ -202,6 +233,11 @@ async function inspect(wc, label) {
     log(`${label} sidebar links=`, String(info.sidebarLinkCount), JSON.stringify(info.sidebarLinks))
     log(`${label} data-* histogram=`, JSON.stringify(info.dataAttrHistogram))
     log(`${label} idLike=`, JSON.stringify(info.idLike))
+    // The message list: the one thing the adapter cannot be written without.
+    log(`${label} keyedItems=`, String(info.keyedItemCount), JSON.stringify(info.keyedItemKeys))
+    log(`${label} messageList=`, JSON.stringify(info.messageList))
+    log(`${label} firstItem=`, JSON.stringify(info.firstItem))
+    log(`${label} markdown=`, String(info.markdownCount), JSON.stringify(info.markdownFirst))
     log(`${label} message containers:`)
     for (const row of info.messageish) log(`    ${JSON.stringify(row)}`)
     dumpMarkup(label, info.messageHtml)
