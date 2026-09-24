@@ -30,7 +30,8 @@ import type {
   SshTransferTask,
   SshState,
   TerminalNotes,
-  TerminalState
+  TerminalState,
+  UpdateStatus
 } from '../shared/types'
 
 /**
@@ -320,6 +321,19 @@ removeConversation: (id: string): Promise<Conversation[]> =>
     ipcRenderer.on(IpcChannels.embedState, handler)
     return () => {
       ipcRenderer.removeListener(IpcChannels.embedState, handler)
+    }
+  },
+
+  getUpdateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke(IpcChannels.updateGetState),
+  checkForUpdates: (): Promise<UpdateStatus> => ipcRenderer.invoke(IpcChannels.updateCheck),
+  downloadUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke(IpcChannels.updateDownload),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke(IpcChannels.updateInstall),
+
+  onUpdateChanged: (listener: (status: UpdateStatus) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, status: UpdateStatus): void => listener(status)
+    ipcRenderer.on(IpcChannels.updateChanged, handler)
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.updateChanged, handler)
     }
   }
 }

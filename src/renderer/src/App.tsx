@@ -20,7 +20,8 @@ import type {
   SshFileEntry,
   SshState,
   TerminalNotes,
-  TerminalState
+  TerminalState,
+  UpdateStatus
 } from '@shared/types'
 
 const INITIAL_EMBED_STATE: EmbedState = {
@@ -182,6 +183,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     proxy: ''
   })
   const [sshProxyDraft, setSshProxyDraft] = useState('')
+  const [updateProxyDraft, setUpdateProxyDraft] = useState('')
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
 
   /** While an SSH transcript is on screen it replaces the local terminal. */
   const sshActive = ssh !== null && ssh.attached
@@ -894,6 +897,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         setSettings(value)
         setProxyDraft(value.embedProxy)
         setSshProxyDraft(value.sshProxy)
+        setUpdateProxyDraft(value.updateProxy)
       })
       .catch(() => {
         /* the dialog renders a placeholder */
@@ -907,6 +911,27 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       cancelled = true
     }
   }, [settingsOpen])
+
+  /*
+   * Updater state: seed once so the dialog has something to render, then keep
+   * it live. Main is the source of truth; this only mirrors what it pushes.
+   */
+  useEffect(() => {
+    let cancelled = false
+    window.api
+      .getUpdateStatus()
+      .then((value) => {
+        if (!cancelled) setUpdateStatus(value)
+      })
+      .catch(() => {
+        /* the section renders a placeholder */
+      })
+    const off = window.api.onUpdateChanged((value) => setUpdateStatus(value))
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
 
 
   /**
@@ -1009,18 +1034,20 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       // into a URL, and the user should see that rather than be surprised later.
       const next = await window.api.updateSettings({
         embedProxy: proxyDraft,
-        sshProxy: sshProxyDraft
+        sshProxy: sshProxyDraft,
+        updateProxy: updateProxyDraft
       })
       setSettings(next)
       setProxyDraft(next.embedProxy)
       setSshProxyDraft(next.sshProxy)
+      setUpdateProxyDraft(next.updateProxy)
       setSettingsOpen(false)
     } catch {
       /* leave the dialog open so the input is not lost */
     } finally {
       setSavingSettings(false)
     }
-  }, [proxyDraft, sshProxyDraft])
+  }, [proxyDraft, sshProxyDraft, updateProxyDraft])
 
   /** Drag the terminal's right edge to resize the column. */
   const startResize = useCallback(
@@ -1971,6 +1998,72 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
               </label>
 
               <div className="field">
+
+              <label className="field">
+                <span className="field__label">更新下载代理</span>
+                <input
+                  className="address__input"
+                  value={updateProxyDraft}
+                  spellCheck={false}
+                  placeholder="http://127.0.0.1:7897　（留空 = 直连）"
+                  onChange={(event) => setUpdateProxyDraft(event.target.value)}
+                />
+                <p className="field__hint">
+                  安装包托管在 GitHub。只有<strong>下载更新</strong>走这个代理；
+                  网页和 SSH 用的是上面两个，互不影响。
+                </p>
+              </label>
+
+              <div className="field">
+                <span className="field__label">应用更新</span>
+                <p className="field__hint">
+                  {updateStatus === null
+                    ? "正在读取更新状态…"
+                    : updateStatus.phase === "checking"
+                      ? "正在检查更新…"
+                      : updateStatus.phase === "available"
+                        ? `发现新版本 ${updateStatus.version}，可下载。`
+                        : updateStatus.phase === "downloading"
+                          ? `正在下载 ${updateStatus.percent}%…`
+                          : updateStatus.phase === "downloaded"
+                            ? `新版本 ${updateStatus.version} 已下载，重启即可安装。`
+                            : updateStatus.phase === "error"
+                              ? `更新出错：${updateStatus.message}`
+                              : updateStatus.message || "已是最新版本。"}
+                </p>
+                <div className="dialog__actions">
+                  <button
+                    type="button"
+                    className="btn btn--inline"
+                    disabled={
+                      updateStatus !== null &&
+                      (updateStatus.phase === "checking" || updateStatus.phase === "downloading")
+                    }
+                    onClick={() => void window.api.checkForUpdates()}
+                  >
+                    检查更新
+                  </button>
+                  {updateStatus?.phase === "available" ? (
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--inline"
+                      onClick={() => void window.api.downloadUpdate()}
+                    >
+                      下载更新
+                    </button>
+                  ) : null}
+                  {updateStatus?.phase === "downloaded" ? (
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--inline"
+                      onClick={() => void window.api.installUpdate()}
+                    >
+                      重启并安装
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
                 <span className="field__label">从浏览器导入登录态</span>
                 <p className="field__hint">
                   给<strong>无法在应用内登录</strong>的账号用：用 Google 创建的 ChatGPT

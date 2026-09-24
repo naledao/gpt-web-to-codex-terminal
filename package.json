@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@svar-ui/react-filemanager": "^2.6.0",
+    "electron-updater": "^6.8.9",
     "ssh2": "^1.17.0"
   },
   "devDependencies": {

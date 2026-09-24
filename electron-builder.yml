@@ -47,3 +47,8 @@ linux:
   category: Development
 
 
+
+publish:
+  provider: github
+  owner: naledao
+  repo: gpt-web-to-codex-terminal

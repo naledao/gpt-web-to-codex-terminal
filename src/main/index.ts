@@ -37,12 +37,14 @@ import type {
   SshFileEntry,
   SshState,
   TerminalNotes,
-  TerminalState
+  TerminalState,
+  UpdateStatus
 } from '../shared/types'
 import { embedAuthState, importSessionToken, previewSessionImport } from './session-import'
 import { ConversationStore } from './db'
 import { EMPTY_SSH_STATE, SessionRuntime } from './session-runtime'
 import { installAppLog, installNetLog } from './app-log'
+import { applyUpdateProxy, checkForUpdates, downloadUpdate, getUpdateStatus, installUpdate, setUpdaterBroadcast } from './updater'
 
 /*
  * Before anything else, so a failure during startup is itself recorded.
@@ -78,6 +80,7 @@ const isDev = !app.isPackaged
 const SETTING_EXECUTION_MODE = 'executionMode'
 const SETTING_EMBED_PROXY = 'embedProxy'
 const SETTING_SSH_PROXY = 'sshProxy'
+const SETTING_UPDATE_PROXY = 'updateProxy'
 const SETTING_LOCAL_MACHINE_ID = 'localMachineId'
 const SETTING_WORKSPACE_SESSION_ID = 'workspaceSessionId'
 const SETTING_WORKSPACE_OPEN_SSH_DIALOG = 'workspaceOpenSshDialog'
@@ -87,7 +90,7 @@ let tray: Tray | null = null
 let quitting = false
 let store: ConversationStore | null = null
 let localMachineId = ''
-let settings: AppSettings = { embedProxy: '', sshProxy: '' }
+let settings: AppSettings = { embedProxy: '', sshProxy: '', updateProxy: '' }
 const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
 let workspaceOpenSshDialog = false
@@ -644,7 +647,7 @@ function registerIpcHandlers(): void {
     return runtime.ssh.getState()
   })
 
-  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => runtimeForEvent(event) ? { ...settings } : { embedProxy: '', sshProxy: '' })
+  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => runtimeForEvent(event) ? { ...settings } : { embedProxy: '', sshProxy: '', updateProxy: '' })
   ipcMain.handle(IpcChannels.settingsUpdate, async (event, patch: AppSettingsPatch): Promise<AppSettings> => {
     if (!runtimeForEvent(event) || !store) return { ...settings }
     if (typeof patch?.embedProxy === 'string') {
@@ -659,8 +662,19 @@ function registerIpcHandlers(): void {
       settings = { ...settings, sshProxy: proxy }
       store.setSetting(SETTING_SSH_PROXY, proxy)
     }
+    if (typeof patch?.updateProxy === 'string') {
+      const proxy = normalizeProxy(patch.updateProxy)
+      settings = { ...settings, updateProxy: proxy }
+      store.setSetting(SETTING_UPDATE_PROXY, proxy)
+      await applyUpdateProxy(proxy)
+    }
     return { ...settings }
   })
+
+  ipcMain.handle(IpcChannels.updateGetState, (): UpdateStatus => getUpdateStatus())
+  ipcMain.handle(IpcChannels.updateCheck, (): Promise<UpdateStatus> => checkForUpdates())
+  ipcMain.handle(IpcChannels.updateDownload, (): Promise<UpdateStatus> => downloadUpdate())
+  ipcMain.handle(IpcChannels.updateInstall, (): void => installUpdate())
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -702,9 +716,16 @@ if (!app.requestSingleInstanceLock()) {
 
     settings = {
       embedProxy: conversationStore.getSetting(SETTING_EMBED_PROXY) ?? '',
-      sshProxy: conversationStore.getSetting(SETTING_SSH_PROXY) ?? ''
+      sshProxy: conversationStore.getSetting(SETTING_SSH_PROXY) ?? '',
+      updateProxy: conversationStore.getSetting(SETTING_UPDATE_PROXY) ?? ''
     }
     await applyEmbedProxy(settings.embedProxy)
+    setUpdaterBroadcast((status) => {
+      if (managerWindow && !managerWindow.isDestroyed()) {
+        managerWindow.webContents.send(IpcChannels.updateChanged, status)
+      }
+    })
+    await applyUpdateProxy(settings.updateProxy)
 
     registerIpcHandlers()
     createTray()

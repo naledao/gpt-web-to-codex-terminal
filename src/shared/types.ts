@@ -81,10 +81,36 @@ export const IpcChannels = {
   workspaceGetState: 'workspace:get-state',
   workspaceShowManager: 'workspace:show-manager',
   workspaceSetOpenSshDialog: 'workspace:set-open-ssh-dialog',
-  workspaceChanged: 'workspace:changed'
+  workspaceChanged: 'workspace:changed',
+  updateGetState: 'update:get-state',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  updateChanged: 'update:changed'
 } as const
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels]
+
+/**
+ * Live state of the application updater.
+ *
+ * `phase` drives the settings UI:
+ *   idle      — nothing checked yet, or the check is done and we are current
+ *   checking  — asking GitHub for the latest release
+ *   available — a newer version exists and can be downloaded
+ *   downloading — download in progress (`percent` is 0..100)
+ *   downloaded — ready to install; `install()` restarts into it
+ *   error     — see `message`
+ */
+export interface UpdateStatus {
+  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+  /** Version offered by the server, when known. */
+  version: string
+  /** Download progress, 0..100. Only meaningful while downloading. */
+  percent: number
+  /** Human-readable detail for the error phase. */
+  message: string
+}
 
 /** State of the single-window workspace shell. */
 export interface WorkspaceState {
@@ -259,6 +285,14 @@ export interface AppSettings {
    * Empty string means direct.
    */
   sshProxy: string
+  /**
+   * Proxy used ONLY when downloading application updates.
+   *
+   * Separate from the two above because an update download hits github.com,
+   * while the embed and SSH proxies point at entirely different destinations.
+   * Empty string means direct.
+   */
+  updateProxy: string
 }
 
 /** Everything the renderer may change; every field is optional. */
@@ -1189,4 +1223,14 @@ export interface AppApi {
   cancelSshDownload(id: string): Promise<boolean>
   onSshDownloadsChanged(listener: (items: SshDownloadTask[]) => void): () => void
   onSshChanged(listener: (state: SshState) => void): () => void
+  /** Current application-updater state. */
+  getUpdateStatus(): Promise<UpdateStatus>
+  /** Ask GitHub whether a newer release exists. */
+  checkForUpdates(): Promise<UpdateStatus>
+  /** Start downloading the offered update. */
+  downloadUpdate(): Promise<UpdateStatus>
+  /** Quit and install an already-downloaded update. */
+  installUpdate(): Promise<void>
+  /** Fires on every updater phase/progress change. */
+  onUpdateChanged(listener: (status: UpdateStatus) => void): () => void
 }
