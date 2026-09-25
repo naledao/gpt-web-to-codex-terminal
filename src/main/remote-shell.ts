@@ -11,6 +11,7 @@ interface PendingRun {
   resolve: (result: ShellResult) => void
   idleTimer: NodeJS.Timeout
   ceilingTimer: NodeJS.Timeout
+  ceilingMs: number
   timedOut: false | 'idle' | 'ceiling'
   interrupted: boolean
 }
@@ -145,7 +146,7 @@ export class RemoteShell implements ExecutionShell {
         this.terminate()
       }, ceilingMs)
 
-      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false, interrupted: false }
+      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, ceilingMs, timedOut: false, interrupted: false }
 
       try {
         this.stream.write(buildEnvelope(this.token, seq, cleaned))
@@ -248,6 +249,7 @@ export class RemoteShell implements ExecutionShell {
       this.clearPending()
       pending.resolve({
         output: pending.output.trimEnd(),
+        timeoutMs: pending.ceilingMs,
         exitCode: null,
         timedOut: pending.timedOut,
         interrupted: pending.interrupted,

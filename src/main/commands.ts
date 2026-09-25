@@ -183,12 +183,12 @@ function humanDuration(ms: number): string {
  * repo emits its FIRST line only after several minutes, so it is indistinguishable
  * from a hang. The model would have "fixed" a command that was working.
  */
-function describeTimeout(kind: 'idle' | 'ceiling'): string {
+function describeTimeout(kind: 'idle' | 'ceiling', timeoutMs?: number): string {
   const idleWindow = humanDuration(IDLE_TIMEOUT_MS)
-  const maxMinutes = Math.round(MAX_RUNTIME_MS / 60_000)
+  const limit = Number.isFinite(timeoutMs) && timeoutMs && timeoutMs > 0 ? timeoutMs : MAX_RUNTIME_MS
 
   if (kind === 'ceiling') {
-    return `命令运行超过 ${maxMinutes} 分钟上限，已强制终止（任务太大，请拆成几步再做）`
+    return `命令运行超过 ${humanDuration(limit)}上限，已强制终止（任务太大，请拆成几步再做）`
   }
 
   return [
@@ -213,7 +213,7 @@ function summariseResult(result: ShellResult): TerminalLine {
       text: '终端会话在执行中意外结束（命令可能调用了 exit 或让会话崩溃）——下一条命令会自动重开'
     }
   }
-  if (result.timedOut) return { kind: 'error', text: describeTimeout(result.timedOut) }
+  if (result.timedOut) return { kind: 'error', text: describeTimeout(result.timedOut, result.timeoutMs) }
   return { kind: 'notice', text: `退出码 ${formatExitCode(result.exitCode)}` }
 }
 
@@ -236,7 +236,7 @@ function describeOutcome(result: ShellResult): string {
     return '执行中终端会话意外结束（命令可能调用了 exit 或让会话崩溃），已自动重开会话'
   }
   if (result.timedOut) {
-    return describeTimeout(result.timedOut)
+    return describeTimeout(result.timedOut, result.timeoutMs)
   }
   if (result.exitCode === null) {
     return '已执行，但没有拿到退出码'

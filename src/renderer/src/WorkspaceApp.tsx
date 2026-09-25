@@ -94,15 +94,30 @@ export default function WorkspaceApp(): ReactElement {
   return (
     <div className={workspace.view === 'manager' ? 'workspace workspace--manager' : 'workspace'}>
       <nav className="workspace__nav">
-        <div className="workspace__brand">GPT → Codex</div>
+        <div className="workspace__brand">
+          <span className="workspace__brand-mark">◆</span>
+          <span className="workspace__brand-text">GPT → Codex</span>
+        </div>
         <button
           type="button"
           className={workspace.view === 'manager' ? 'workspace__nav-button workspace__nav-button--active' : 'workspace__nav-button'}
           onClick={() => void window.api.showWorkspaceManager()}
         >
-          会话管理
+          <span className="workspace__nav-icon" aria-hidden="true">▤</span>
+          <span>会话管理</span>
         </button>
-        <div className="workspace__nav-label">会话</div>
+        <div className="workspace__nav-label-row">
+          <div className="workspace__nav-label">会话</div>
+          <button
+            type="button"
+            className="workspace__new-session"
+            title="新建本地会话"
+            aria-label="新建本地会话"
+            onClick={() => void window.api.createManagedSession('local')}
+          >
+            +
+          </button>
+        </div>
         <div className="workspace__sessions">
           {sessions.map((item) => (
             <div className="workspace__session-row" key={item.id}>

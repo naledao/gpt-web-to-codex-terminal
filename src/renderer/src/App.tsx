@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, WillowDark } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
@@ -38,8 +38,36 @@ const INITIAL_EMBED_STATE: EmbedState = {
 const TERMINAL_MIN_WIDTH = 220
 const TERMINAL_DEFAULT_WIDTH = 400
 const PANEL_MIN_WIDTH = 220
-const PANEL_DEFAULT_WIDTH = 288
+const PANEL_DEFAULT_WIDTH = 320
 const PANEL_MAX_RESERVE = 520
+
+/* Layout sizes live in localStorage so they survive the App remount that happens
+ * when the workspace switches to another session (WorkspaceApp keys App by session id). */
+const STORAGE_TERMINAL_WIDTH = 'layout.terminalWidth'
+const STORAGE_TERMINAL_COLLAPSED = 'layout.terminalCollapsed'
+const STORAGE_PANEL_WIDTH = 'layout.panelWidth'
+const STORAGE_PANEL_COLLAPSED = 'layout.panelCollapsed'
+
+function readStoredNumber(key: string, fallback: number): number {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw === null) return fallback
+    const value = Number(raw)
+    return Number.isFinite(value) ? value : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function readStoredBool(key: string, fallback: boolean): boolean {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw === null) return fallback
+    return raw === '1'
+  } catch {
+    return fallback
+  }
+}
 
 function toFilemanagerEntities(entries: SshFileEntry[]): FilemanagerEntity[] {
   return entries.map((entry) => ({
@@ -128,10 +156,10 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [durationNow, setDurationNow] = useState(() => Date.now())
   const [address, setAddress] = useState('')
   const [editing, setEditing] = useState(false)
-  const [terminalWidth, setTerminalWidth] = useState(TERMINAL_DEFAULT_WIDTH)
-  const [terminalCollapsed, setTerminalCollapsed] = useState(false)
-  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH)
-  const [panelCollapsed, setPanelCollapsed] = useState(false)
+  const [terminalWidth, setTerminalWidth] = useState(() => readStoredNumber(STORAGE_TERMINAL_WIDTH, TERMINAL_DEFAULT_WIDTH))
+  const [terminalCollapsed, setTerminalCollapsed] = useState(() => readStoredBool(STORAGE_TERMINAL_COLLAPSED, false))
+  const [panelWidth, setPanelWidth] = useState(() => readStoredNumber(STORAGE_PANEL_WIDTH, PANEL_DEFAULT_WIDTH))
+  const [panelCollapsed, setPanelCollapsed] = useState(() => readStoredBool(STORAGE_PANEL_COLLAPSED, false))
   const [switchingPlatform, setSwitchingPlatform] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -212,6 +240,19 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const terminalOutputRef = useRef<HTMLDivElement>(null)
   /** scope:hostId of the note currently loaded into the editor. */
   const notesOwnerRef = useRef('')
+
+  // Persist the layout sizes: switching sessions remounts App (WorkspaceApp keys it
+  // by session id), so without this the terminal width would snap back to default.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_TERMINAL_WIDTH, String(terminalWidth))
+      window.localStorage.setItem(STORAGE_TERMINAL_COLLAPSED, terminalCollapsed ? '1' : '0')
+      window.localStorage.setItem(STORAGE_PANEL_WIDTH, String(panelWidth))
+      window.localStorage.setItem(STORAGE_PANEL_COLLAPSED, panelCollapsed ? '1' : '0')
+    } catch {
+      /* storage unavailable; the sizes just will not persist */
+    }
+  }, [terminalWidth, terminalCollapsed, panelWidth, panelCollapsed])
 
   const conversationId = embed.conversationId
   const isAuto = automation?.mode === 'auto'
@@ -1140,7 +1181,13 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     <div className={panelCollapsed ? 'app app--panel-collapsed' : 'app'} style={{ '--terminal-width': `${terminalWidth}px`, '--panel-width': `${panelWidth}px` } as CSSProperties}>
       <header className="topbar">
         <div className="brand">
-          <span className="brand__mark">GPT</span>
+          <span className="brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18" />
+              <path d="M12 3c2.6 2.6 3.9 5.7 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.7-3.9-9S9.4 5.6 12 3z" />
+            </svg>
+          </span>
           <span className="brand__text">Web → Codex Terminal</span>
         </div>
 

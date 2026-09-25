@@ -130,6 +130,8 @@ export interface ShellResult {
   sessionLost: boolean
   /** Working directory after the command ran; it persists between commands. */
   cwd: string
+  /** Effective ceiling for this run, used by the timeout message. */
+  timeoutMs?: number
 }
 
 /**
@@ -196,6 +198,7 @@ interface PendingRun {
   resolve: (result: ShellResult) => void
   idleTimer: NodeJS.Timeout
   ceilingTimer: NodeJS.Timeout
+  ceilingMs: number
   timedOut: false | 'idle' | 'ceiling'
   interrupted: boolean
 }
@@ -315,7 +318,7 @@ export class ConversationShell implements ExecutionShell {
       }, ceilingMs)
 
       // Set before writing: the reply can arrive before write() returns.
-      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, timedOut: false, interrupted: false }
+      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, ceilingMs, timedOut: false, interrupted: false }
 
       try {
         stdin.write(`${Buffer.from(cleaned, 'utf16le').toString('base64')}\n`)
@@ -502,6 +505,7 @@ export class ConversationShell implements ExecutionShell {
         output: pending.output.trimEnd(),
         exitCode: null,
         timedOut: pending.timedOut,
+        timeoutMs: pending.ceilingMs,
         interrupted: pending.interrupted,
         rejected: false,
         sessionLost: pending.timedOut === false && !pending.interrupted,
