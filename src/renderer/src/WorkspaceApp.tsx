@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import type { ManagedSessionSummary, SshTransferTask, UpdateStatus, WorkspaceState } from '../../shared/types'
+import type { AppTheme, ManagedSessionSummary, SshTransferTask, UpdateStatus, WorkspaceState } from '../../shared/types'
 import brandIcon from './assets/brand-icon.png'
 import { platformById } from '../../shared/platforms'
 import App from './App'
@@ -57,6 +57,7 @@ export default function WorkspaceApp(): ReactElement {
   const [updateNotice, setUpdateNotice] = useState<{ version: string } | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const [updateLive, setUpdateLive] = useState<{ phase: UpdateStatus['phase']; percent: number }>({ phase: 'idle', percent: 0 })
+  const [theme, setTheme] = useState<AppTheme>('light')
   const noticedVersion = useRef('')
   const [navWidth, setNavWidth] = useState(() => {
     try {
@@ -115,6 +116,9 @@ export default function WorkspaceApp(): ReactElement {
 
   useEffect(() => {
     void window.api.getWorkspaceState().then(setWorkspace)
+    void window.api.getSettings().then((value) => setTheme(value.theme)).catch(() => {
+      /* Light is the safe fallback when settings are unavailable during startup. */
+    })
     void window.api.listManagedSessions().then(setSessions)
     void window.api.getSshTransfers().then(setTransfers)
     void window.api.getAppInfo().then((info) => setAppVersion(info.version))
@@ -217,7 +221,7 @@ export default function WorkspaceApp(): ReactElement {
   }
 
   return (
-    <div className={'workspace' + (navCollapsed ? ' workspace--nav-collapsed' : '')} style={{ '--nav-width': `${navWidth}px` } as CSSProperties}>
+    <div className={'workspace' + (navCollapsed ? ' workspace--nav-collapsed' : '')} data-theme={theme} style={{ '--nav-width': `${navWidth}px` } as CSSProperties}>
       <nav className="workspace__nav">
         <div className="workspace__brand">
           <span className="workspace__brand-mark" aria-hidden="true"><img src={brandIcon} alt="" /></span>
@@ -305,6 +309,7 @@ export default function WorkspaceApp(): ReactElement {
         {workspace.sessionId ? (
           <App
             key={workspace.sessionId}
+            onThemeChange={setTheme}
             initialSshDialogOpen={workspace.openSshDialog}
             globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen || updateNotice !== null}
             /*

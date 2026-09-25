@@ -7,6 +7,7 @@ import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseE
 import { SESSION_COOKIE_NAME } from '@shared/types'
 import { CHAT_PLATFORMS } from '@shared/platforms'
 import type {
+  AppTheme,
   AppSettings,
   AutomationState,
   Conversation,
@@ -143,9 +144,11 @@ interface AppProps {
   platformId?: string
   /** True while a workspace-level modal must cover the native embedded view. */
   globalModalOpen?: boolean
+  /** Called after settings are saved so the workspace shell changes immediately. */
+  onThemeChange: (theme: AppTheme) => void
 }
 
-export default function App({ initialSshDialogOpen = false, platformId = '', globalModalOpen = false }: AppProps): JSX.Element {
+export default function App({ initialSshDialogOpen = false, platformId = '', globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -165,6 +168,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [proxyDraft, setProxyDraft] = useState('')
+  const [themeDraft, setThemeDraft] = useState<AppTheme>('light')
   const [savingSettings, setSavingSettings] = useState(false)
   /**
    * Session-import fields. The value never leaves this component except as the
@@ -940,6 +944,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         if (cancelled) return
         setSettings(value)
         setProxyDraft(value.embedProxy)
+        setThemeDraft(value.theme)
         setSshProxyDraft(value.sshProxy)
         setUpdateProxyDraft(value.updateProxy)
       })
@@ -1099,11 +1104,14 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       // Show back what main actually stored — it normalises a bare "host:port"
       // into a URL, and the user should see that rather than be surprised later.
       const next = await window.api.updateSettings({
+        theme: themeDraft,
         embedProxy: proxyDraft,
         sshProxy: sshProxyDraft,
         updateProxy: updateProxyDraft
       })
       setSettings(next)
+      onThemeChange(next.theme)
+      setThemeDraft(next.theme)
       setProxyDraft(next.embedProxy)
       setSshProxyDraft(next.sshProxy)
       setUpdateProxyDraft(next.updateProxy)
@@ -1113,7 +1121,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     } finally {
       setSavingSettings(false)
     }
-  }, [proxyDraft, sshProxyDraft, updateProxyDraft])
+  }, [onThemeChange, proxyDraft, sshProxyDraft, themeDraft, updateProxyDraft])
 
   /** Drag the terminal's right edge to resize the column. */
   const startResize = useCallback(
@@ -2180,13 +2188,35 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
               <div className="settings-modal__title-icon">●</div>
               <div>
                 <div className="settings-modal__title">设置</div>
-                <div className="settings-modal__subtitle">代理、更新和登录态</div>
+                <div className="settings-modal__subtitle">外观、代理、更新和登录态</div>
               </div>
               <span className="panel__spacer" />
               <button type="button" className="settings-modal__close" aria-label="关闭" onClick={() => setSettingsOpen(false)}>×</button>
             </div>
 
             <div className="modal__body settings-modal__body">
+              <section className="settings-card settings-appearance-card">
+                <div className="settings-card__heading">
+                  <span className="settings-card__icon">◐</span>
+                  <span>外观</span>
+                </div>
+                <div className="settings-appearance-row">
+                  <div>
+                    <div className="settings-proxy-row__label">应用主题</div>
+                    <small className="settings-appearance-hint">切换应用界面整体的明暗外观</small>
+                  </div>
+                  <select
+                    className="settings-theme-select"
+                    value={themeDraft}
+                    aria-label="应用主题"
+                    onChange={(event) => setThemeDraft(event.target.value as AppTheme)}
+                  >
+                    <option value="light">浅色</option>
+                    <option value="dark">深色</option>
+                  </select>
+                </div>
+              </section>
+
               <section className="settings-card">
                 <div className="settings-card__heading">
                   <span className="settings-card__icon">◎</span>
@@ -2254,7 +2284,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
             <div className="modal__foot settings-modal__foot">
               <span className="panel__spacer" />
-              <button type="button" className="settings-cancel-btn" onClick={() => { setProxyDraft(settings?.embedProxy ?? ''); setSettingsOpen(false) }}>取消</button>
+              <button type="button" className="settings-cancel-btn" onClick={() => { setProxyDraft(settings?.embedProxy ?? ''); setSshProxyDraft(settings?.sshProxy ?? ''); setUpdateProxyDraft(settings?.updateProxy ?? ''); setThemeDraft(settings?.theme ?? 'light'); setSettingsOpen(false) }}>取消</button>
               <button type="button" className="settings-save-btn" disabled={savingSettings || settings === null} onClick={() => void saveSettings()}>{savingSettings ? '保存中…' : '保存并重新加载'}</button>
             </div>
           </div>

@@ -263,7 +263,11 @@ export interface AppInfo {
 }
 
 /** Persisted user settings, edited from the in-app settings dialog. */
+export type AppTheme = 'light' | 'dark'
+
 export interface AppSettings {
+  /** Overall appearance of the application chrome. */
+  theme: AppTheme
   /**
    * HTTP proxy for the EMBEDDED chatgpt.com view only.
    *

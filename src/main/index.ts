@@ -78,6 +78,7 @@ if (unresolvableHosts.length > 0) {
 const rendererDevServerUrl = process.env['ELECTRON_RENDERER_URL']
 const isDev = !app.isPackaged
 const SETTING_EXECUTION_MODE = 'executionMode'
+const SETTING_THEME = 'theme'
 const SETTING_EMBED_PROXY = 'embedProxy'
 const SETTING_SSH_PROXY = 'sshProxy'
 const SETTING_UPDATE_PROXY = 'updateProxy'
@@ -90,7 +91,7 @@ let tray: Tray | null = null
 let quitting = false
 let store: ConversationStore | null = null
 let localMachineId = ''
-let settings: AppSettings = { embedProxy: '', sshProxy: '', updateProxy: '' }
+let settings: AppSettings = { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '' }
 const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
 let workspaceOpenSshDialog = false
@@ -218,6 +219,10 @@ function selectSession(id: string, openSshDialog = false): boolean {
 function runtimeForEvent(event: IpcMainEvent | IpcMainInvokeEvent): SessionRuntime | null {
   if (!managerWindow || managerWindow.isDestroyed() || event.sender !== managerWindow.webContents) return null
   return currentSessionId ? runtimes.get(currentSessionId) ?? null : null
+}
+
+function isManagerEvent(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  return Boolean(managerWindow && !managerWindow.isDestroyed() && event.sender === managerWindow.webContents)
 }
 
 function persistManagedSession(runtime: SessionRuntime): void {
@@ -650,9 +655,13 @@ function registerIpcHandlers(): void {
     return runtime.ssh.getState()
   })
 
-  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => runtimeForEvent(event) ? { ...settings } : { embedProxy: '', sshProxy: '', updateProxy: '' })
+  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => isManagerEvent(event) ? { ...settings } : { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '' })
   ipcMain.handle(IpcChannels.settingsUpdate, async (event, patch: AppSettingsPatch): Promise<AppSettings> => {
-    if (!runtimeForEvent(event) || !store) return { ...settings }
+    if (!isManagerEvent(event) || !store) return { ...settings }
+    if (patch?.theme === 'light' || patch?.theme === 'dark') {
+      settings = { ...settings, theme: patch.theme }
+      store.setSetting(SETTING_THEME, patch.theme)
+    }
     if (typeof patch?.embedProxy === 'string') {
       const proxy = normalizeProxy(patch.embedProxy)
       settings = { ...settings, embedProxy: proxy }
@@ -718,6 +727,7 @@ if (!app.requestSingleInstanceLock()) {
     if (purged > 0) console.info(`[db] removed ${purged} non-conversation row(s)`)
 
     settings = {
+      theme: conversationStore.getSetting(SETTING_THEME) === 'dark' ? 'dark' : 'light',
       embedProxy: conversationStore.getSetting(SETTING_EMBED_PROXY) ?? '',
       sshProxy: conversationStore.getSetting(SETTING_SSH_PROXY) ?? '',
       updateProxy: conversationStore.getSetting(SETTING_UPDATE_PROXY) ?? ''
