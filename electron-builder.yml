@@ -1,4 +1,4 @@
-appId: com.example.gptweb2codexterminal
+﻿appId: com.example.gptweb2codexterminal
 productName: GPT Web to Codex Terminal
 
 # Pin the artifact name so the file on disk, the path recorded in latest.yml,
@@ -29,7 +29,7 @@ extraResources:
 npmRebuild: false
 
 win:
-  icon: build/icon.png
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
