@@ -6791,3 +6791,28 @@ body {
   font-size: 13px;
   font-weight: 500;
 }
+
+/* Inline rename input shown when a session row is right-clicked */
+.workspace__session-rename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+}
+.workspace__session-rename input {
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1.5px solid #759ed7;
+  border-radius: 8px;
+  background: #fbfdff;
+  color: #173b67;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.workspace__session-rename input:focus {
+  border-color: #3974c7;
+  box-shadow: 0 0 0 3px rgba(57,116,199,.14);
+}

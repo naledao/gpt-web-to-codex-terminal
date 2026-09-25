@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+﻿import { useEffect } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
 export interface ConfirmDialogItem {
@@ -17,6 +17,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string
   busy?: boolean
   danger?: boolean
+  dismissOnBackdrop?: boolean
+  dismissOnEscape?: boolean
   items?: ConfirmDialogItem[]
   onConfirm: () => void
   onCancel: () => void
@@ -31,18 +33,20 @@ export default function ConfirmDialog({
   cancelLabel = '取消',
   busy = false,
   danger = false,
+  dismissOnBackdrop = true,
+  dismissOnEscape = true,
   items = [],
   onConfirm,
   onCancel
 }: ConfirmDialogProps): ReactElement | null {
   useEffect(() => {
-    if (!open || busy) return
+    if (!open || busy || !dismissOnEscape) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onCancel()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, busy, onCancel])
+  }, [open, busy, dismissOnEscape, onCancel])
 
   if (!open) return null
 
@@ -53,7 +57,7 @@ export default function ConfirmDialog({
       aria-modal="true"
       aria-label={title}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onCancel()
+        if (event.target === event.currentTarget && !busy && dismissOnBackdrop) onCancel()
       }}
     >
       <div className="confirm-dialog__box">

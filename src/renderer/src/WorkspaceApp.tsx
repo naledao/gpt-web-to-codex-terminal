@@ -51,6 +51,9 @@ export default function WorkspaceApp(): ReactElement {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ManagedSessionSummary | null>(null)
   const [appVersion, setAppVersion] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [renameSaving, setRenameSaving] = useState(false)
   const [updateNotice, setUpdateNotice] = useState<{ version: string } | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const noticedVersion = useRef('')
@@ -130,6 +133,9 @@ export default function WorkspaceApp(): ReactElement {
       if (noticedVersion.current === status.version) return
       noticedVersion.current = status.version
       setUpdateNotice({ version: status.version })
+      /* Hide the native chat view at once: it paints above the DOM, so the
+       * dialog would otherwise be covered the moment the session view shows. */
+      window.api.setEmbedVisible(false)
     }
     void window.api.getUpdateStatus().then(notice)
     const off = window.api.onUpdateChanged(notice)
@@ -171,6 +177,29 @@ export default function WorkspaceApp(): ReactElement {
     ? Math.min(100, Math.round((activeTransferred / activeTotal) * 100))
     : 0
 
+  const beginRename = (item: ManagedSessionSummary): void => {
+    setRenamingId(item.id)
+    setRenameDraft(item.title || '')
+  }
+
+  const cancelRename = (): void => {
+    if (renameSaving) return
+    setRenamingId(null)
+    setRenameDraft('')
+  }
+
+  const saveRename = async (): Promise<void> => {
+    if (renamingId === null || renameSaving) return
+    setRenameSaving(true)
+    try {
+      await window.api.renameManagedSession(renamingId, renameDraft)
+      setRenamingId(null)
+      setRenameDraft('')
+    } finally {
+      setRenameSaving(false)
+    }
+  }
+
   const downloadUpdate = async (): Promise<void> => {
     if (updateDownloading) return
     setUpdateDownloading(true)
@@ -210,7 +239,23 @@ export default function WorkspaceApp(): ReactElement {
         </div>
         <div className="workspace__sessions">
           {sessions.map((item) => (
-            <div className="workspace__session-row" key={item.id}>
+            <div className="workspace__session-row" key={item.id} onContextMenu={(event) => { event.preventDefault(); beginRename(item) }}>
+              {renamingId === item.id ? (
+                <div className="workspace__session-rename">
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    disabled={renameSaving}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void saveRename()
+                      if (event.key === 'Escape') cancelRename()
+                    }}
+                    onBlur={() => void saveRename()}
+                  />
+                </div>
+              ) : (
+              <>
               <button
                 type="button"
                 className={workspace.sessionId === item.id ? 'workspace__session workspace__session--active' : 'workspace__session'}
@@ -236,6 +281,8 @@ export default function WorkspaceApp(): ReactElement {
               >
                 {deletingId === item.id ? '…' : <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>}
               </button>
+              </>
+              )}
             </div>
           ))}
         </div>
@@ -414,6 +461,8 @@ export default function WorkspaceApp(): ReactElement {
         confirmLabel="下载更新"
         cancelLabel="稍后"
         busy={updateDownloading}
+        dismissOnBackdrop={false}
+        dismissOnEscape={false}
         onConfirm={() => void downloadUpdate()}
         onCancel={() => setUpdateNotice(null)}
       />

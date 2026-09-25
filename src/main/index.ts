@@ -330,6 +330,10 @@ function createManagerWindow(): void {
     return
   }
 
+  const windowIconPath = app.isPackaged
+    ? join(process.resourcesPath, 'tray-icon.png')
+    : join(app.getAppPath(), 'build', 'icon.png')
+
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -338,6 +342,7 @@ function createManagerWindow(): void {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0b0e14',
+    icon: windowIconPath,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
