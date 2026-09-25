@@ -202,7 +202,8 @@
     // position we cannot control. See `selectAllIn`.
     selectAllIn(element)
     // Keep focus/selection honest so ProseMirror records a real edit.
-    return document.execCommand('insertText', false, text)
+    document.execCommand('insertText', false, text)
+    return readComposer(element) === text
   }
 
   const findSendButton = () => queryFirst(PAGE.sendButtonSelectors)
