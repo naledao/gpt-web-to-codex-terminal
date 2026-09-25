@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { ManagedSessionSummary, SshTransferTask, WorkspaceState } from '../../shared/types'
+import brandIcon from './assets/brand-icon.png'
+import { platformById } from '../../shared/platforms'
 import App from './App'
 import ManagerApp from './ManagerApp'
 import ConfirmDialog from './components/ConfirmDialog'
@@ -95,7 +97,7 @@ export default function WorkspaceApp(): ReactElement {
     <div className={workspace.view === 'manager' ? 'workspace workspace--manager' : 'workspace'}>
       <nav className="workspace__nav">
         <div className="workspace__brand">
-          <span className="workspace__brand-mark">◆</span>
+          <span className="workspace__brand-mark" aria-hidden="true"><img src={brandIcon} alt="" /></span>
           <span className="workspace__brand-text">GPT → Codex</span>
         </div>
         <button
@@ -103,7 +105,14 @@ export default function WorkspaceApp(): ReactElement {
           className={workspace.view === 'manager' ? 'workspace__nav-button workspace__nav-button--active' : 'workspace__nav-button'}
           onClick={() => void window.api.showWorkspaceManager()}
         >
-          <span className="workspace__nav-icon" aria-hidden="true">▤</span>
+          <span className="workspace__nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3h-11A2.5 2.5 0 0 0 4 5.5v7A2.5 2.5 0 0 0 6.5 15H9v3.2a.6.6 0 0 0 1 .47L13.6 15h3.9A2.5 2.5 0 0 0 20 12.5v-7z" />
+              <circle cx="8.6" cy="9" r="0.95" fill="currentColor" stroke="none" />
+              <circle cx="12" cy="9" r="0.95" fill="currentColor" stroke="none" />
+              <circle cx="15.4" cy="9" r="0.95" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
           <span>会话管理</span>
         </button>
         <div className="workspace__nav-label-row">
@@ -113,9 +122,8 @@ export default function WorkspaceApp(): ReactElement {
             className="workspace__new-session"
             title="新建本地会话"
             aria-label="新建本地会话"
-            onClick={() => void window.api.createManagedSession('local')}
-          >
-            +
+            onClick={() => void window.api.createManagedSession('local')}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
         </div>
         <div className="workspace__sessions">
@@ -127,9 +135,12 @@ export default function WorkspaceApp(): ReactElement {
                 onClick={() => void window.api.openManagedSession(item.id)}
                 title={item.title || item.target}
               >
-                <span className="workspace__session-title">{item.title || '会话'}</span>
+                <span className="workspace__session-head">
+                  <span className="workspace__session-title">{item.title || '会话'}</span>
+                  <span className={`workspace__session-platform workspace__session-platform--${item.platformId}`}>{platformById(item.platformId)?.label ?? item.platformId}</span>
+                </span>
                 <span className="workspace__session-meta">
-                  {item.taskRunning ? <span className="workspace__session-running">● 执行中 · </span> : null}
+                  {item.taskRunning ? <span className="workspace__session-running"><svg viewBox="0 0 8 8" width="7" height="7" fill="currentColor"><circle cx="4" cy="4" r="3.2" /></svg> 执行中 · </span> : null}
                   {item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
                 </span>
               </button>
@@ -141,7 +152,7 @@ export default function WorkspaceApp(): ReactElement {
                 aria-label={`删除 ${item.title || '会话'}`}
                 onClick={() => setPendingDelete(item)}
               >
-                {deletingId === item.id ? '…' : '×'}
+                {deletingId === item.id ? '…' : <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>}
               </button>
             </div>
           ))}
@@ -274,3 +285,4 @@ export default function WorkspaceApp(): ReactElement {
       />    </div>
   )
 }
+

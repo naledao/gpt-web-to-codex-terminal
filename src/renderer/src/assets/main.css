@@ -5679,3 +5679,489 @@ body {
   background: #eef2ff;
   color: #3f5fe0;
 }
+
+/* Terminal pane - align to the sidebar control-panel palette */
+.workspace:not(.workspace--manager) .terminal-pane {
+  border-color: #dce4ef;
+  border-radius: 14px;
+  background: #fbfcfe;
+  color: #30435f;
+  box-shadow: 0 1px 3px rgba(42, 65, 96, .05);
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__head {
+  border-bottom-color: #e5ebf3;
+  background: #fbfcfe;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__head .panel__title {
+  color: #233957;
+  font-size: 16px;
+  font-weight: 780;
+  letter-spacing: -.01em;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__head .terminal__dot {
+  width: 8px;
+  height: 8px;
+  background: #24b67a;
+  box-shadow: 0 0 0 3px rgba(36, 182, 122, .12);
+}
+
+.workspace:not(.workspace--manager) .terminal-pane .panel__delay {
+  border-color: #dce4ee;
+  background: #f0f3f7;
+  color: #30435f;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane .panel__delay-input {
+  color: #233957;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane .panel__delay-unit {
+  color: #7f8ca0;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane .panel__sync {
+  border-color: #dce4ef;
+  background: #ffffff;
+  color: #455b79;
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(42, 59, 82, .03);
+}
+
+.workspace:not(.workspace--manager) .terminal-pane .panel__sync:hover:not(:disabled) {
+  border-color: #c5d3e4;
+  background: #f5f8fc;
+  color: #294a74;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__meta {
+  border-bottom-color: #e5ebf3;
+  background: #fbfcfe;
+  color: #30435f;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__id {
+  color: #233957;
+  font-weight: 700;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__cwd,
+.workspace:not(.workspace--manager) .terminal-pane__cwd-input {
+  border-color: #dce4ee;
+  background: #f0f3f7;
+  color: #455b79;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__cwd:hover {
+  border-color: #c5d3e4;
+  background: #e8edf5;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__cwd-input:focus {
+  border-color: #5f83ee;
+  box-shadow: 0 0 0 3px rgba(95, 131, 238, .14);
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__output {
+  border-color: #e5ebf3;
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: #30435f;
+  box-shadow: inset 0 1px 2px rgba(42, 65, 96, .04);
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__empty {
+  color: #7f8ca0;
+}
+
+.workspace:not(.workspace--manager) .line {
+  color: #30435f;
+}
+
+.workspace:not(.workspace--manager) .line--command {
+  color: #3f63df;
+}
+
+.workspace:not(.workspace--manager) .line--output {
+  color: #30435f;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__input {
+  border-top-color: #e5ebf3;
+  background: #fbfcfe;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__prompt {
+  color: #6480a5;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__input .address__input {
+  border-color: #82a9df;
+  border-radius: 10px;
+  background: #fbfcfe;
+  color: #30435f;
+  box-shadow: 0 0 0 2px rgba(95, 131, 238, .06);
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__input .address__input:focus {
+  border-color: #5f83ee;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(95, 131, 238, .14);
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__input .address__input::placeholder {
+  color: #8c98aa;
+}
+
+/* Current command card head - center-align the badge, description and exit code */
+.workspace:not(.workspace--manager) .current__head {
+  align-items: center;
+}
+
+/* Fix workspace nav scroll layering */
+.workspace:not(.workspace--manager) .workspace__nav {
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  background: #f7f8fa;
+}
+.workspace:not(.workspace--manager) .workspace__sessions {
+  position: relative;
+  z-index: 3;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #f7f8fa;
+  scrollbar-gutter: stable;
+}
+.workspace:not(.workspace--manager) .workspace__session {
+  position: relative;
+  z-index: 4;
+  background: #f7f8fa;
+}
+.workspace:not(.workspace--manager) .workspace__session--active {
+  background: #e7edf9;
+}
+
+/* Workspace navigation visual separation */
+.workspace:not(.workspace--manager) .workspace__nav {
+  isolation: isolate;
+}
+.workspace:not(.workspace--manager) .workspace__brand,
+.workspace:not(.workspace--manager) .workspace__nav-label {
+  position: relative;
+  z-index: 5;
+  background: #f7f8fa;
+}
+.workspace:not(.workspace--manager) .workspace__sessions {
+  padding-top: 4px;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+}
+.workspace:not(.workspace--manager) .workspace__session {
+  box-shadow: 0 0 0 1px transparent;
+}
+.workspace:not(.workspace--manager) .workspace__session:hover,
+.workspace:not(.workspace--manager) .workspace__session--active {
+  z-index: 6;
+}
+
+/* Workspace nav scroll mask compatibility refinement */
+.workspace:not(.workspace--manager) .workspace__sessions {
+  mask-image: none;
+  -webkit-mask-image: none;
+  border-top: 1px solid #edf0f5;
+  padding-top: 8px;
+}
+.workspace:not(.workspace--manager) .workspace__sessions::before {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 8px;
+  right: 8px;
+  height: 8px;
+  background: #f7f8fa;
+  z-index: 5;
+}
+
+/* Mode switch - keep the active gradient on hover instead of the generic grey hover */
+.workspace:not(.workspace--manager) .mode__item--on:hover:not(:disabled) {
+  background: linear-gradient(135deg, #5379ea, #658af3);
+  color: #fff;
+}
+
+.workspace:not(.workspace--manager) .mode__item--on:disabled {
+  color: #fff;
+}
+
+/* Command card - soften the command text colour to match the pane palette */
+.workspace:not(.workspace--manager) .current__command {
+  background: #eef3fb;
+  color: #35609e;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__output .line--command {
+  color: #35609e;
+}
+
+/* Prevent sidebar folder/session scrolling from leaking to parent content */
+.workspace__sessions {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+}
+
+
+/* Prevent conversation history panel scroll chaining */
+.panel__list {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+}
+.conversation-folder__list {
+  overscroll-behavior: contain;
+}
+
+
+/* Workspace sidebar - redesign per reference (white surface, blue accents) */
+.workspace:not(.workspace--manager) .workspace__nav {
+  background: #ffffff;
+  border-right: 1px solid #e8edf4;
+}
+
+.workspace:not(.workspace--manager) .workspace__brand {
+  color: #1f3350;
+}
+
+.workspace:not(.workspace--manager) .workspace__brand-mark {
+  border-radius: 10px;
+  background: linear-gradient(145deg, #4c72f2, #3f5fe0);
+  color: #ffffff;
+  box-shadow: 0 4px 11px rgba(76, 114, 242, .28);
+}
+
+.workspace:not(.workspace--manager) .workspace__nav-button {
+  border-radius: 10px;
+  color: #4a5b73;
+  font-weight: 650;
+}
+
+.workspace:not(.workspace--manager) .workspace__nav-button:hover {
+  background: #f2f5fa;
+  color: #2d4667;
+}
+
+.workspace:not(.workspace--manager) .workspace__nav-button--active {
+  background: #eef2fb;
+  color: #3f5fe0;
+}
+
+.workspace:not(.workspace--manager) .workspace__nav-label {
+  color: #33475f;
+  font-weight: 700;
+}
+
+.workspace:not(.workspace--manager) .workspace__new-session {
+  color: #6a7a90;
+  border-radius: 8px;
+}
+
+.workspace:not(.workspace--manager) .workspace__new-session:hover {
+  background: #eef2fb;
+  color: #3f5fe0;
+}
+
+.workspace:not(.workspace--manager) .workspace__sessions {
+  background: #ffffff;
+  border-top: 1px solid #eef2f7;
+}
+
+.workspace:not(.workspace--manager) .workspace__sessions::before {
+  background: #ffffff;
+}
+
+.workspace:not(.workspace--manager) .workspace__session {
+  border-radius: 10px;
+  background: #ffffff;
+  color: #40536e;
+}
+
+.workspace:not(.workspace--manager) .workspace__session:hover {
+  background: #f4f7fb;
+  color: #2d4667;
+}
+
+.workspace:not(.workspace--manager) .workspace__session--active {
+  background: #eef2fb;
+  color: #3f5fe0;
+  box-shadow: inset 3px 0 #5a7ee8;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-title {
+  color: #2b3f5c;
+  font-weight: 700;
+}
+
+.workspace:not(.workspace--manager) .workspace__session--active .workspace__session-title {
+  color: #3557cc;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-meta {
+  color: #8593a6;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-running {
+  color: #14b88b;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-delete {
+  color: #a4adbb;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-delete:hover:not(:disabled) {
+  background: #fdecee;
+  color: #e15a63;
+}
+
+/* Sidebar brand and section label - drop the grey backing so they match the white nav */
+.workspace:not(.workspace--manager) .workspace__brand,
+.workspace:not(.workspace--manager) .workspace__nav-label {
+  background: transparent;
+}
+
+/* Session platform badge - show which chat site a session drives */
+.workspace:not(.workspace--manager) .workspace__session-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-head .workspace__session-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-platform {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: .01em;
+  background: #eef2fb;
+  color: #4a6bd6;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-platform--chatgpt {
+  background: #e4f6ee;
+  color: #10855f;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-platform--deepseek {
+  background: #e7efff;
+  color: #3355d1;
+}
+
+/* Smooth workspace view transition between manager and session */
+.workspace__content {
+  isolation: isolate;
+}
+.workspace__content > .app,
+.workspace__content > .manager-page {
+  animation: workspace-content-enter 160ms ease-out;
+}
+@keyframes workspace-content-enter {
+  from { opacity: 0.86; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+
+/* Sidebar sessions - clip overflow so no horizontal scrollbar appears */
+.workspace:not(.workspace--manager) .workspace__sessions {
+  overflow-x: hidden;
+}
+
+.workspace:not(.workspace--manager) .workspace__session,
+.workspace:not(.workspace--manager) .workspace__session-head {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-head .workspace__session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sidebar session rows - clip overflow in BOTH workspace views (manager included) */
+.workspace .workspace__sessions {
+  overflow-x: hidden;
+}
+
+.workspace .workspace__session,
+.workspace .workspace__session-head {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workspace .workspace__session-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace .workspace__session-head .workspace__session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Session platform badge - apply in the manager view too */
+.workspace .workspace__session-platform {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: .01em;
+  background: #eef2fb;
+  color: #4a6bd6;
+}
+
+.workspace .workspace__session-platform--chatgpt {
+  background: #e4f6ee;
+  color: #10855f;
+}
+
+.workspace .workspace__session-platform--deepseek {
+  background: #e7efff;
+  color: #3355d1;
+}
+
+.workspace__brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+
+
+/* Brand mark - show the real app icon edge to edge */
+.workspace__brand-mark {
+  overflow: hidden;
+}
+
+.workspace__brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}

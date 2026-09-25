@@ -1913,6 +1913,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                   >
                     {currentExecution.description || '（模型没有给出说明）'}
                   </span>
+                  <span className="current__code">超时 {currentExecution.timeoutSeconds}s</span>
                   {currentExecution.exitCode !== null ? (
                     <span className="current__code">退出码 {currentExecution.exitCode}</span>
                   ) : null}
