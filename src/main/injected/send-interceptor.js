@@ -100,6 +100,11 @@
 
   const collapse = (value) => (value || '').replace(/\s+/g, ' ').trim()
 
+  // A textarea converts CRLF and bare CR to LF when its value is assigned. Git and
+  // other terminal tools can put bare CR inside output, so compare and submit the
+  // same text the browser actually keeps instead of reporting a false insert failure.
+  const normalizeLineEndings = (value) => String(value).replace(/\r\n?/g, '\n')
+
   /** First element matching any of a selector list. Lists, so a rename degrades. */
   const queryFirst = (selectors) => {
     for (const selector of selectors) {
@@ -195,13 +200,18 @@
 
     if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
       try {
+        const value = normalizeLineEndings(text)
         const proto = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement : HTMLInputElement
         const setter = Object.getOwnPropertyDescriptor(proto.prototype, 'value')?.set
         element.focus()
-        if (setter) setter.call(element, text)
-        else element.value = text
+        if (setter) setter.call(element, value)
+        else element.value = value
         element.dispatchEvent(new Event('input', { bubbles: true }))
-        return readComposer(element) === text
+        // DeepSeek may normalize line breaks or surrounding whitespace while its
+        // controlled textarea handles the input event. Treat that normalization
+        // the same way as the contenteditable path instead of reporting a false
+        // insert failure after the text is visibly in the box.
+        return composerMatches(element, value)
       } catch (_) {
         return false
       }
@@ -1151,7 +1161,7 @@
       // Never clobber something the user is in the middle of typing.
       if (collapse(readComposer(element)) !== '') return Promise.resolve('busy')
 
-      const payload = String(text)
+      const payload = normalizeLineEndings(text)
 
       state.programmatic = true
       let inserted = false

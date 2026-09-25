@@ -262,7 +262,13 @@ function describeOutcome(result: ShellResult): string {
  * between commands — without it a `cd` two steps back is invisible to the model.
  */
 function buildResultMessage(command: string, result: ShellResult): string {
-  const body = result.output.trim() === '' ? '(命令没有任何输出)' : truncateOutput(result.output)
+  // Interactive tools such as git write carriage returns and ANSI erase codes
+  // to redraw progress in a terminal. They are not useful in a chat message and
+  // can make a browser textarea normalize the text after insertion.
+  const readableOutput = result.output
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\r\n?/g, '\n')
+  const body = readableOutput.trim() === '' ? '(命令没有任何输出)' : truncateOutput(readableOutput)
   const header = [
     `命令: ${command}`,
     `目录: ${result.cwd}`,
