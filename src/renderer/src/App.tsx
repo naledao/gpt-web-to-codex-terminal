@@ -170,6 +170,11 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [notesDraft, setNotesDraft] = useState('')
   const [notesSaving, setNotesSaving] = useState(false)
   const [notesPreview, setNotesPreview] = useState(false)
+  /** 注入提示词查看弹框。 */
+  const [promptOpen, setPromptOpen] = useState(false)
+  const [promptSearchOpen, setPromptSearchOpen] = useState(false)
+  const [promptSearch, setPromptSearch] = useState('')
+  const [promptCopied, setPromptCopied] = useState(false)
   const [sshDialogOpen, setSshDialogOpen] = useState(initialSshDialogOpen)
   const [sshAdvancedOpen, setSshAdvancedOpen] = useState(true)
   /** The quick host list, shown inside the terminal pane. */
@@ -936,9 +941,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
    * overlay alone would be hidden behind it. Hide the view while a dialog is up.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !globalModalOpen)
+    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !globalModalOpen && !promptOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [settingsOpen, sshDialogOpen, notesOpen, globalModalOpen])
+  }, [settingsOpen, sshDialogOpen, notesOpen, globalModalOpen, promptOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -1011,6 +1016,28 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [settingsOpen])
+
+  // Escape closes the injected-prompt viewer; Ctrl/Cmd+F opens its local find field.
+  useEffect(() => {
+    if (!promptOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        setPromptSearchOpen(true)
+        return
+      }
+      if (event.key === 'Escape') {
+        if (promptSearchOpen) {
+          setPromptSearchOpen(false)
+          setPromptSearch('')
+        } else {
+          setPromptOpen(false)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [promptOpen, promptSearchOpen])
 
   // …and dismisses the transient panels that live in the terminal column.
   useEffect(() => {
@@ -1344,10 +1371,15 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             </p>
           ) : null}
 
-          <details className="terminal__details">
-            <summary>查看注入的提示词</summary>
-            <pre className="terminal__prompt">{interceptor?.prefix.trim() || '…'}</pre>
-          </details>
+          <div className="terminal__details">
+            <button
+              type="button"
+              className="terminal__prompt-link"
+              onClick={() => setPromptOpen(true)}
+            >
+              查看注入的提示词
+            </button>
+          </div>
         </div>
 
         <div className="panel__head">
@@ -1983,7 +2015,77 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         <span className="statusbar__spacer" />
       </footer>
 
-      {settingsOpen ? (
+        {/* Injected prompt viewer. Rendered as Markdown. */}
+        {promptOpen ? (
+          <div
+            className="modal modal--prompt"
+            role="dialog"
+            aria-modal="true"
+            aria-label="注入的提示词"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setPromptOpen(false)
+            }}
+          >
+            <div className="prompt-modal" data-color-mode="light">
+              <div className="prompt-modal__head">
+                <span className="prompt-modal__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20"><path d="M7 3.75h7.7L19 8.05v12.2H7z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><path d="M14.5 3.9v4.4h4.35M10 12h6M10 15.5h6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                </span>
+                <span className="prompt-modal__title">注入的提示词</span>
+                <span className="prompt-modal__readonly">只读</span>
+                <span className="panel__spacer" />
+                <button
+                  type="button"
+                  className={promptCopied ? 'prompt-modal__action prompt-modal__action--success' : 'prompt-modal__action'}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(interceptor?.prefix.trim() || '').then(() => {
+                      setPromptCopied(true)
+                      window.setTimeout(() => setPromptCopied(false), 1600)
+                    })
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="8" y="8" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.8"/><path d="M15 8V6.5A1.5 1.5 0 0 0 13.5 5h-7A1.5 1.5 0 0 0 5 6.5v7A1.5 1.5 0 0 0 6.5 15H8" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>
+                  {promptCopied ? '已复制' : '复制全部'}
+                </button>
+                <button
+                  type="button"
+                  className={promptSearchOpen ? 'prompt-modal__action prompt-modal__action--active' : 'prompt-modal__action'}
+                  onClick={() => setPromptSearchOpen((value) => !value)}
+                >
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.8"/><path d="m15 15 4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                  查找
+                </button>
+                <button type="button" className="prompt-modal__close" aria-label="关闭" onClick={() => setPromptOpen(false)}>×</button>
+              </div>
+
+              {promptSearchOpen ? (
+                <div className="prompt-modal__search">
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.8"/><path d="m15 15 4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                  <input
+                    autoFocus
+                    value={promptSearch}
+                    placeholder="在注入的提示词中查找…"
+                    aria-label="查找注入的提示词"
+                    onChange={(event) => setPromptSearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' || !promptSearch.trim()) return
+                      event.preventDefault()
+                      const find = (window as typeof window & { find?: (text: string, caseSensitive?: boolean, backwards?: boolean, wrapAround?: boolean, wholeWord?: boolean, searchInFrames?: boolean, showDialog?: boolean) => boolean }).find
+                      find?.(promptSearch.trim(), false, event.shiftKey, true, false, false, false)
+                    }}
+                  />
+                  <span className="prompt-modal__search-hint">Enter 下一个 · Shift+Enter 上一个</span>
+                  <button type="button" aria-label="关闭查找" onClick={() => { setPromptSearchOpen(false); setPromptSearch('') }}>×</button>
+                </div>
+              ) : null}
+
+              <div className="prompt-modal__body">
+                <MDEditor.Markdown source={interceptor?.prefix.trim() || '（暂无注入内容）'} wrapperElement={{ 'data-color-mode': 'light' }} />
+              </div>
+              <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div>
+            </div>
+          </div>
+        ) : null}      {settingsOpen ? (
         <div
           className="modal modal--settings"
           role="dialog"
