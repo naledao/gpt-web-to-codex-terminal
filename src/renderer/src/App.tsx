@@ -1548,7 +1548,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
       <section className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
         <div className="terminal-pane__head">
-          {sshActive ? null : <span className="panel__title">终端</span>}
+          <span className="panel__title">终端</span>
           <span
             className={
               sshActive
