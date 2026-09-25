@@ -1,6 +1,6 @@
-﻿import { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import type { ManagedSessionSummary, SshTransferTask, WorkspaceState } from '../../shared/types'
+import type { ManagedSessionSummary, SshTransferTask, UpdateStatus, WorkspaceState } from '../../shared/types'
 import brandIcon from './assets/brand-icon.png'
 import { platformById } from '../../shared/platforms'
 import App from './App'
@@ -51,6 +51,9 @@ export default function WorkspaceApp(): ReactElement {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ManagedSessionSummary | null>(null)
   const [appVersion, setAppVersion] = useState('')
+  const [updateNotice, setUpdateNotice] = useState<{ version: string } | null>(null)
+  const [updateDownloading, setUpdateDownloading] = useState(false)
+  const noticedVersion = useRef('')
   const [navWidth, setNavWidth] = useState(() => {
     try {
       const raw = window.localStorage.getItem('layout.navWidth')
@@ -121,6 +124,18 @@ export default function WorkspaceApp(): ReactElement {
     }
   }, [])
 
+  useEffect(() => {
+    const notice = (status: UpdateStatus): void => {
+      if (status.phase !== 'available' || !status.version) return
+      if (noticedVersion.current === status.version) return
+      noticedVersion.current = status.version
+      setUpdateNotice({ version: status.version })
+    }
+    void window.api.getUpdateStatus().then(notice)
+    const off = window.api.onUpdateChanged(notice)
+    return off
+  }, [])
+
   const deleteSession = async (item: ManagedSessionSummary): Promise<void> => {
     if (deletingId !== null) return
     setDeletingId(item.id)
@@ -155,6 +170,16 @@ export default function WorkspaceApp(): ReactElement {
   const activePercent = activeTotal > 0
     ? Math.min(100, Math.round((activeTransferred / activeTotal) * 100))
     : 0
+
+  const downloadUpdate = async (): Promise<void> => {
+    if (updateDownloading) return
+    setUpdateDownloading(true)
+    try {
+      await window.api.downloadUpdate()
+    } finally {
+      setUpdateDownloading(false)
+    }
+  }
 
   return (
     <div className={'workspace' + (navCollapsed ? ' workspace--nav-collapsed' : '')} style={{ '--nav-width': `${navWidth}px` } as CSSProperties}>
@@ -228,7 +253,7 @@ export default function WorkspaceApp(): ReactElement {
           <App
             key={workspace.sessionId}
             initialSshDialogOpen={workspace.openSshDialog}
-            globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen}
+            globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen || updateNotice !== null}
             /*
              * Read from the session list rather than held as its own state: the main process
              * republishes the list whenever a session changes, including on a platform switch,
@@ -381,6 +406,17 @@ export default function WorkspaceApp(): ReactElement {
           </div>
         </div>
       ) : null}
+      <ConfirmDialog
+        open={updateNotice !== null}
+        title={`发现新版本 v${updateNotice?.version ?? ''}`}
+        description="新版本已可下载。下载完成后重启即可安装，不会打断当前任务。"
+        icon="⬆"
+        confirmLabel="下载更新"
+        cancelLabel="稍后"
+        busy={updateDownloading}
+        onConfirm={() => void downloadUpdate()}
+        onCancel={() => setUpdateNotice(null)}
+      />
       <ConfirmDialog
         open={pendingDelete !== null}
         title={`删除“${pendingDelete?.title || '会话'}”？`}
