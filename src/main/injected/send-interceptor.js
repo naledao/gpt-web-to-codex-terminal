@@ -133,6 +133,16 @@
   }
 
   /**
+   * Contenteditable editors are allowed to normalize whitespace and line breaks while
+   * accepting an insertText command. Compare the visible text in its normalized form so
+   * a successful write is not mistaken for a failed injection.
+   */
+  const composerMatches = (element, expected) => {
+    const actual = readComposer(element)
+    return actual === expected || collapse(actual) === collapse(expected)
+  }
+
+  /**
    * The assistant's ANSWER text, from a turn element.
    *
    * On ChatGPT the turn's text is the answer, and this returns it unchanged. On a site
@@ -203,7 +213,7 @@
     selectAllIn(element)
     // Keep focus/selection honest so ProseMirror records a real edit.
     document.execCommand('insertText', false, text)
-    return readComposer(element) === text
+    return composerMatches(element, text)
   }
 
   const findSendButton = () => queryFirst(PAGE.sendButtonSelectors)
