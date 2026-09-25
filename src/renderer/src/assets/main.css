@@ -6777,3 +6777,17 @@ body {
   position: relative;
   z-index: 10;
 }
+
+/* App version, right-aligned in the bottom transfer bar */
+.workspace__version {
+  margin-left: auto;
+  padding-right: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace:not(.workspace--manager) .workspace__version {
+  color: #8993a3;
+  font-size: 13px;
+  font-weight: 500;
+}

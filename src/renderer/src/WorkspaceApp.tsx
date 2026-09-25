@@ -50,6 +50,7 @@ export default function WorkspaceApp(): ReactElement {
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ManagedSessionSummary | null>(null)
+  const [appVersion, setAppVersion] = useState('')
   const [navWidth, setNavWidth] = useState(() => {
     try {
       const raw = window.localStorage.getItem('layout.navWidth')
@@ -109,6 +110,7 @@ export default function WorkspaceApp(): ReactElement {
     void window.api.getWorkspaceState().then(setWorkspace)
     void window.api.listManagedSessions().then(setSessions)
     void window.api.getSshTransfers().then(setTransfers)
+    void window.api.getAppInfo().then((info) => setAppVersion(info.version))
     const offWorkspace = window.api.onWorkspaceChanged(setWorkspace)
     const offSessions = window.api.onManagedSessionsChanged(setSessions)
     const offTransfers = window.api.onSshTransfersChanged(setTransfers)
@@ -256,6 +258,7 @@ export default function WorkspaceApp(): ReactElement {
                 : '暂无任务'}
           </span>
         </button>
+        {appVersion ? <span className="workspace__version" title="应用版本号">v{appVersion}</span> : null}
       </footer>
 
       {transfersOpen ? (
