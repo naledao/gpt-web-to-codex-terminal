@@ -230,6 +230,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [sshProxyDraft, setSshProxyDraft] = useState('')
   const [updateProxyDraft, setUpdateProxyDraft] = useState('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  /** True between clicking download and the first progress event. */
+  const [preparingDownload, setPreparingDownload] = useState(false)
 
   /** While an SSH transcript is on screen it replaces the local terminal. */
   const sshActive = ssh !== null && ssh.attached
@@ -981,6 +983,14 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       off()
     }
   }, [])
+
+  /*
+   * The spinner covers the gap between clicking download and the first
+   * progress event. Any phase other than 'available' means the wait is over.
+   */
+  useEffect(() => {
+    if (updateStatus?.phase !== 'available') setPreparingDownload(false)
+  }, [updateStatus?.phase])
 
 
   /**
@@ -2257,7 +2267,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                   </div>
                   <div className="settings-update-actions">
                     <button type="button" className="settings-outline-btn" disabled={updateStatus !== null && (updateStatus.phase === 'checking' || updateStatus.phase === 'downloading')} onClick={() => void window.api.checkForUpdates()}>检查更新</button>
-                    {updateStatus?.phase === 'available' ? <button type="button" className="settings-outline-btn" onClick={() => void window.api.downloadUpdate()}>下载更新</button> : null}
+                    {updateStatus?.phase === 'available' ? <button type="button" className="settings-outline-btn" disabled={preparingDownload} onClick={() => { setPreparingDownload(true); void window.api.downloadUpdate().finally(() => setPreparingDownload(false)) }}>{preparingDownload ? <><span className="btn-spinner" />正在准备下载…</> : '下载更新'}</button> : null}
                     {updateStatus?.phase === 'downloaded' ? <button type="button" className="settings-outline-btn" onClick={() => void window.api.installUpdate()}>重启并安装</button> : null}
                   </div>
                 </div>

@@ -2109,6 +2109,9 @@ body {
 .settings-outline-btn { min-height:40px; padding:0 20px; border:1.5px solid #6758ed; border-radius:10px; background:#fff; color:#594bea; font-size:14px; font-weight:650; cursor:pointer; }
 .settings-outline-btn:hover:not(:disabled) { background:#f6f4ff; }
 .settings-outline-btn:disabled { opacity:.45; cursor:default; }
+.settings-outline-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+.btn-spinner { width:14px; height:14px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:btn-spin .7s linear infinite; }
+@keyframes btn-spin { to { transform:rotate(360deg); } }
 .settings-session-row { display:grid; grid-template-columns:180px 1fr; align-items:center; gap:12px; margin-top:12px; }
 .settings-session-row label { color:#344054; font-size:14px; font-weight:600; }
 .settings-session-row--value { grid-template-columns:180px minmax(220px,1fr) auto; align-items:start; }
