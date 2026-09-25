@@ -1,4 +1,4 @@
-import { app, session } from "electron"
+﻿import { app, session } from "electron"
 import { autoUpdater } from "electron-updater"
 import type { UpdateStatus } from "../shared/types"
 
@@ -58,7 +58,7 @@ function wireEvents(): void {
   // Download only when the user asks: a metered or proxied link should not
   // start pulling tens of megabytes the moment a check finds a new version.
   autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.autoInstallOnAppQuit = false
 
   autoUpdater.on("checking-for-update", () => {
     setStatus({ phase: "checking", message: "" })

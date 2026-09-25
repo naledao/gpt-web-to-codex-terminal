@@ -56,6 +56,7 @@ export default function WorkspaceApp(): ReactElement {
   const [renameSaving, setRenameSaving] = useState(false)
   const [updateNotice, setUpdateNotice] = useState<{ version: string } | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
+  const [updateLive, setUpdateLive] = useState<{ phase: UpdateStatus['phase']; percent: number }>({ phase: 'idle', percent: 0 })
   const noticedVersion = useRef('')
   const [navWidth, setNavWidth] = useState(() => {
     try {
@@ -129,6 +130,7 @@ export default function WorkspaceApp(): ReactElement {
 
   useEffect(() => {
     const notice = (status: UpdateStatus): void => {
+      setUpdateLive({ phase: status.phase, percent: status.percent })
       if (status.phase !== 'available' || !status.version) return
       if (noticedVersion.current === status.version) return
       noticedVersion.current = status.version
@@ -208,6 +210,10 @@ export default function WorkspaceApp(): ReactElement {
     } finally {
       setUpdateDownloading(false)
     }
+  }
+
+  const installUpdate = (): void => {
+    void window.api.installUpdate()
   }
 
   return (
@@ -455,15 +461,15 @@ export default function WorkspaceApp(): ReactElement {
       ) : null}
       <ConfirmDialog
         open={updateNotice !== null}
-        title={`发现新版本 v${updateNotice?.version ?? ''}`}
-        description="新版本已可下载。下载完成后重启即可安装，不会打断当前任务。"
+        title={updateLive.phase === 'downloaded' ? `新版本 v${updateNotice?.version ?? ''} 已下载` : `发现新版本 v${updateNotice?.version ?? ''}`}
+        description={updateLive.phase === 'downloading' ? `正在下载更新… ${updateLive.percent}%` : updateLive.phase === 'downloaded' ? '下载完成，点击“重启并安装”即可升级，不会丢失当前会话。' : '新版本已可下载。下载完成后重启即可安装，不会打断当前任务。'}
         icon="⬆"
-        confirmLabel="下载更新"
+        confirmLabel={updateLive.phase === 'downloaded' ? '重启并安装' : updateLive.phase === 'downloading' ? '下载中…' : '下载更新'}
         cancelLabel="稍后"
-        busy={updateDownloading}
+        busy={updateLive.phase === 'downloading'}
         dismissOnBackdrop={false}
         dismissOnEscape={false}
-        onConfirm={() => void downloadUpdate()}
+        onConfirm={() => { if (updateLive.phase === 'downloaded') installUpdate(); else void downloadUpdate() }}
         onCancel={() => setUpdateNotice(null)}
       />
       <ConfirmDialog
