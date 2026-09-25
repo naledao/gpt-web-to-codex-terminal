@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react'
-import type { ReactElement } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import type { ManagedSessionSummary, SshTransferTask, WorkspaceState } from '../../shared/types'
 import brandIcon from './assets/brand-icon.png'
 import { platformById } from '../../shared/platforms'
 import App from './App'
-import ManagerApp from './ManagerApp'
 import ConfirmDialog from './components/ConfirmDialog'
 
 const INITIAL_WORKSPACE: WorkspaceState = {
@@ -48,8 +47,63 @@ export default function WorkspaceApp(): ReactElement {
   const [sessions, setSessions] = useState<ManagedSessionSummary[]>([])
   const [transfers, setTransfers] = useState<SshTransferTask[]>([])
   const [transfersOpen, setTransfersOpen] = useState(false)
+  const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ManagedSessionSummary | null>(null)
+  const [navWidth, setNavWidth] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem('layout.navWidth')
+      const value = raw === null ? NaN : Number(raw)
+      return Number.isFinite(value) ? value : 228
+    } catch {
+      return 228
+    }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('layout.navWidth', String(navWidth))
+    } catch {
+      /* storage unavailable; the width just will not persist */
+    }
+  }, [navWidth])
+
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem('layout.navCollapsed') === '1'
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('layout.navCollapsed', navCollapsed ? '1' : '0')
+    } catch {
+      /* storage unavailable; the state just will not persist */
+    }
+  }, [navCollapsed])
+
+  /** Drag the sidebar's right edge to resize it. */
+  const startNavResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      event.preventDefault()
+      const startX = event.clientX
+      const startWidth = navWidth
+      const onMove = (moveEvent: PointerEvent): void => {
+        const next = startWidth + (moveEvent.clientX - startX)
+        const max = Math.max(200, Math.min(420, window.innerWidth - 520))
+        setNavWidth(Math.min(Math.max(next, 176), max))
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [navWidth]
+  )
 
   useEffect(() => {
     void window.api.getWorkspaceState().then(setWorkspace)
@@ -84,6 +138,13 @@ export default function WorkspaceApp(): ReactElement {
     }
   }
 
+  const createManagedSession = async (kind: 'local' | 'ssh'): Promise<void> => {
+    setNewSessionOpen(false)
+    // For SSH the main process opens the connect dialog for us (createSession passes
+    // openSshDialog = kind === 'ssh'), so there is nothing else to do here.
+    await window.api.createManagedSession(kind)
+  }
+
   const activeTransfers = transfers.filter(
     (item) => item.status === 'uploading' || item.status === 'downloading'
   )
@@ -94,35 +155,29 @@ export default function WorkspaceApp(): ReactElement {
     : 0
 
   return (
-    <div className={workspace.view === 'manager' ? 'workspace workspace--manager' : 'workspace'}>
+    <div className={'workspace' + (navCollapsed ? ' workspace--nav-collapsed' : '')} style={{ '--nav-width': `${navWidth}px` } as CSSProperties}>
       <nav className="workspace__nav">
         <div className="workspace__brand">
           <span className="workspace__brand-mark" aria-hidden="true"><img src={brandIcon} alt="" /></span>
           <span className="workspace__brand-text">GPT → Codex</span>
+          <button
+            type="button"
+            className="workspace__nav-collapse"
+            title={navCollapsed ? '展开左侧栏' : '折叠左侧栏'}
+            aria-label={navCollapsed ? '展开左侧栏' : '折叠左侧栏'}
+            onClick={() => setNavCollapsed((value) => !value)}
+          >
+            {navCollapsed ? '»' : '«'}
+          </button>
         </div>
-        <button
-          type="button"
-          className={workspace.view === 'manager' ? 'workspace__nav-button workspace__nav-button--active' : 'workspace__nav-button'}
-          onClick={() => void window.api.showWorkspaceManager()}
-        >
-          <span className="workspace__nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3h-11A2.5 2.5 0 0 0 4 5.5v7A2.5 2.5 0 0 0 6.5 15H9v3.2a.6.6 0 0 0 1 .47L13.6 15h3.9A2.5 2.5 0 0 0 20 12.5v-7z" />
-              <circle cx="8.6" cy="9" r="0.95" fill="currentColor" stroke="none" />
-              <circle cx="12" cy="9" r="0.95" fill="currentColor" stroke="none" />
-              <circle cx="15.4" cy="9" r="0.95" fill="currentColor" stroke="none" />
-            </svg>
-          </span>
-          <span>会话管理</span>
-        </button>
         <div className="workspace__nav-label-row">
           <div className="workspace__nav-label">会话</div>
           <button
             type="button"
             className="workspace__new-session"
-            title="新建本地会话"
-            aria-label="新建本地会话"
-            onClick={() => void window.api.createManagedSession('local')}>
+            title="新建会话"
+            aria-label="新建会话"
+            onClick={() => setNewSessionOpen(true)}>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
         </div>
@@ -157,14 +212,21 @@ export default function WorkspaceApp(): ReactElement {
             </div>
           ))}
         </div>
+        <div
+          className="workspace__nav-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧栏宽度"
+          onPointerDown={startNavResize}
+        />
       </nav>
 
       <section className="workspace__content">
-        {workspace.view === 'session' && workspace.sessionId ? (
+        {workspace.sessionId ? (
           <App
             key={workspace.sessionId}
             initialSshDialogOpen={workspace.openSshDialog}
-            globalModalOpen={transfersOpen || pendingDelete !== null}
+            globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen}
             /*
              * Read from the session list rather than held as its own state: the main process
              * republishes the list whenever a session changes, including on a platform switch,
@@ -174,9 +236,7 @@ export default function WorkspaceApp(): ReactElement {
               sessions.find((item) => item.id === workspace.sessionId)?.platformId ?? ''
             }
           />
-        ) : (
-          <ManagerApp />
-        )}
+        ) : null}
       </section>
 
       <footer className="workspace__transferbar">
@@ -268,6 +328,56 @@ export default function WorkspaceApp(): ReactElement {
         </div>
       ) : null}
 
+      {newSessionOpen ? (
+        <div
+          className="modal new-session-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="新建会话"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setNewSessionOpen(false)
+          }}
+        >
+          <div className="new-session-modal__box">
+            <div className="new-session-modal__header">
+              <div>
+                <h2>新建会话</h2>
+                <p>选择一种工作环境开始任务</p>
+              </div>
+              <button type="button" className="new-session-modal__close" aria-label="关闭" onClick={() => setNewSessionOpen(false)}>×</button>
+            </div>
+
+            <div className="new-session-modal__options">
+              <button type="button" className="new-session-modal__option" onClick={() => void createManagedSession('local')}>
+                <span className="new-session-modal__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="4" width="14" height="11" rx="1.5"/><path d="M3.5 18h17M8 18h8"/></svg>
+                </span>
+                <span className="new-session-modal__content">
+                  <span className="new-session-modal__title-row"><strong>本地会话</strong></span>
+                  <small>使用当前电脑创建新的工作环境</small>
+                </span>
+                <span className="new-session-modal__arrow" aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className="new-session-modal__option new-session-modal__option--ssh" onClick={() => void createManagedSession('ssh')}>
+                <span className="new-session-modal__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="4" width="14" height="6" rx="1.5"/><rect x="5" y="14" width="14" height="6" rx="1.5"/><path d="M9 7h.01M9 17h.01M12 7h3M12 17h3"/></svg>
+                </span>
+                <span className="new-session-modal__content">
+                  <span className="new-session-modal__title-row"><strong>SSH 会话</strong><em className="new-session-modal__badge">远程</em></span>
+                  <small>连接远程机器并创建 SSH 工作环境</small>
+                </span>
+                <span className="new-session-modal__arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
+
+            <div className="new-session-modal__footer">
+              <span className="new-session-modal__info" aria-hidden="true">i</span>
+              <span>创建后仍可在会话设置中修改连接方式</span>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <ConfirmDialog
         open={pendingDelete !== null}
         title={`删除“${pendingDelete?.title || '会话'}”？`}
@@ -285,4 +395,3 @@ export default function WorkspaceApp(): ReactElement {
       />    </div>
   )
 }
-

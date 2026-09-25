@@ -193,12 +193,9 @@ function persistWorkspaceState(): void {
 }
 
 function showWorkspaceManager(): boolean {
-  if (currentSessionId) runtimes.get(currentSessionId)?.setActive(false)
-  currentSessionId = null
-  workspaceOpenSshDialog = false
-  persistWorkspaceState()
-  broadcastWorkspaceState()
-  return true
+  const firstId = runtimes.keys().next().value as string | undefined
+  if (firstId) return selectSession(firstId)
+  return createSession('local', true) !== null
 }
 
 function selectSession(id: string, openSshDialog = false): boolean {
@@ -295,8 +292,9 @@ function destroySession(id: string): boolean {
   broadcastManagedSessions()
   broadcastSshTransfers()
   if (wasCurrent) {
-    persistWorkspaceState()
-    broadcastWorkspaceState()
+    const nextId = runtimes.keys().next().value as string | undefined
+    if (nextId) selectSession(nextId)
+    else createSession('local', true)
   }
   return true
 }
@@ -735,7 +733,7 @@ if (!app.requestSingleInstanceLock()) {
     const savedWorkspaceSessionId = conversationStore.getSetting(SETTING_WORKSPACE_SESSION_ID) ?? ''
     const savedWorkspaceOpenSshDialog = conversationStore.getSetting(SETTING_WORKSPACE_OPEN_SSH_DIALOG) === '1'
     const savedSessions = conversationStore.listManagedSessions()
-    if (savedSessions.length === 0) createSession('local', false)
+    if (savedSessions.length === 0) createSession('local', true)
     else {
       for (const savedSession of savedSessions) {
         // Restore each session onto the site it was created on. An id this build does not
@@ -749,15 +747,13 @@ if (!app.requestSingleInstanceLock()) {
     if (savedWorkspaceSessionId !== '' && runtimes.has(savedWorkspaceSessionId)) {
       selectSession(savedWorkspaceSessionId, savedWorkspaceOpenSshDialog)
     } else {
-      currentSessionId = null
-      workspaceOpenSshDialog = false
-      persistWorkspaceState()
-      broadcastWorkspaceState()
+      const firstId = runtimes.keys().next().value as string | undefined
+      if (firstId) selectSession(firstId)
     }
 
     app.on('activate', () => {
       createManagerWindow()
-      if (runtimes.size === 0) createSession('local', false)
+      if (runtimes.size === 0) createSession('local', true)
     })
   })
 }

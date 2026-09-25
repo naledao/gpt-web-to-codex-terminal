@@ -161,6 +161,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [panelWidth, setPanelWidth] = useState(() => readStoredNumber(STORAGE_PANEL_WIDTH, PANEL_DEFAULT_WIDTH))
   const [panelCollapsed, setPanelCollapsed] = useState(() => readStoredBool(STORAGE_PANEL_COLLAPSED, false))
   const [switchingPlatform, setSwitchingPlatform] = useState(false)
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [proxyDraft, setProxyDraft] = useState('')
@@ -1243,22 +1244,53 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             A dropdown rather than a row of buttons: one-of-N is what a select is for, and the
             list is expected to grow.
           */}
-          <select
-            className="model-select"
-            aria-label="模型"
-            value={platformId}
-            // Refused while a task is running: the main process enforces this too, and this is
-            // only so the control does not look available when it is not.
-            disabled={taskRunning || switchingPlatform || platformId === ''}
-            title={taskRunning ? '任务运行中不能切换模型' : '切换模型'}
-            onChange={(event) => void switchPlatform(event.target.value)}
+          <div
+            className={`model-picker${modelMenuOpen ? ' model-picker--open' : ''}`}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setModelMenuOpen(false)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setModelMenuOpen(false)
+              }
+            }}
           >
-            {CHAT_PLATFORMS.map((platform) => (
-              <option key={platform.id} value={platform.id}>
-                {platform.label}
-              </option>
-            ))}
-          </select>
+            <button
+              type="button"
+              className="model-picker__trigger"
+              aria-label="模型"
+              aria-haspopup="listbox"
+              aria-expanded={modelMenuOpen}
+              disabled={taskRunning || switchingPlatform || platformId === ''}
+              title={taskRunning ? '任务运行中不能切换模型' : '切换模型'}
+              onClick={() => setModelMenuOpen((value) => !value)}
+            >
+              <span>{CHAT_PLATFORMS.find((platform) => platform.id === platformId)?.label || '模型'}</span>
+              <svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" /></svg>
+            </button>
+            {modelMenuOpen ? (
+              <div className="model-picker__menu" role="listbox" aria-label="选择模型">
+                {CHAT_PLATFORMS.map((platform) => (
+                  <button
+                    key={platform.id}
+                    type="button"
+                    role="option"
+                    aria-selected={platform.id === platformId}
+                    className={`model-picker__option${platform.id === platformId ? ' model-picker__option--active' : ''}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setModelMenuOpen(false)
+                      if (platform.id !== platformId) void switchPlatform(platform.id)
+                    }}
+                  >
+                    <span>{platform.label}</span>
+                    {platform.id === platformId ? <span className="model-picker__check">✓</span> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
 
           <button
             type="button"
@@ -2341,6 +2373,4 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     </div>
   )
 }
-
-
 
