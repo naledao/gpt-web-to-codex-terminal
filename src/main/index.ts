@@ -1,4 +1,4 @@
-import { join, posix } from 'node:path'
+﻿import { join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
@@ -254,7 +254,7 @@ function createSession(
     initialSshAttached: restored?.sshAttached ?? false,
     initialSshReconnect: restored?.sshReconnect ?? false,
     initialSshCwd: restored?.sshCwd ?? '',
-    initialSendDelaySeconds: restored?.sendDelaySeconds ?? 0,
+    initialSendDelaySeconds: restored?.sendDelaySeconds ?? 3,
     store,
     localMachineId,
     initialMode,

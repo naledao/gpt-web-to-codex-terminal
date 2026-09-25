@@ -1,24 +1,16 @@
 import { useEffect, useState } from 'react'
-import type { CSSProperties, ReactElement } from 'react'
+import type { ReactElement } from 'react'
 import type { ManagedSessionSummary } from '../../shared/types'
+import ConfirmDialog from './components/ConfirmDialog'
 
-const shell: CSSProperties = {
-  height: '100%',
-  overflow: 'auto',
-  background: '#0b0e14',
-  color: '#d7dde8',
-  fontFamily: 'Inter, system-ui, sans-serif',
-  padding: 28,
-  boxSizing: 'border-box'
-}
-
-const button: CSSProperties = {
-  border: '1px solid #303846',
-  background: '#171c25',
-  color: '#d7dde8',
-  borderRadius: 7,
-  padding: '9px 14px',
-  cursor: 'pointer'
+function formatCreatedAt(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '—'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(value))
 }
 
 export default function ManagerApp(): ReactElement {
@@ -28,18 +20,13 @@ export default function ManagerApp(): ReactElement {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [renameSaving, setRenameSaving] = useState(false)
+  const [pendingDestroy, setPendingDestroy] = useState<ManagedSessionSummary | null>(null)
 
   useEffect(() => {
     void window.api.listManagedSessions().then(setSessions)
     return window.api.onManagedSessionsChanged(setSessions)
   }, [])
 
-  /**
-   * A session is created for a PURPOSE — this machine, or a host reached over SSH — and the
-   * model it talks to is chosen inside the chat, not here. So the platform is not part of this
-   * call at all; the stored `platformId` only records which site that session is showing, and
-   * the switcher in the chat is what changes it.
-   */
   const createSession = async (kind: 'local' | 'ssh'): Promise<void> => {
     if (creating !== null) return
     setCreating(kind)
@@ -75,102 +62,170 @@ export default function ManagerApp(): ReactElement {
 
   const destroySession = async (item: ManagedSessionSummary): Promise<void> => {
     if (destroying !== null) return
-    const title = item.title || '会话'
-    if (!window.confirm(`销毁“${title}”？\n\n该会话的终端进程和 SSH 连接会立即结束，ChatGPT 对话历史不会因此删除。`)) return
     setDestroying(item.id)
     try {
       await window.api.destroyManagedSession(item.id)
+      setPendingDestroy(null)
     } finally {
       setDestroying(null)
     }
   }
 
   return (
-    <main style={shell}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 22 }}>会话管理</h1>
-          <div style={{ marginTop: 6, color: '#8b949e', fontSize: 13 }}>
-            每个会话拥有独立的对话、终端、SSH 和自动执行 loop。
-          </div>
+    <main className="manager-page">
+      <header className="manager-header">
+        <h1>会话管理</h1>
+        <div className="manager-header__actions">
+          <button
+            type="button"
+            className="manager-create manager-create--local"
+            disabled={creating !== null}
+            onClick={() => void createSession('local')}
+          >
+            <span className="manager-create__icon">＋</span>
+            {creating === 'local' ? '创建中…' : '本机会话'}
+          </button>
+          <button
+            type="button"
+            className="manager-create manager-create--ssh"
+            disabled={creating !== null}
+            onClick={() => void createSession('ssh')}
+          >
+            <span className="manager-create__icon">＋</span>
+            {creating === 'ssh' ? '创建中…' : 'SSH 会话'}
+          </button>
         </div>
-        <div style={{ flex: 1 }} />
-        <button style={button} disabled={creating !== null} onClick={() => void createSession('local')}>
-          {creating === 'local' ? '创建中…' : '+ 本机会话'}
-        </button>
-        <button style={button} disabled={creating !== null} onClick={() => void createSession('ssh')}>
-          {creating === 'ssh' ? '创建中…' : '+ SSH 会话'}
-        </button>
-      </div>
-      <section style={{ display: 'grid', gap: 12 }}>
+      </header>
+
+      <section className="manager-card">
+        <div className="manager-card__topline">
+          <div className="manager-card__title">全部会话</div>
+          <div className="manager-card__count">{sessions.length} 个会话</div>
+        </div>
+
         {sessions.length === 0 ? (
-          <div style={{ border: '1px dashed #303846', borderRadius: 10, padding: 28, color: '#8b949e' }}>
-            当前没有打开的会话。
+          <div className="manager-empty">
+            <div className="manager-empty__icon">＋</div>
+            <div className="manager-empty__title">暂无会话</div>
+            <div className="manager-empty__hint">点击右上角按钮创建一个新会话</div>
           </div>
         ) : (
-          sessions.map((item) => (
-            <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-              <button
-                onClick={() => void window.api.openManagedSession(item.id)}
-                style={{ ...button, textAlign: 'left', padding: 16, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}
-              >
-                <div>
-                  <div style={{ fontWeight: 650, fontSize: 15 }}>{item.title || '会话'}</div>
-                  <div style={{ marginTop: 5, color: '#8b949e', fontSize: 12 }}>
-                    {item.platformId === 'deepseek' ? 'DeepSeek' : 'ChatGPT'} ·{' '}
-                    {item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
-                  </div>
-                  {item.conversationId ? (
-                    <div style={{ marginTop: 4, color: '#6e7681', fontSize: 11 }}>{item.conversationId}</div>
-                  ) : null}
-                </div>
-                <div style={{ color: '#7ee787', fontSize: 12, alignSelf: 'center' }}>打开</div>
-              </button>
-              {renamingId === item.id ? (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    autoFocus
-                    value={renameDraft}
-                    disabled={renameSaving}
-                    placeholder="会话名称，留空恢复自动标题"
-                    onChange={(event) => setRenameDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') void saveRename()
-                      if (event.key === 'Escape') cancelRename()
-                    }}
-                    style={{ ...button, cursor: 'text', width: 220, outline: 'none' }}
-                  />
-                  <button type="button" disabled={renameSaving} onClick={() => void saveRename()} style={{ ...button, padding: '9px 12px' }}>
-                    {renameSaving ? '保存中…' : '保存'}
-                  </button>
-                  <button type="button" disabled={renameSaving} onClick={cancelRename} style={{ ...button, padding: '9px 12px' }}>
-                    取消
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
-                  <button
-                    type="button"
-                    disabled={destroying !== null}
-                    onClick={() => beginRename(item)}
-                    style={{ ...button, padding: '9px 12px' }}
-                  >
-                    命名
-                  </button>
-                  <button
-                    type="button"
-                    disabled={destroying !== null}
-                    onClick={() => void destroySession(item)}
-                    style={{ ...button, color: '#ff7b72', padding: '9px 12px' }}
-                  >
-                    {destroying === item.id ? '销毁中…' : '销毁'}
-                  </button>
-                </div>
-              )}
+          <div className="manager-table">
+            <div className="manager-table__head">
+              <span>会话</span>
+              <span>状态</span>
+              <span>类型</span>
+              <span>目标</span>
+              <span>创建时间</span>
+              <span className="manager-table__actions-title">操作</span>
             </div>
-          ))
+
+            {sessions.map((item) => (
+              <div className="manager-table__row" key={item.id}>
+                <div className="manager-session-cell">
+                  <div className={`manager-session-icon manager-session-icon--${item.kind}`}>
+                    {item.kind === 'ssh' ? '⌁' : '›_'}
+                  </div>
+                  <div className="manager-session-copy">
+                    {renamingId === item.id ? (
+                      <div className="manager-rename">
+                        <input
+                          autoFocus
+                          className="manager-rename__input"
+                          value={renameDraft}
+                          disabled={renameSaving}
+                          placeholder="会话名称"
+                          onChange={(event) => setRenameDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') void saveRename()
+                            if (event.key === 'Escape') cancelRename()
+                          }}
+                        />
+                        <button type="button" onClick={() => void saveRename()} disabled={renameSaving}>✓</button>
+                        <button type="button" onClick={cancelRename} disabled={renameSaving}>×</button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="manager-session-name"
+                          onClick={() => void window.api.openManagedSession(item.id)}
+                        >
+                          {item.title || '会话'}
+                        </button>
+                        <div className="manager-session-platform">
+                          {item.platformId === 'deepseek' ? 'DeepSeek' : 'ChatGPT'}
+                          {item.conversationId ? <span> · {item.conversationId}</span> : null}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <span className={item.taskRunning ? 'manager-status manager-status--running' : 'manager-status'}>
+                    <i />{item.taskRunning ? '执行中' : '空闲'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className={`manager-kind manager-kind--${item.kind}`}>
+                    {item.kind === 'ssh' ? 'SSH' : '本地'}
+                  </span>
+                </div>
+
+                <div className="manager-target" title={item.target}>{item.target || '—'}</div>
+                <div className="manager-created">{formatCreatedAt(item.createdAt)}</div>
+
+                <div className="manager-row-actions">
+                  <button
+                    type="button"
+                    className="manager-action manager-action--open"
+                    onClick={() => void window.api.openManagedSession(item.id)}
+                  >
+                    打开
+                  </button>
+                  <button
+                    type="button"
+                    className="manager-action manager-action--icon"
+                    aria-label="重命名"
+                    title="重命名"
+                    disabled={destroying !== null || renamingId === item.id}
+                    onClick={() => beginRename(item)}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    className="manager-action manager-action--icon manager-action--danger"
+                    aria-label="销毁"
+                    title="销毁"
+                    disabled={destroying !== null}
+                    onClick={() => setPendingDestroy(item)}
+                  >
+                    {destroying === item.id ? '…' : '×'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </section>
-    </main>
+
+      <ConfirmDialog
+        open={pendingDestroy !== null}
+        title={`销毁“${pendingDestroy?.title || '会话'}”？`}
+        description="此操作会立即结束该会话的运行环境，请确认是否继续。"
+        icon="!"
+        danger
+        busy={destroying !== null}
+        confirmLabel="确认销毁"
+        items={[
+          { icon: '▣', label: '终端进程和 SSH 连接', value: '立即结束', tone: 'danger' },
+          { icon: '◉', label: 'ChatGPT 对话历史', value: '保留', tone: 'success' }
+        ]}
+        onCancel={() => setPendingDestroy(null)}
+        onConfirm={() => { if (pendingDestroy) void destroySession(pendingDestroy) }}
+      />    </main>
   )
 }

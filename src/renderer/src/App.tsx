@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, WillowDark } from '@svar-ui/react-filemanager'
+import MDEditor from '@uiw/react-md-editor'
+import * as mdCommands from '@uiw/react-md-editor/commands'
 import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { SESSION_COOKIE_NAME } from '@shared/types'
@@ -123,7 +125,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [automation, setAutomation] = useState<AutomationState | null>(null)
   const [executions, setExecutions] = useState<ExecutionRecord[]>([])
   const [terminal, setTerminal] = useState<TerminalState | null>(null)
-  const [syncing, setSyncing] = useState(false)
   const [durationNow, setDurationNow] = useState(() => Date.now())
   const [address, setAddress] = useState('')
   const [editing, setEditing] = useState(false)
@@ -168,7 +169,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [notes, setNotes] = useState<TerminalNotes | null>(null)
   const [notesDraft, setNotesDraft] = useState('')
   const [notesSaving, setNotesSaving] = useState(false)
+  const [notesPreview, setNotesPreview] = useState(false)
   const [sshDialogOpen, setSshDialogOpen] = useState(initialSshDialogOpen)
+  const [sshAdvancedOpen, setSshAdvancedOpen] = useState(true)
   /** The quick host list, shown inside the terminal pane. */
   const [sshPickerOpen, setSshPickerOpen] = useState(false)
   const [sshBusy, setSshBusy] = useState(false)
@@ -537,16 +540,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
     return Array.from(folders.values())
   }, [conversations])
-  const syncConversations = useCallback(async (): Promise<void> => {
-    setSyncing(true)
-    try {
-      setConversations(await window.api.syncConversations())
-    } catch {
-      /* leave the previous list in place */
-    } finally {
-      setSyncing(false)
-    }
-  }, [])
 
   const openConversation = useCallback(async (conversation: Conversation): Promise<void> => {
     if (conversation.id === conversationId || taskRunning) return
@@ -943,9 +936,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
    * overlay alone would be hidden behind it. Hide the view while a dialog is up.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !globalModalOpen)
+    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !globalModalOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [settingsOpen, sshDialogOpen, globalModalOpen])
+  }, [settingsOpen, sshDialogOpen, notesOpen, globalModalOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -1361,15 +1354,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
           <span className="panel__title">对话记录</span>
           <span className="panel__count">{conversations.length}</span>
           <span className="panel__spacer" />
-          <button
-            type="button"
-            className="panel__sync"
-            title="从 ChatGPT 侧边栏同步"
-            disabled={syncing}
-            onClick={() => void syncConversations()}
-          >
-            {syncing ? '同步中…' : '同步'}
-          </button>
+          {/* 同步按钮已隐藏 */}
         </div>
 
         {conversations.length === 0 ? (
@@ -1729,67 +1714,82 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             </button>
           </div>
         )}
-
-        {/*
-          The per-machine note editor.
-          In the pane's normal flow, like the host switcher, because the embedded
-          page is a native view that would swallow anything floating over the stage.
-        */}
+        {/* Markdown note editor. The native embedded view is hidden while this modal is open. */}
         {terminalCollapsed || !notesOpen ? null : (
-          <div className="notes">
-            <div className="notes__head">
-              <span className="field__label">发送给 GPT 的补充说明</span>
-              <span className="panel__spacer" />
-              <span className="notes__owner" title={notes?.label}>
-                {notes?.scope === 'ssh' ? `SSH · ${notes.label}` : '本机'}
-              </span>
-            </div>
+          <div
+            className="modal modal--notes"
+            role="dialog"
+            aria-modal="true"
+            aria-label="编辑补充说明"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setNotesOpen(false)
+            }}
+          >
+            <div className="notes-modal" data-color-mode="light">
+              <div className="notes-modal__head">
+                <div className="notes-modal__heading">
+                  <span className="notes-modal__title">发送给 GPT 的补充说明</span>
+                  <span className="notes-modal__scope" title={notes?.label}>
+                    {notes?.scope === 'ssh' ? `SSH · ${notes.label}` : '本机'}
+                  </span>
+                </div>
+                <span className="panel__spacer" />
+                <span className={notesDraft === (notes?.text ?? '') ? 'notes-modal__saved notes-modal__saved--ok' : 'notes-modal__saved'}>
+                  <span>●</span>{notesDraft === (notes?.text ?? '') ? '已保存' : '未保存'}
+                </span>
+                <button type="button" className="notes-modal__close" aria-label="关闭" onClick={() => setNotesOpen(false)}>×</button>
+              </div>
 
-            <textarea
-              className="notes__input"
-              value={notesDraft}
-              rows={5}
-              spellCheck={false}
-              placeholder={
-                '只针对这台机器的事实和约定，例如：\n项目在 /srv/app，用 docker compose 部署\n不要动 /data 目录'
-              }
-              aria-label="补充说明"
-              onChange={(event) => setNotesDraft(event.target.value)}
-            />
+              <div className="notes-modal__editor-wrap">
+                <div className="notes-modal__toolbar-mode">
+                  <button
+                    type="button"
+                    className={notesPreview ? 'notes-modal__preview-toggle notes-modal__preview-toggle--on' : 'notes-modal__preview-toggle'}
+                    onClick={() => setNotesPreview((value) => !value)}
+                  >
+                    ◉ {notesPreview ? '编辑' : '预览'}
+                  </button>
+                </div>
+                <MDEditor
+                  value={notesDraft}
+                  preview={notesPreview ? 'preview' : 'edit'}
+                  visibleDragbar={false}
+                  commands={[
+                    mdCommands.title,
+                    mdCommands.divider,
+                    mdCommands.bold,
+                    mdCommands.italic,
+                    mdCommands.strikethrough,
+                    mdCommands.divider,
+                    mdCommands.link,
+                    mdCommands.code,
+                    mdCommands.quote,
+                    mdCommands.divider,
+                    mdCommands.unorderedListCommand,
+                    mdCommands.orderedListCommand,
+                    mdCommands.divider,
+                    mdCommands.image
+                  ]}
+                  extraCommands={[]}
+                  textareaProps={{
+                    placeholder: '继续输入补充说明…',
+                    'aria-label': '补充说明 Markdown 编辑器'
+                  }}
+                  onChange={(value) => setNotesDraft(value ?? '')}
+                />
+              </div>
 
-            <p className="notes__hint">
-              会拼在系统提示词最后，冲突时以它为准。每台机器各存一份，留空 = 不补充。
-            </p>
-
-            <div className="notes__foot">
-              <button
-                type="button"
-                className="panel__sync"
-                disabled={notesSaving || notesDraft === ''}
-                onClick={() => setNotesDraft('')}
-              >
-                清空
-              </button>
-              <span className="panel__spacer" />
-              <button
-                type="button"
-                className="panel__sync"
-                onClick={() => setNotesOpen(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary btn--inline"
-                disabled={notesSaving || notes === null}
-                onClick={() => void saveNotes()}
-              >
-                {notesSaving ? '保存中…' : '保存'}
-              </button>
+              <div className="notes-modal__foot">
+                <button type="button" className="notes-modal__button" disabled={notesSaving || notesDraft === ''} onClick={() => setNotesDraft('')}>清空</button>
+                <span className="panel__spacer" />
+                <button type="button" className="notes-modal__button" onClick={() => setNotesOpen(false)}>取消</button>
+                <button type="button" className="notes-modal__button notes-modal__button--primary" disabled={notesSaving || notes === null || notesDraft === (notes?.text ?? '')} onClick={() => void saveNotes()}>
+                  {notesSaving ? '保存中…' : '保存'}
+                </button>
+              </div>
             </div>
           </div>
         )}
-
         {terminalCollapsed ? null : (
           <>
             {sshActive && sshFilesOpen ? (
@@ -1985,204 +1985,102 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
       {settingsOpen ? (
         <div
-          className="modal"
+          className="modal modal--settings"
           role="dialog"
           aria-modal="true"
           aria-label="设置"
-          // Only a click on the backdrop itself dismisses, not one that started
-          // inside the box and drifted out.
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setSettingsOpen(false)
           }}
         >
-          <div className="modal__box">
-            <div className="modal__head">
-              <span className="panel__title">设置</span>
+          <div className="modal__box settings-modal">
+            <div className="settings-modal__head">
+              <div className="settings-modal__title-icon">●</div>
+              <div>
+                <div className="settings-modal__title">设置</div>
+                <div className="settings-modal__subtitle">代理、更新和登录态</div>
+              </div>
               <span className="panel__spacer" />
-              <button
-                type="button"
-                className="panel__sync"
-                aria-label="关闭"
-                onClick={() => setSettingsOpen(false)}
-              >
-                ✕
-              </button>
+              <button type="button" className="settings-modal__close" aria-label="关闭" onClick={() => setSettingsOpen(false)}>×</button>
             </div>
 
-            <div className="modal__body">
-              <label className="field">
-                <span className="field__label">ChatGPT 网页代理</span>
-                <input
-                  className="address__input"
-                  value={proxyDraft}
-                  spellCheck={false}
-                  placeholder="http://127.0.0.1:7890　（留空 = 直连）"
-                  onChange={(event) => setProxyDraft(event.target.value)}
-                />
-              </label>
-
-              <label className="field">
-                <span className="field__label">SSH 代理</span>
-                <input
-                  className="address__input"
-                  value={sshProxyDraft}
-                  spellCheck={false}
-                  placeholder="http://127.0.0.1:7897　（留空 = 直连）"
-                  onChange={(event) => setSshProxyDraft(event.target.value)}
-                />
-              </label>
-
-              <label className="field">
-                <span className="field__label">更新下载代理</span>
-                <input
-                  className="address__input"
-                  value={updateProxyDraft}
-                  spellCheck={false}
-                  placeholder="http://127.0.0.1:7897　（留空 = 直连）"
-                  onChange={(event) => setUpdateProxyDraft(event.target.value)}
-                />
-              </label>
-
-              <div className="field">
-                <span className="field__label">应用更新</span>
-                <p className="field__hint">
-                  {updateStatus === null
-                    ? "正在读取更新状态…"
-                    : updateStatus.phase === "checking"
-                      ? "正在检查更新…"
-                      : updateStatus.phase === "available"
-                        ? `发现新版本 ${updateStatus.version}，可下载。`
-                        : updateStatus.phase === "downloading"
-                          ? `正在下载 ${updateStatus.percent}%…`
-                          : updateStatus.phase === "downloaded"
-                            ? `新版本 ${updateStatus.version} 已下载，重启即可安装。`
-                            : updateStatus.phase === "error"
-                              ? `更新出错：${updateStatus.message}`
-                              : updateStatus.message || "已是最新版本。"}
-                </p>
-                <div className="dialog__actions">
-                  <button
-                    type="button"
-                    className="btn btn--inline"
-                    disabled={
-                      updateStatus !== null &&
-                      (updateStatus.phase === "checking" || updateStatus.phase === "downloading")
-                    }
-                    onClick={() => void window.api.checkForUpdates()}
-                  >
-                    检查更新
-                  </button>
-                  {updateStatus?.phase === "available" ? (
-                    <button
-                      type="button"
-                      className="btn btn--primary btn--inline"
-                      onClick={() => void window.api.downloadUpdate()}
-                    >
-                      下载更新
-                    </button>
-                  ) : null}
-                  {updateStatus?.phase === "downloaded" ? (
-                    <button
-                      type="button"
-                      className="btn btn--primary btn--inline"
-                      onClick={() => void window.api.installUpdate()}
-                    >
-                      重启并安装
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="field">
-                <span className="field__label">从浏览器导入登录态</span>
-
-                <label className="field">
-                  <span className="field__label">Cookie 名称（粘贴整行时可留默认值）</span>
-                  <input
-                    className="address__input"
-                    value={sessionCookieName}
-                    spellCheck={false}
-                    onChange={(event) => setSessionCookieName(event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span className="field__label">Cookie 值 / 整行 cookie</span>
-                  <textarea
-                    className="address__input session-import__value"
-                    value={sessionCookieValue}
-                    spellCheck={false}
-                    autoComplete="off"
-                    rows={3}
-                    placeholder="粘贴整行 cookie，或只粘 Value 一列的内容"
-                    onChange={(event) => setSessionCookieValue(event.target.value)}
-                  />
-                </label>
-
-                <div className="field-row">
-                  <button
-                    type="button"
-                    className="btn btn--primary btn--inline"
-                    disabled={importingSession || sessionCookieValue.trim() === ''}
-                    onClick={() => void submitSessionImport()}
-                  >
-                    {importingSession ? '导入中…' : '导入并重新加载'}
-                  </button>
-                  <span className="panel__spacer" />
+            <div className="modal__body settings-modal__body">
+              <section className="settings-card">
+                <div className="settings-card__heading">
+                  <span className="settings-card__icon">◎</span>
+                  <span>网络代理</span>
                 </div>
 
-                {sessionImport ? (
-                  <p
-                    className={
-                      /*
-                       * A preview that fails to parse IS a problem (the paste is wrong),
-                       * and so is a finished import that left the page signed out. Only
-                       * two things are neutral: a preview that parsed, and an import
-                       * that actually signed in.
-                       */
-                      sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok)
-                        ? 'field__hint'
-                        : 'field__hint field__hint--warn'
-                    }
-                  >
-                    {sessionImport.message}
-                  </p>
-                ) : null}
-              </div>
+                <div className="settings-proxy-row">
+                  <label className="settings-proxy-row__label">ChatGPT 网页 <span className="settings-help">?</span></label>
+                  <input className="address__input settings-input" value={proxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setProxyDraft(event.target.value)} />
+                  <span className={`settings-state ${proxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{proxyDraft.trim() ? '已配置' : '未配置'}</span>
+                  <button type="button" className="settings-copy" aria-label="复制 ChatGPT 网页代理" disabled={!proxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(proxyDraft)}>⧉</button>
+                </div>
+
+                <div className="settings-proxy-row settings-proxy-row--with-hint">
+                  <label className="settings-proxy-row__label">SSH 代理 <span className="settings-help">?</span><small>留空 = 直连</small></label>
+                  <input className="address__input settings-input" value={sshProxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setSshProxyDraft(event.target.value)} />
+                  <span className={`settings-state ${sshProxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{sshProxyDraft.trim() ? '已配置' : '未配置'}</span>
+                  <button type="button" className="settings-copy" aria-label="复制 SSH 代理" disabled={!sshProxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(sshProxyDraft)}>⧉</button>
+                </div>
+
+                <div className="settings-proxy-row">
+                  <label className="settings-proxy-row__label">更新下载 <span className="settings-help">?</span></label>
+                  <input className="address__input settings-input" value={updateProxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setUpdateProxyDraft(event.target.value)} />
+                  <span className={`settings-state ${updateProxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{updateProxyDraft.trim() ? '已配置' : '未配置'}</span>
+                  <button type="button" className="settings-copy" aria-label="复制更新代理" disabled={!updateProxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(updateProxyDraft)}>⧉</button>
+                </div>
+              </section>
+
+              <section className="settings-card settings-update-card">
+                <div className="settings-card__heading">
+                  <span className="settings-card__icon">⇩</span>
+                  <span>应用更新</span>
+                </div>
+                <div className="settings-update-card__content">
+                  <div className={`settings-update-status ${updateStatus?.phase === 'error' ? 'settings-update-status--warn' : ''}`}>
+                    <span className="settings-update-check">✓</span>
+                    <span>{updateStatus === null ? '正在读取更新状态…' : updateStatus.phase === 'checking' ? '正在检查更新…' : updateStatus.phase === 'available' ? `发现新版本 ${updateStatus.version}` : updateStatus.phase === 'downloading' ? `正在下载 ${updateStatus.percent}%…` : updateStatus.phase === 'downloaded' ? `新版本 ${updateStatus.version} 已下载` : updateStatus.phase === 'error' ? `更新出错：${updateStatus.message}` : updateStatus.message || '已是最新版本'}</span>
+                  </div>
+                  <div className="settings-update-actions">
+                    <button type="button" className="settings-outline-btn" disabled={updateStatus !== null && (updateStatus.phase === 'checking' || updateStatus.phase === 'downloading')} onClick={() => void window.api.checkForUpdates()}>检查更新</button>
+                    {updateStatus?.phase === 'available' ? <button type="button" className="settings-outline-btn" onClick={() => void window.api.downloadUpdate()}>下载更新</button> : null}
+                    {updateStatus?.phase === 'downloaded' ? <button type="button" className="settings-outline-btn" onClick={() => void window.api.installUpdate()}>重启并安装</button> : null}
+                  </div>
+                </div>
+              </section>
+
+              <section className="settings-card settings-session-card">
+                <div className="settings-card__heading">
+                  <span className="settings-card__icon">▣</span>
+                  <span>浏览器登录态</span>
+                </div>
+                <div className="settings-session-row">
+                  <label>Cookie 名称</label>
+                  <input className="address__input settings-input" value={sessionCookieName} spellCheck={false} onChange={(event) => setSessionCookieName(event.target.value)} />
+                </div>
+                <div className="settings-session-row settings-session-row--value">
+                  <label>Cookie 值 / 整行 cookie</label>
+                  <textarea className="address__input session-import__value settings-input" value={sessionCookieValue} spellCheck={false} autoComplete="off" rows={3} placeholder="粘贴整行 cookie，或只粘 Value 一列的内容" onChange={(event) => setSessionCookieValue(event.target.value)} />
+                  <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
+                </div>
+                <div className="settings-local-note">ⓘ 仅在本机处理，不会上传</div>
+                {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
+              </section>
             </div>
 
-            {/*
-              Outside `.modal__body` on purpose: the body is the scroll container, so
-              a footer inside it scrolls away — and 保存 is the one control the user
-              must be able to reach without hunting for it.
-            */}
-            <div className="modal__foot">
+            <div className="modal__foot settings-modal__foot">
               <span className="panel__spacer" />
-              <button
-                type="button"
-                className="panel__sync"
-                onClick={() => {
-                  setProxyDraft(settings?.embedProxy ?? '')
-                  setSettingsOpen(false)
-                }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary btn--inline"
-                disabled={savingSettings || settings === null}
-                onClick={() => void saveSettings()}
-              >
-                {savingSettings ? '保存中…' : '保存并重新加载'}
-              </button>
+              <button type="button" className="settings-cancel-btn" onClick={() => { setProxyDraft(settings?.embedProxy ?? ''); setSettingsOpen(false) }}>取消</button>
+              <button type="button" className="settings-save-btn" disabled={savingSettings || settings === null} onClick={() => void saveSettings()}>{savingSettings ? '保存中…' : '保存并重新加载'}</button>
             </div>
           </div>
         </div>
       ) : null}
-
       {sshDialogOpen ? (
         <div
-          className="modal"
+          className="modal ssh-connect-overlay"
           role="dialog"
           aria-modal="true"
           aria-label="SSH 连接"
@@ -2190,163 +2088,98 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             if (event.target === event.currentTarget) setSshDialogOpen(false)
           }}
         >
-          <div className="modal__box">
-            <div className="modal__head">
-              <span className="panel__title">SSH 连接</span>
+          <div className="ssh-connect-modal">
+            <div className="ssh-connect__head">
+              <span className="ssh-connect__title">SSH 连接</span>
               <span className="panel__spacer" />
-              <button
-                type="button"
-                className="panel__sync"
-                aria-label="关闭"
-                onClick={() => setSshDialogOpen(false)}
-              >
-                ✕
-              </button>
+              <button type="button" className="ssh-connect__close" aria-label="关闭" onClick={() => setSshDialogOpen(false)}>×</button>
             </div>
 
-            <div className="modal__body">
-              {sshHosts.length > 0 ? (
-                <div className="field">
-                  <span className="field__label">已保存的主机（点击填入）</span>
-                  <ul className="ssh-list">
-                    {sshHosts.map((saved) => (
-                      <li key={saved.id} className="ssh-list__item">
-                        <button
-                          type="button"
-                          className="ssh-list__pick"
-                          title={`使用 ${saved.name}`}
-                          onClick={() =>
-                            setSshDraft({
-                              id: saved.id,
-                              name: saved.name,
-                              host: saved.host,
-                              port: saved.port,
-                              username: saved.username,
-                              password: '',
-                              proxy: saved.proxy
-                            })
-                          }
-                        >
-                          <span className="ssh-list__name">{saved.name}</span>
-                          <span className="ssh-list__target">
-                            {saved.username}@{saved.host}:{saved.port}
-                          </span>
-                          {saved.hasPassword ? <span className="ssh-list__lock">已存密码</span> : null}
-                        </button>
-                        <button
-                          type="button"
-                          className="conversation__remove"
-                          title="删除这台主机"
-                          onClick={() => void removeSshHost(saved.id)}
-                        >
-                          ✕
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+            <div className="ssh-connect__content">
+              <aside className="ssh-connect__sidebar">
+                <h3 className="ssh-connect__section-title">已保存的主机</h3>
+                <div className="ssh-connect__host-list">
+                  {sshHosts.map((saved) => (
+                    <div key={saved.id} className={sshDraft.id === saved.id ? 'ssh-connect__host ssh-connect__host--active' : 'ssh-connect__host'}>
+                      <button
+                        type="button"
+                        className="ssh-connect__host-main"
+                        onClick={() => setSshDraft({ id: saved.id, name: saved.name, host: saved.host, port: saved.port, username: saved.username, password: '', proxy: saved.proxy })}
+                      >
+                        <span className="ssh-connect__host-icon">▦</span>
+                        <span className="ssh-connect__host-copy">
+                          <strong>{saved.name}</strong>
+                          <small>{saved.username}@{saved.host}:{saved.port}</small>
+                        </span>
+                        {saved.hasPassword ? <span className="ssh-connect__saved">已存密码</span> : null}
+                      </button>
+                      <button type="button" className="ssh-connect__host-remove" aria-label={`删除 ${saved.name}`} onClick={() => void removeSshHost(saved.id)}>×</button>
+                    </div>
+                  ))}
                 </div>
-              ) : null}
+                <button
+                  type="button"
+                  className="ssh-connect__new"
+                  onClick={() => setSshDraft({ id: null, name: '', host: '', port: 22, username: 'root', password: '', proxy: '' })}
+                >
+                  ＋ 新建主机
+                </button>
+              </aside>
 
               <form
+                className="ssh-connect__form"
                 onSubmit={(event) => {
                   event.preventDefault()
                   void connectSsh(sshDraft)
                 }}
               >
-                <label className="field">
-                  <span className="field__label">显示名称</span>
-                  <input
-                    className="address__input"
-                    value={sshDraft.name}
-                    placeholder="我的服务器"
-                    onChange={(event) => setSshDraft({ ...sshDraft, name: event.target.value })}
-                  />
-                </label>
+                <div className="ssh-connect__form-body">
+                  <h3 className="ssh-connect__section-title">连接信息</h3>
 
-                <div className="field-row">
-                  <label className="field field--grow">
-                    <span className="field__label">主机 / IP</span>
-                    <input
-                      className="address__input"
-                      value={sshDraft.host}
-                      spellCheck={false}
-                      placeholder="192.168.1.10"
-                      onChange={(event) => setSshDraft({ ...sshDraft, host: event.target.value })}
-                    />
+                  <label className="ssh-connect__field">
+                    <span>显示名称</span>
+                    <input className="ssh-connect__input" value={sshDraft.name} placeholder="我的服务器" onChange={(event) => setSshDraft({ ...sshDraft, name: event.target.value })} />
                   </label>
-                  <label className="field field--port">
-                    <span className="field__label">端口</span>
-                    <input
-                      className="address__input"
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={sshDraft.port}
-                      onChange={(event) =>
-                        setSshDraft({ ...sshDraft, port: Number(event.target.value) })
-                      }
-                    />
+
+                  <div className="ssh-connect__row">
+                    <label className="ssh-connect__field ssh-connect__field--grow">
+                      <span>主机 / IP</span>
+                      <input className="ssh-connect__input" value={sshDraft.host} spellCheck={false} placeholder="192.168.1.10" onChange={(event) => setSshDraft({ ...sshDraft, host: event.target.value })} />
+                    </label>
+                    <label className="ssh-connect__field ssh-connect__field--port">
+                      <span>端口</span>
+                      <input className="ssh-connect__input" type="number" min={1} max={65535} value={sshDraft.port} onChange={(event) => setSshDraft({ ...sshDraft, port: Number(event.target.value) })} />
+                    </label>
+                  </div>
+
+                  <label className="ssh-connect__field">
+                    <span>用户名</span>
+                    <input className="ssh-connect__input" value={sshDraft.username} spellCheck={false} onChange={(event) => setSshDraft({ ...sshDraft, username: event.target.value })} />
                   </label>
+
+                  <div className={sshAdvancedOpen ? 'ssh-connect__advanced ssh-connect__advanced--open' : 'ssh-connect__advanced'}>
+                    <button type="button" className="ssh-connect__advanced-toggle" onClick={() => setSshAdvancedOpen((value) => !value)}>
+                      <span className="ssh-connect__chevron">⌄</span>
+                      高级选项
+                    </button>
+                    {sshAdvancedOpen ? (
+                      <div className="ssh-connect__advanced-body">
+                        <label className="ssh-connect__field">
+                          <span>密码</span>
+                          <input className="ssh-connect__input" type="password" value={sshDraft.password} placeholder="留空 = 使用这台主机已保存的密码" onChange={(event) => setSshDraft({ ...sshDraft, password: event.target.value })} />
+                        </label>
+                        <label className="ssh-connect__field">
+                          <span>代理（可选）</span>
+                          <input className="ssh-connect__input" value={sshDraft.proxy} spellCheck={false} placeholder="留空 = 使用设置里的 SSH 代理" onChange={(event) => setSshDraft({ ...sshDraft, proxy: event.target.value })} />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
 
-                <label className="field">
-                  <span className="field__label">用户名</span>
-                  <input
-                    className="address__input"
-                    value={sshDraft.username}
-                    spellCheck={false}
-                    onChange={(event) => setSshDraft({ ...sshDraft, username: event.target.value })}
-                  />
-                </label>
-
-                <label className="field">
-                  <span className="field__label">密码</span>
-                  <input
-                    className="address__input"
-                    type="password"
-                    value={sshDraft.password}
-                    placeholder="留空 = 使用这台主机已保存的密码"
-                    onChange={(event) => setSshDraft({ ...sshDraft, password: event.target.value })}
-                  />
-                </label>
-
-                <label className="field">
-                  <span className="field__label">代理（可选）</span>
-                  <input
-                    className="address__input"
-                    value={sshDraft.proxy}
-                    spellCheck={false}
-                    placeholder="留空 = 使用设置里的 SSH 代理"
-                    onChange={(event) => setSshDraft({ ...sshDraft, proxy: event.target.value })}
-                  />
-                </label>
-
-                <p className="field__hint">
-                  密码经系统凭据加密后存入本机数据库；系统不支持加密时**不会保存**，下次连接需重新输入。
-                </p>
-                <p className="field__hint field__hint--warn">
-                  <strong>SSH 和 ChatGPT 网页用的是两个不同的代理设置</strong>，
-                  各有各的用途，互不影响。
-                </p>
-
-                <div className="modal__foot">
-                  <span className="panel__spacer" />
-                  <button
-                    type="button"
-                    className="panel__sync"
-                    onClick={() => setSshDialogOpen(false)}
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn--primary btn--inline"
-                    disabled={
-                      sshBusy ||
-                      sshDraft.host.trim() === '' ||
-                      sshDraft.username.trim() === ''
-                    }
-                  >
+                <div className="ssh-connect__foot">
+                  <button type="button" className="ssh-connect__cancel" onClick={() => setSshDialogOpen(false)}>取消</button>
+                  <button type="submit" className="ssh-connect__submit" disabled={sshBusy || sshDraft.host.trim() === '' || sshDraft.username.trim() === ''}>
                     {sshBusy ? '连接中…' : '连接'}
                   </button>
                 </div>
@@ -2358,3 +2191,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     </div>
   )
 }
+
+
+

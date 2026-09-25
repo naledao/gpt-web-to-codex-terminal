@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 import type { ManagedSessionSummary, SshTransferTask, WorkspaceState } from '../../shared/types'
 import App from './App'
 import ManagerApp from './ManagerApp'
+import ConfirmDialog from './components/ConfirmDialog'
 
 const INITIAL_WORKSPACE: WorkspaceState = {
   view: 'manager',
@@ -30,12 +31,23 @@ function transferStatus(item: SshTransferTask, percent: number): string {
   return item.total > 0 ? `${percent}%` : '准备中…'
 }
 
+function formatTransferDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  const rounded = Math.ceil(seconds)
+  if (rounded < 60) return `${rounded} 秒`
+  const minutes = Math.floor(rounded / 60)
+  const rest = rounded % 60
+  return rest > 0 ? `${minutes} 分 ${rest} 秒` : `${minutes} 分`
+}
+
+
 export default function WorkspaceApp(): ReactElement {
   const [workspace, setWorkspace] = useState<WorkspaceState>(INITIAL_WORKSPACE)
   const [sessions, setSessions] = useState<ManagedSessionSummary[]>([])
   const [transfers, setTransfers] = useState<SshTransferTask[]>([])
   const [transfersOpen, setTransfersOpen] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<ManagedSessionSummary | null>(null)
 
   useEffect(() => {
     void window.api.getWorkspaceState().then(setWorkspace)
@@ -53,11 +65,10 @@ export default function WorkspaceApp(): ReactElement {
 
   const deleteSession = async (item: ManagedSessionSummary): Promise<void> => {
     if (deletingId !== null) return
-    const title = item.title || '会话'
-    if (!window.confirm(`删除“${title}”？\n\n该会话的终端进程和 SSH 连接会立即结束，ChatGPT 对话历史不会因此删除。`)) return
     setDeletingId(item.id)
     try {
       await window.api.destroyManagedSession(item.id)
+      setPendingDelete(null)
     } finally {
       setDeletingId(null)
     }
@@ -81,7 +92,7 @@ export default function WorkspaceApp(): ReactElement {
     : 0
 
   return (
-    <div className="workspace">
+    <div className={workspace.view === 'manager' ? 'workspace workspace--manager' : 'workspace'}>
       <nav className="workspace__nav">
         <div className="workspace__brand">GPT → Codex</div>
         <button
@@ -113,7 +124,7 @@ export default function WorkspaceApp(): ReactElement {
                 disabled={deletingId !== null}
                 title={`删除 ${item.title || '会话'}`}
                 aria-label={`删除 ${item.title || '会话'}`}
-                onClick={() => void deleteSession(item)}
+                onClick={() => setPendingDelete(item)}
               >
                 {deletingId === item.id ? '…' : '×'}
               </button>
@@ -127,7 +138,7 @@ export default function WorkspaceApp(): ReactElement {
           <App
             key={workspace.sessionId}
             initialSshDialogOpen={workspace.openSshDialog}
-            globalModalOpen={transfersOpen}
+            globalModalOpen={transfersOpen || pendingDelete !== null}
             /*
              * Read from the session list rather than held as its own state: the main process
              * republishes the list whenever a session changes, including on a platform switch,
@@ -163,7 +174,7 @@ export default function WorkspaceApp(): ReactElement {
 
       {transfersOpen ? (
         <div
-          className="modal"
+          className="modal transfer-modal"
           role="dialog"
           aria-modal="true"
           aria-label="传输任务"
@@ -171,66 +182,56 @@ export default function WorkspaceApp(): ReactElement {
             if (event.target === event.currentTarget) setTransfersOpen(false)
           }}
         >
-          <div className="modal__box transfer-modal__box">
-            <div className="modal__head">
-              <span className="panel__title">传输任务</span>
-              <span className="transfer-modal__summary">
-                {activeTransfers.length > 0 ? `${activeTransfers.length} 个进行中` : '当前没有进行中的任务'}
-              </span>
+          <div className="transfer-modal__box">
+            <div className="transfer-modal__head">
+              <div className="transfer-modal__title">传输任务</div>
+              {activeTransfers.length > 0 ? (
+                <span className="transfer-modal__active-count">{activeTransfers.length} 个进行中</span>
+              ) : null}
               <span className="panel__spacer" />
-              <button
-                type="button"
-                className="panel__sync"
-                aria-label="关闭"
-                onClick={() => setTransfersOpen(false)}
-              >
-                ✕
-              </button>
+              <button type="button" className="transfer-modal__close" aria-label="关闭" onClick={() => setTransfersOpen(false)}>×</button>
             </div>
-            <div className="modal__body transfer-modal__body">
+
+            <div className="transfer-modal__body">
               {transfers.length === 0 ? (
-                <div className="transfer-modal__empty">暂无上传或下载任务。</div>
+                <div className="transfer-modal__empty">
+                  <div className="transfer-modal__empty-icon">⇅</div>
+                  <strong>暂无传输任务</strong>
+                  <span>上传和下载任务会显示在这里</span>
+                </div>
               ) : (
                 <div className="transfer-list">
                   {transfers.map((item) => {
-                    const percent = item.total > 0
-                      ? Math.min(100, Math.round((item.transferred / item.total) * 100))
-                      : 0
+                    const percent = item.total > 0 ? Math.min(100, Math.round((item.transferred / item.total) * 100)) : 0
                     const active = item.status === 'uploading' || item.status === 'downloading'
                     const session = sessions.find((candidate) => candidate.id === item.sessionId)
                     const sessionLabel = session?.title || session?.target || item.sessionId.slice(0, 8)
+                    const elapsedSeconds = Math.max(0, (Date.now() - item.startedAt) / 1000)
+                    const speed = elapsedSeconds > 0 ? item.transferred / elapsedSeconds : 0
+                    const remainingSeconds = active && item.total > item.transferred && speed > 0 ? (item.total - item.transferred) / speed : 0
+                    const statusLabel = active ? (item.direction === 'upload' ? '正在上传' : '正在下载') : transferStatus(item, percent)
                     return (
-                      <div
-                        className="ssh-download transfer-item"
-                        key={`${item.sessionId}:${item.direction}:${item.id}`}
-                        title={item.error || (item.direction === 'upload' ? item.remotePath : item.localPath)}
-                      >
-                        <div className="ssh-download__row">
-                          <span className={`transfer-item__direction transfer-item__direction--${item.direction}`}>
-                            {item.direction === 'upload' ? '上传' : '下载'}
-                          </span>
-                          <span className="ssh-download__name">{item.name}</span>
-                          <span className={`ssh-download__status ssh-download__status--${item.status}`}>
-                            {transferStatus(item, percent)}
-                          </span>
-                          {active ? (
-                            <button
-                              type="button"
-                              className="ssh-download__cancel"
-                              onClick={() => void cancelTransfer(item)}
-                            >
-                              取消
-                            </button>
-                          ) : null}
+                      <div className={`transfer-card transfer-card--${item.status}`} key={`${item.sessionId}:${item.direction}:${item.id}`} title={item.error || (item.direction === 'upload' ? item.remotePath : item.localPath)}>
+                        <div className={`transfer-card__icon transfer-card__icon--${item.direction}`}>{item.direction === 'upload' ? '↑' : '↓'}</div>
+                        <div className="transfer-card__content">
+                          <div className="transfer-card__top">
+                            <span className={`transfer-card__direction transfer-card__direction--${item.direction}`}>{item.direction === 'upload' ? '上传' : '下载'}</span>
+                            <span className="transfer-card__name">{item.name}</span>
+                            {item.total > 0 ? <strong className="transfer-card__percent">{percent}%</strong> : null}
+                            {active ? <button type="button" className="transfer-card__cancel" onClick={() => void cancelTransfer(item)}>取消</button> : null}
+                          </div>
+                          <div className="transfer-card__session">{sessionLabel}</div>
+                          <div className="transfer-card__progress" aria-label={`${item.name} ${statusLabel} ${percent}%`}>
+                            <span style={{ width: `${item.total > 0 ? percent : active ? 12 : 100}%` }} />
+                          </div>
+                          <div className="transfer-card__meta">
+                            <span>{item.direction === 'upload' ? '已上传' : '已下载'} {formatBytes(item.transferred)}{item.total > 0 ? ` / ${formatBytes(item.total)}` : ''}</span>
+                            {active && speed > 0 ? <><i /><span>{formatBytes(speed)}/s</span></> : null}
+                            {active && remainingSeconds > 0 ? <><i /><span>预计还需 {formatTransferDuration(remainingSeconds)}</span></> : null}
+                            <span className={`transfer-card__status transfer-card__status--${item.status}`}><b />{statusLabel}</span>
+                          </div>
+                          {item.error ? <div className="transfer-card__error">{item.error}</div> : null}
                         </div>
-                        <div className="ssh-download__progress" aria-label={`${item.name} ${item.direction === 'upload' ? '上传' : '下载'}进度`}>
-                          <span style={{ width: `${item.total > 0 ? percent : 0}%` }} />
-                        </div>
-                        <div className="ssh-download__meta">
-                          <span>{sessionLabel}</span>
-                          <span>{formatBytes(item.transferred)}{item.total > 0 ? ` / ${formatBytes(item.total)}` : ''}</span>
-                        </div>
-                        {item.error ? <div className="ssh-download__error">{item.error}</div> : null}
                       </div>
                     )
                   })}
@@ -240,6 +241,21 @@ export default function WorkspaceApp(): ReactElement {
           </div>
         </div>
       ) : null}
-    </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`删除“${pendingDelete?.title || '会话'}”？`}
+        description="此操作会立即结束该会话的运行环境，请确认是否继续。"
+        icon="!"
+        danger
+        busy={deletingId !== null}
+        confirmLabel="确认删除"
+        items={[
+          { icon: '▣', label: '终端进程和 SSH 连接', value: '立即结束', tone: 'danger' },
+          { icon: '◉', label: 'ChatGPT 对话历史', value: '保留', tone: 'success' }
+        ]}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => { if (pendingDelete) void deleteSession(pendingDelete) }}
+      />    </div>
   )
 }
