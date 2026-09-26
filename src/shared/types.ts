@@ -730,6 +730,22 @@ export interface InterceptorStatus {
   prefix: string
 }
 
+/**
+ * One control in the composer's toolbar, as reported by the injected script.
+ *
+ * The same shape `tools/diag/chatgpt-dom-probe.js` prints for its `composer toolbar buttons`
+ * section, so a failure inside the app and a probe run can be read side by side. That is the
+ * point: the replacement selector for a button the app failed to click is supposed to come
+ * from one of these, and never from a guess.
+ */
+export interface InterceptorControl {
+  tag: string
+  testid: string
+  aria: string
+  disabled: boolean
+  cls: string
+}
+
 /** Events reported by the injected page script (over the console bridge). */
 export interface InterceptorPageEvent {
   event:
@@ -739,6 +755,7 @@ export interface InterceptorPageEvent {
     | 'sent'
     | 'task-finished'
     | 'send-failed'
+    | 'send-recovery'
     | 'inject-failed'
     | 'command'
     | 'parse-failed'
@@ -767,6 +784,30 @@ export interface InterceptorPageEvent {
   live?: boolean
   /** Present on `task-finished`: true only for an explicitly marked completed task. */
   completed?: boolean
+
+  /*
+   * Why a submit did not happen, on `send-failed` and `send-recovery`.
+   *
+   * The page already knows all of this — whether a send button existed, whether it was
+   * disabled, what was left in the composer, whether a stop button was on screen, and what the
+   * composer's toolbar actually contained — and used to discard every part of it, leaving the
+   * main process to report a bare "stuck". That is what made "the result is in the box and
+   * never sent" take a round of guessing even to describe. Diagnostic payload: nothing branches
+   * on it.
+   */
+  attempts?: number
+  /** Which recovery action the failing pass used, or null when none had run yet. */
+  recoveryTried?: string | null
+  composerKind?: string | null
+  /** What was still sitting in the composer, truncated. */
+  composerLeft?: string
+  sendButtonFound?: boolean
+  sendButtonDisabled?: boolean | null
+  sendButton?: InterceptorControl | null
+  stopButtonFound?: boolean
+  toolbar?: InterceptorControl[]
+  /** Present on `send-recovery`: the action about to be attempted. */
+  action?: string
 }
 
 /* ------------------------------------------------------------------ *

@@ -16,7 +16,8 @@
  *     output back into the conversation WITHOUT the system prompt.
  *
  * Why the composer needs such careful handling: ChatGPT's input is a
- * ProseMirror editor (`#prompt-textarea`, a contenteditable div). Writing to
+ * ProseMirror contenteditable div — it carried `#prompt-textarea` until the markup
+ * changed, and what replaced that id is recorded in `src/shared/platforms.ts`. Writing to
  * `innerHTML` does NOT work — ProseMirror owns the document state and will
  * overwrite it, and the send button stays disabled. `document.execCommand(
  * 'insertText')` goes through the browser's editing pipeline, so ProseMirror
@@ -37,7 +38,12 @@
    */
   let PAGE = {
     composerKind: 'contenteditable',
-    composerSelectors: ['#prompt-textarea', 'div[contenteditable="true"]'],
+    composerSelectors: [
+      'div[contenteditable="true"][data-composer-markdown]',
+      'div[contenteditable="true"][role="textbox"]',
+      '#prompt-textarea',
+      'div[contenteditable="true"]'
+    ],
     sendButtonSelectors: [
       '[data-testid="send-button"]',
       'button[aria-label="Send message"]',
@@ -49,9 +55,10 @@
       'button[aria-label="Stop streaming"]',
       'button[aria-label="停止生成"]'
     ],
-    assistantSelectors: ['[data-message-author-role="assistant"]'],
-    messageSelectors: ['[data-message-author-role]'],
-    messageIdAttr: 'data-message-id'
+    assistantSelectors: ['[data-chatgpt-selection-message-id]'],
+    assistantReplySelectors: ['[data-markdown-text-style="assistant-message"]'],
+    messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
+    messageIdAttr: 'data-chatgpt-selection-message-id'
   }
 
   /**
@@ -62,10 +69,58 @@
    */
   const REPLY_SETTLE_MS = 800
 
-  /** Retries before a send is declared stuck (~3s at 150ms per attempt). */
-  const MAX_SEND_ATTEMPTS = 20
-  /** Hard ceiling so a caller awaiting sendRaw() can never hang forever. */
+  /*
+   * How a send is bounded: in TIME, never in retries.
+   *
+   * It used to be a retry count (`MAX_SEND_ATTEMPTS = 20`), which was a duration only by
+   * accident — 20 × the old 150ms confirmation delay ≈ 3s. Once the confirmation became a
+   * poll that can legitimately last seconds, the same count ranged from three seconds to a
+   * minute depending on whether the page was answering, and "20 attempts" stopped meaning
+   * anything a reader could predict. The budget is now stated as the thing it always meant.
+   *
+   * Two budgets, and the difference matters — see the block in `submitWithRetry` that reads
+   * them. `grace` is "stop waiting for the measured button"; `budget`/`timeout` is "stop
+   * trying at all".
+   */
+  /**
+   * How long to keep waiting for the SELECTOR-matched send button to render.
+   *
+   * ChatGPT rebuilds the composer footer after text is written, so the button can honestly be
+   * absent for a moment and this window exists for that. It must stay short: when the selector
+   * is simply wrong, every millisecond spent here is the user watching their text sit in the
+   * box, and the structural fallback would have worked immediately.
+   */
+  const SEND_BUTTON_GRACE_MS = 700
+  /** Total budget for a user-initiated send (~700ms grace + two 3s confirmations). */
+  const SEND_ATTEMPT_BUDGET_MS = 8_000
+  /**
+   * Hard ceiling so a caller awaiting sendRaw() can never hang forever.
+   *
+   * Comfortably above the worst case the branches can produce (grace + both recovery
+   * confirmations ≈ 6.7s) — a ceiling that cuts a recovery action off mid-confirmation
+   * reports 'stuck' for a send that actually went out, which is the failure this whole area
+   * was rewritten for.
+   */
   const SEND_TIMEOUT_MS = 10_000
+
+  /*
+   * How the "did the submit actually happen?" question is answered.
+   *
+   * The ONLY trustworthy signal is the composer clearing, and it is not instantaneous: ChatGPT
+   * clears it through its own React/ProseMirror update, which lands some time after the event
+   * we dispatched. This used to be a single sample 150ms after the action, and that is simply
+   * too short — it produced the worst possible report. Observed: the message went out, the
+   * model answered 【任务完成】, the composer was empty on screen, and the terminal still said
+   * "结果已写入输入框但没能提交", telling the user to send by hand something that had already
+   * been sent.
+   *
+   * So it polls. A send that worked is detected as soon as it clears — typically a few hundred
+   * milliseconds — and only a send that really was ignored burns the whole window. That also
+   * makes the retry loop SAFER, not just more accurate: re-dispatching after 150ms while the
+   * page was still processing the previous action is how one send becomes several.
+   */
+  const SEND_CONFIRM_TIMEOUT_MS = 3000
+  const SEND_CONFIRM_POLL_MS = 120
 
   // Re-injection (e.g. after a reload) must not stack duplicate listeners.
   if (window[STATE_KEY]) return
@@ -453,6 +508,129 @@
 
   const insertText = (element, text) => writeComposer(element, text)
 
+  const controlDisabled = (el) =>
+    el.disabled === true || el.getAttribute('aria-disabled') === 'true'
+
+  /**
+   * The composer's own toolbar controls — the first ancestor holding more than one button.
+   *
+   * The SAME traversal as `tools/diag/chatgpt-dom-probe.js` uses for its
+   * `composer toolbar buttons` section, deliberately: that section is what identified this
+   * neighbourhood before, and a report from a real failure should be readable beside it.
+   */
+  const composerToolbarControls = () => {
+    const element = getComposer()
+    if (!element) return []
+    let node = element
+    let hops = 0
+    while (node && node !== document.body && hops < 10) {
+      if (node.querySelectorAll('button').length >= 2) break
+      node = node.parentElement
+      hops += 1
+    }
+    if (!node || node === document.body) return []
+    return [...node.querySelectorAll('button, [role="button"]')]
+  }
+
+  const describeControl = (el) => ({
+    tag: el.tagName.toLowerCase(),
+    testid: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '',
+    aria: el.getAttribute('aria-label') || '',
+    disabled: controlDisabled(el),
+    cls: (typeof el.className === 'string' ? el.className : '').slice(0, 90)
+  })
+
+  /**
+   * Everything that could explain "the text went in and the send never happened".
+   *
+   * Reported when a send is finally given up on. The alternative is what this cost the last
+   * time: the app said only `stuck`, while the interceptor had already seen which of half a
+   * dozen things was on screen and threw all of it away. The main process prints this with
+   * `console.warn`, which `DSH_APP_LOG=1` mirrors into `<userData>/logs/`, so a failure
+   * leaves something readable behind instead of a dead end.
+   *
+   * The toolbar inventory is the part that matters. It is the probe's own traversal, so a
+   * failure NAMES the button the app failed to click — the replacement selector can then be
+   * written from the report rather than guessed at.
+   */
+  const diagnoseSendFailure = (attempts, recoveryTried) => {
+    const element = getComposer()
+    const button = findSendButton()
+    return {
+      attempts,
+      recoveryTried,
+      composerKind: element ? element.tagName.toLowerCase() : null,
+      composerLeft: collapse(readComposer(element)).slice(0, 80),
+      sendButtonFound: button !== null,
+      sendButtonDisabled: button ? controlDisabled(button) : null,
+      sendButton: button ? describeControl(button) : null,
+      stopButtonFound: findStopButton() !== null,
+      toolbar: composerToolbarControls().slice(0, 12).map(describeControl)
+    }
+  }
+
+  /**
+   * Actions tried, IN ORDER, once the ordinary retries are exhausted.
+   *
+   * WHY THESE EXIST. "The send button was not found" used to end the send outright, and that
+   * is survivable only while the button selectors match — they are now UNVERIFIED, because
+   * ChatGPT renders no send button until the composer holds text and no probe run has yet
+   * caught one (see `sendButtonSelectors` in src/shared/platforms.ts). The reported symptom
+   * is exactly this: the result is written into the box, the submit never happens, and every
+   * later round of the loop is lost with it.
+   *
+   * Both are heuristics, and both are safe to be wrong: the caller verifies by watching the
+   * composer CLEAR, so an action that does nothing costs one pass and the next one runs.
+   *
+   *   - `toolbar-last` — the last enabled control in the composer's toolbar. On ChatGPT that
+   *     row is [attach][model][dictation][primary], and the primary slot holds the send button
+   *     whenever there is something to send. Structural: needs no label, no test id, and no
+   *     stable class name.
+   *   - `enter` — how a real user sends, and the one path that needs no element at all.
+   */
+  const RECOVERY_ACTIONS = ['toolbar-last', 'enter']
+
+  /** The last ENABLED control in the composer toolbar — ChatGPT's primary action slot. */
+  const lastToolbarControl = () => {
+    const controls = composerToolbarControls()
+    for (let i = controls.length - 1; i >= 0; i -= 1) {
+      if (!controlDisabled(controls[i])) return controls[i]
+    }
+    return null
+  }
+
+  const runRecovery = (action, element) => {
+    if (action === 'enter') {
+      pressEnter(element)
+      return
+    }
+    /*
+     * Only click when our text is STILL in the box.
+     *
+     * The primary slot only holds the send button while there is something to send. With an
+     * empty composer ChatGPT puts the VOICE button there, and clicking that would start
+     * dictation on the user's machine as a side effect of a failed send. If the text is gone
+     * the send is already lost, so Enter — which does nothing at all in that state — is the
+     * only safe move.
+     */
+    if (collapse(readComposer(element)) === '') {
+      pressEnter(element)
+      return
+    }
+    /*
+     * Never click the primary slot while a reply is still generating: in that state the slot
+     * holds the STOP button, and the one outcome worse than a result that does not send is a
+     * result that silently cancels the model's answer on its way past.
+     */
+    if (findStopButton()) {
+      pressEnter(element)
+      return
+    }
+    const candidate = lastToolbarControl()
+    if (candidate) pressButton(candidate)
+    else pressEnter(element)
+  }
+
   /**
    * Clicking send is NOT proof that the message went out. ChatGPT ignores the
    * click while it is still finishing the previous turn, and the text then just
@@ -462,7 +640,18 @@
    * `done` is only supplied for programmatic sends, so the caller can report the
    * real outcome instead of assuming success.
    */
-  const submitWithRetry = (text, attempt, isRaw, done, deadline = 0) => {
+  const submitWithRetry = (
+    text,
+    attempt,
+    isRaw,
+    done,
+    deadline = 0,
+    recovery = 0,
+    graceUntil = 0
+  ) => {
+    /** Which recovery action THIS pass used, so the report can name it. */
+    let recoveryTried = null
+
     // Capture the newest assistant turn BEFORE clicking Send. ChatGPT can create
     // the placeholder for the NEW assistant turn synchronously (or within the
     // 150ms confirmation delay below). Reading lastAssistantId() only after the
@@ -487,48 +676,115 @@
           ? isRaw
             ? { event: 'sent-raw', text: text.slice(0, 200) }
             : { event: 'sent', text: userTextOf(text).slice(0, 400) }
-          : { event: 'send-failed', text: text.slice(0, 200) }
+          : {
+              event: 'send-failed',
+              text: text.slice(0, 200),
+              ...diagnoseSendFailure(attempt, recoveryTried)
+            }
       )
       if (done) done(ok ? 'ok' : 'stuck')
     }
 
-    if (deadline > 0 && Date.now() >= deadline) {
+    const button = findSendButton()
+    const element = getComposer()
+    // A textarea site has no send-button selector worth trusting, so Enter is its real
+    // submit path rather than a fallback — which is why this one is not gated on anything.
+    const textControl =
+      element !== null && (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT')
+
+    /*
+     * TWO DIFFERENT INSTANTS, and conflating them is what made this feel slow.
+     *
+     *   - `graceUntil` — stop WAITING for the selector-matched button to render. Short.
+     *   - `deadline`   — stop trying altogether. The ceiling for the whole send.
+     *
+     * The fallback used to hang off `deadline`, so on the command-result path the text sat in
+     * the composer for the entire retry budget (~5s) before anything was clicked — reported as
+     * "内容已经在框中好一会了，才发送出去". It was self-inflicted: the wait bought nothing,
+     * because the selector it was waiting for was never going to match.
+     *
+     * The guard below is a TOTAL budget, and it is safe to enforce it here now that the
+     * fallback no longer depends on reaching it. It could not be before: with the fallback
+     * gated on "out of retries", a guard at the top fired at the same instant and made every
+     * late branch unreachable, which is how a result got written into the composer and never
+     * submitted at all.
+     */
+    if (Date.now() >= deadline) {
       finish(false)
       return
     }
 
-    const button = findSendButton()
+    const fallbackDue =
+      recovery < RECOVERY_ACTIONS.length && element !== null && Date.now() >= graceUntil
 
-    if (!button || button.disabled) {
-      const element = getComposer()
-      if (!button && element && (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT')) {
-        pressEnter(element)
-      } else {
-        // The send button only enables once the editor has committed the edit,
-        // and it can disappear entirely while a reply is streaming.
-        if (deadline > 0 ? Date.now() < deadline : attempt < MAX_SEND_ATTEMPTS) {
-          setTimeout(() => submitWithRetry(text, attempt + 1, isRaw, done, deadline), 80)
+    if (button && !button.disabled) {
+      pressButton(button)
+    } else if (button === null && textControl) {
+      pressEnter(element)
+    } else if (button === null && fallbackDue) {
+      /*
+       * The selector never matched and the grace period is over — go structural NOW.
+       *
+       * ONE recovery action per pass, never two back to back: running them together would
+       * risk sending the same text twice, because a click that clears the composer and a
+       * synthetic Enter in the same tick can both be accepted by the page. The poll below
+       * decides whether the next action is needed at all.
+       *
+       * Only for `button === null`, deliberately. A button that IS found but disabled means the
+       * page is refusing to send — usually because it is still generating — and clicking the
+       * primary slot in that state risks hitting Stop and cancelling the reply.
+       */
+      recoveryTried = RECOVERY_ACTIONS[recovery]
+      report({ event: 'send-recovery', action: recoveryTried, attempt })
+      runRecovery(recoveryTried, element)
+    } else {
+      // The send button only enables once the editor has committed the edit, and it can
+      // disappear entirely while a reply is streaming. Both are worth waiting out.
+      setTimeout(
+        () => submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil),
+        80
+      )
+      return
+    }
+
+    /*
+     * Poll for the composer to clear instead of sampling it once at +150ms — see
+     * SEND_CONFIRM_TIMEOUT_MS for the failure that came out of the single sample.
+     */
+    const confirmStartedAt = Date.now()
+    const confirm = () => {
+      const box = getComposer()
+      if (!box || collapse(readComposer(box)) === '') {
+        finish(true)
+        return
+      }
+      if (Date.now() - confirmStartedAt < SEND_CONFIRM_TIMEOUT_MS) {
+        setTimeout(confirm, SEND_CONFIRM_POLL_MS)
+        return
+      }
+      /*
+       * The window closed with the text still in the box, so whatever this pass did, it did not
+       * take.
+       *
+       * If this pass ran a recovery action, the measured route is already abandoned: step to
+       * the NEXT action, and only give up once there is none left. Anything else would re-run
+       * the same action forever, since the condition that chose it (`fallbackDue`) stays true.
+       */
+      if (recoveryTried !== null) {
+        if (recovery + 1 < RECOVERY_ACTIONS.length) {
+          submitWithRetry(text, attempt, isRaw, done, deadline, recovery + 1, graceUntil)
         } else {
           finish(false)
         }
         return
       }
-    } else {
-      pressButton(button)
-    }
-
-    setTimeout(() => {
-      const element = getComposer()
-      if (!element || collapse(readComposer(element)) === '') {
-        finish(true)
+      if (Date.now() < deadline) {
+        submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil)
         return
       }
-      if (deadline > 0 ? Date.now() < deadline : attempt < MAX_SEND_ATTEMPTS) {
-        submitWithRetry(text, attempt + 1, isRaw, done, deadline)
-      } else {
-        finish(false)
-      }
-    }, 150)
+      finish(false)
+    }
+    setTimeout(confirm, SEND_CONFIRM_POLL_MS)
   }
 
   /**
@@ -661,7 +917,15 @@
        */
       draftRejected = true
       report({ event: 'inject-failed' })
-      submitWithRetry(text, 0, false)
+      submitWithRetry(
+        text,
+        0,
+        false,
+        null,
+        Date.now() + SEND_ATTEMPT_BUDGET_MS,
+        0,
+        Date.now() + SEND_BUTTON_GRACE_MS
+      )
       return true
     }
 
@@ -686,7 +950,19 @@
        */
       prefixHead: collapse(state.prefix).slice(0, 220)
     })
-    setTimeout(() => submitWithRetry(composed, 0, false), 60)
+    setTimeout(
+      () =>
+        submitWithRetry(
+          composed,
+          0,
+          false,
+          null,
+          Date.now() + SEND_ATTEMPT_BUDGET_MS,
+          0,
+          Date.now() + SEND_BUTTON_GRACE_MS
+        ),
+      60
+    )
     return true
   }
 
@@ -1195,7 +1471,21 @@
           done('stuck')
         }, SEND_TIMEOUT_MS)
 
-        submitWithRetry(payload, 0, true, done, Date.now() + SEND_TIMEOUT_MS - 100)
+        /*
+         * `SEND_TIMEOUT_MS` is the ceiling for EVERYTHING, and the two budgets passed here are
+         * what keep the branches inside it: the grace period ends the wait for a measured
+         * button, and the deadline stops the whole thing. The realistic worst case is
+         * grace + two recovery confirmations ≈ 6.7s.
+         */
+        submitWithRetry(
+          payload,
+          0,
+          true,
+          done,
+          Date.now() + SEND_TIMEOUT_MS,
+          0,
+          Date.now() + SEND_BUTTON_GRACE_MS
+        )
       })
     },
 

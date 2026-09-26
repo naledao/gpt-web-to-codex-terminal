@@ -785,8 +785,19 @@ export class ChatGptEmbed {
         this.handlers.onParseFailed(payload.text ?? '')
         break
       case 'send-failed':
+      case 'send-recovery':
       case 'inject-failed':
-        console.warn(`[embed] interceptor reported ${payload.event}`)
+        /*
+         * The DETAIL is the point, not the event name.
+         *
+         * This used to print one word — `interceptor reported send-failed` — while the page
+         * held everything needed to explain it: whether a send button existed at all, whether
+         * it was disabled, what was left in the composer, and what the composer's toolbar
+         * actually contained. "The result is written into the box and never sent" is not
+         * diagnosable from the word alone. The whole payload goes out now, and `DSH_APP_LOG=1`
+         * mirrors it into `<userData>/logs/`.
+         */
+        console.warn(`[embed:${this.platform.id}] interceptor ${JSON.stringify(payload)}`)
         break
       default:
         break

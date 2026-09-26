@@ -708,7 +708,7 @@ export class CommandRunner {
     } else if (outcome === 'stuck') {
       this.appendLine({
         kind: 'error',
-        text: '结果已写入输入框但没能提交（ChatGPT 可能正在生成回复）——输入框里还留着内容，等它答完手动点发送即可'
+        text: '结果已写入输入框但没能提交——自动点发送键和回车都试过了仍然失败。输入框里还留着内容，手动发送即可；具体原因记在应用日志里（DSH_APP_LOG=1 时为 <userData>/logs/）'
       })
     } else {
       this.appendLine({ kind: 'error', text: `结果回传失败：${outcome}` })
