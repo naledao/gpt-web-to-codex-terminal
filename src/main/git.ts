@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { join, sep } from 'node:path'
 
 /**
  * Read-only Git inspection for the toolbox -> Git panel.
@@ -37,7 +38,7 @@ export interface GitFileChange {
   /** Previous path, only set for renames. */
   oldPath?: string
   kind: GitChangeKind
-  /** Single-letter code as Git reports it, for the badge. */
+  /** Single-letter status as Git reports it, for the badge. */
   code: string
   additions: number
   deletions: number
@@ -62,6 +63,14 @@ export interface GitFileDiff {
   hunks: GitDiffHunk[]
   additions: number
   deletions: number
+  /** Raw `@@` hunks, fed straight to the diff viewer. */
+  rawHunks: string[]
+  /** File contents before the change; empty for a new file. */
+  oldContent: string
+  /** File contents as they are on disk now. */
+  newContent: string
+  /** Language hint for the highlighter. */
+  lang: string
 }
 
 export interface GitLogResult {
@@ -71,7 +80,6 @@ export interface GitLogResult {
   entries: GitLogEntry[]
   indexStatus: GitIndexStatus
   files: GitFileChange[]
-  /** Set when the directory is a repo but the log could not be read. */
   error?: string
 }
 
@@ -95,6 +103,15 @@ function runGit(cwd: string, args: string[]): Promise<string> {
       }
     )
   })
+}
+
+/**
+ * Git on Windows emits CRLF. Every consumer below splits on LF alone, so a
+ * stray carriage return would end up glued to the end of each line and stop
+ * `@@` headers from matching. Normalise once, at the edge.
+ */
+function toLf(text: string): string {
+  return text.replace(/\r\n/g, '\n')
 }
 
 /** Prefer the first real branch name in `%D`; fall back to the checked-out branch. */
@@ -132,13 +149,13 @@ function parseLog(output: string, fallbackBranch: string): GitLogEntry[] {
 }
 
 /**
- * `git diff --numstat` prints `<add>\t<del>\t<path>`, and for a rename the path
- * is either `old => new` or a braced `dir/{old => new}/file`. This resolves both
- * forms to the path the file has now.
+ * `git diff --numstat` prints add, del and a path. A rename reports the path as
+ * either `old => new` or a braced `dir/{old => new}/file`; both resolve to the
+ * name the file has now.
  */
 function resolveNumstatPath(raw: string): string {
-  const braced = raw.match(/^(.*)\{([^{}]*) => ([^{}]*)}(.*)$/)
-  if (braced) return (braced[1] + braced[3] + braced[4]).replace(/\/\//g, '/')
+  const braced = raw.match(/^(.*)\{(.*) => (.*)\}(.*)$/)
+  if (braced) return (braced[1] + braced[3] + braced[4]).split('//').join('/')
   const arrow = raw.indexOf(' => ')
   if (arrow >= 0) return raw.slice(arrow + 4)
   return raw
@@ -146,13 +163,13 @@ function resolveNumstatPath(raw: string): string {
 
 function parseNumstat(output: string): Map<string, { additions: number; deletions: number }> {
   const counts = new Map<string, { additions: number; deletions: number }>()
-  for (const line of output.split('\n')) {
+  for (const line of toLf(output).split('\n')) {
     if (!line) continue
     const parts = line.split('\t')
     if (parts.length < 3) continue
     const additions = parts[0] === '-' ? 0 : Number(parts[0])
     const deletions = parts[1] === '-' ? 0 : Number(parts[1])
-    counts.set(resolveNumstatPath(parts[2]), {
+    counts.set(resolveNumstatPath(parts.slice(2).join('\t')), {
       additions: Number.isFinite(additions) ? additions : 0,
       deletions: Number.isFinite(deletions) ? deletions : 0
     })
@@ -171,10 +188,11 @@ function kindFromCode(code: string): GitChangeKind {
 /** Count lines of an untracked file so its row can still show a size. */
 async function countUntracked(cwd: string, path: string): Promise<number> {
   try {
-    const full = path.replace(/\//g, require('node:path').sep)
-    const text = await readFile(require('node:path').join(cwd, full), 'utf8')
+    const full = path.split('/').join(sep)
+    const text = await readFile(join(cwd, full), 'utf8')
     if (!text) return 0
-    return text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
+    const lines = toLf(text).split('\n')
+    return lines.length - (lines[lines.length - 1] === '' ? 1 : 0)
   } catch {
     return 0
   }
@@ -184,15 +202,15 @@ async function parseStatus(cwd: string, porcelain: string, numstat: string): Pro
   const counts = parseNumstat(numstat)
   const files: GitFileChange[] = []
 
-  for (const raw of porcelain.split('\n')) {
+  for (const raw of toLf(porcelain).split('\n')) {
     if (raw.length < 3) continue
     const code = raw.slice(0, 2)
     let path = raw.slice(3)
     let oldPath: string | undefined
     const arrow = path.indexOf(' -> ')
     if (arrow >= 0) {
-      oldPath = path.slice(0, arrow).replace(/^"|"$/g, '')
-      path = path.slice(arrow + 4).replace(/^"|"$/g, '')
+      oldPath = path.slice(0, arrow).split('"').join('')
+      path = path.slice(arrow + 4).split('"').join('')
     }
 
     const kind = kindFromCode(code)
@@ -200,14 +218,7 @@ async function parseStatus(cwd: string, porcelain: string, numstat: string): Pro
     const additions = count ? count.additions : kind === 'untracked' ? await countUntracked(cwd, path) : 0
     const deletions = count ? count.deletions : 0
 
-    files.push({
-      path,
-      oldPath,
-      kind,
-      code: code.trim(),
-      additions,
-      deletions
-    })
+    files.push({ path, oldPath, kind, code: code.trim(), additions, deletions })
   }
 
   files.sort((a, b) => a.path.localeCompare(b.path))
@@ -231,7 +242,7 @@ function parseDiff(output: string): GitDiffHunk[] {
   let oldNumber = 0
   let newNumber = 0
 
-  for (const line of output.split('\n')) {
+  for (const line of toLf(output).split('\n')) {
     if (line.startsWith('@@')) {
       const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
       oldNumber = match ? Number(match[1]) : 0
@@ -251,11 +262,62 @@ function parseDiff(output: string): GitDiffHunk[] {
       current.lines.push({ kind: 'context', oldNumber, newNumber, text: line.slice(1) })
       oldNumber += 1
       newNumber += 1
-    } else if (line.startsWith('\\')) {
-      current.lines.push({ kind: 'context', text: line })
     }
   }
   return hunks
+}
+
+/**
+ * Split raw `git diff` output into the `@@` hunks the viewer wants.
+ *
+ * The viewer takes hunks as strings and parses them itself, so the file header
+ * (index line, ---/+++ markers) is dropped and each hunk keeps only its body.
+ */
+function splitHunks(output: string): string[] {
+  const hunks: string[] = []
+  const headerLines: string[] = []
+  let current: string[] = []
+  let seenHunk = false
+  for (const line of toLf(output).split('\n')) {
+    if (line.startsWith('@@')) {
+      if (current.length > 0) hunks.push(headerLines.concat(current).join('\n'))
+      current = [line]
+      seenHunk = true
+      continue
+    }
+    if (seenHunk) {
+      current.push(line)
+    } else if (line.startsWith('diff --git ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
+      headerLines.push(line)
+    }
+  }
+  if (current.length > 0) hunks.push(headerLines.concat(current).join('\n'))
+  return hunks
+}
+
+/** Map a file extension to the language name the highlighter expects. */
+function languageOf(path: string): string {
+  const dot = path.lastIndexOf('.')
+  const ext = dot < 0 ? '' : path.slice(dot + 1).toLowerCase()
+  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') return ext
+  if (ext === 'json') return 'json'
+  if (ext === 'css') return 'css'
+  if (ext === 'scss') return 'scss'
+  if (ext === 'html') return 'html'
+  if (ext === 'md') return 'markdown'
+  if (ext === 'yml' || ext === 'yaml') return 'yaml'
+  if (ext === 'sh' || ext === 'ps1') return 'bash'
+  return ''
+}
+
+/** Read a file from the working tree, returning an empty string when missing. */
+async function readWorkingFile(cwd: string, path: string): Promise<string> {
+  try {
+    const full = path.split('/').join(sep)
+    return await readFile(join(cwd, full), 'utf8')
+  } catch {
+    return ''
+  }
 }
 
 /** Read the history, index and changed files of the repository containing `cwd`. */
@@ -324,50 +386,86 @@ export async function readGitLog(cwd: string): Promise<GitLogResult> {
   return result
 }
 
-/** Read the unified diff for one changed path, as the panel's viewer shows it. */
+/**
+ * Read everything the diff viewer needs for one changed path.
+ *
+ * Both file revisions come back in full because the highlighter tokenises whole
+ * files; the hunks then say which parts actually changed.
+ */
 export async function readGitDiff(cwd: string, path: string): Promise<GitFileDiff> {
-  const empty: GitFileDiff = { path, binary: false, hunks: [], additions: 0, deletions: 0 }
+  const empty: GitFileDiff = {
+    path,
+    binary: false,
+    hunks: [],
+    additions: 0,
+    deletions: 0,
+    rawHunks: [],
+    oldContent: '',
+    newContent: '',
+    lang: ''
+  }
   if (!cwd || !path) return empty
+
+  const lang = languageOf(path)
+  const newContent = await readWorkingFile(cwd, path)
 
   let output = ''
   try {
     output = await runGit(cwd, ['diff', 'HEAD', '--', path])
   } catch {
-    return empty
+    return { ...empty, lang, newContent }
   }
 
-  // Untracked files have nothing to diff against; present them as all-new.
+  // An untracked file has nothing to diff against, so the whole file is new.
   if (!output.trim()) {
-    try {
-      const full = path.replace(/\//g, require('node:path').sep)
-      const text = await readFile(require('node:path').join(cwd, full), 'utf8')
-      const lines = text.split('\n')
-      if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
-      const hunk: GitDiffHunk = {
-        header: '@@ -0,0 +1,' + String(lines.length) + ' @@',
-        lines: lines.map((line, index) => ({
-          kind: 'add' as const,
-          newNumber: index + 1,
-          text: line
-        }))
-      }
-      return { path, binary: false, hunks: [hunk], additions: lines.length, deletions: 0 }
-    } catch {
-      return empty
+    if (!newContent) return { ...empty, lang }
+    const lines = toLf(newContent).split('\n')
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+    const fileHeader = '--- /dev/null\n+++ b/' + path
+    const header = '@@ -0,0 +1,' + String(lines.length) + ' @@'
+    const body = lines.map((line) => '+' + line).join('\n')
+    return {
+      path,
+      binary: false,
+      hunks: [],
+      additions: lines.length,
+      deletions: 0,
+      rawHunks: [fileHeader + '\n' + header + '\n' + body],
+      oldContent: '',
+      newContent,
+      lang
     }
   }
 
   if (output.length > MAX_DIFF_BYTES) output = output.slice(0, MAX_DIFF_BYTES)
-  if (/^Binary files /m.test(output) || /GIT binary patch/m.test(output)) {
-    return { path, binary: true, hunks: [], additions: 0, deletions: 0 }
-  }
+  const normalised = toLf(output)
+  const isBinary = normalised.split('\n').some((line) => line.startsWith('Binary files ') || line.startsWith('GIT binary patch'))
+  if (isBinary) return { ...empty, binary: true, lang, newContent }
 
   let additions = 0
   let deletions = 0
-  for (const line of output.split('\n')) {
+  for (const line of normalised.split('\n')) {
     if (line.startsWith('+') && !line.startsWith('+++')) additions += 1
     else if (line.startsWith('-') && !line.startsWith('---')) deletions += 1
   }
 
-  return { path, binary: false, hunks: parseDiff(output), additions, deletions }
+  // Recover the previous revision so the left pane can be tokenised too.
+  let oldContent = ''
+  try {
+    oldContent = await runGit(cwd, ['show', 'HEAD:' + path])
+  } catch {
+    /* the file did not exist at HEAD */
+  }
+
+  return {
+    path,
+    binary: false,
+    hunks: parseDiff(output),
+    additions,
+    deletions,
+    rawHunks: splitHunks(output),
+    oldContent,
+    newContent,
+    lang
+  }
 }

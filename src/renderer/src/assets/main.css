@@ -8737,3 +8737,182 @@ body {
 .gitfiles {
   grid-template-columns: 360px minmax(0, 1fr);
 }
+/* Per-host connect action, sitting next to the remove button. */
+.ssh-connect__host-connect {
+  flex: none;
+  height: 26px;
+  margin-right: 6px;
+  padding: 0 10px;
+  border: 1px solid #c9d6fb;
+  border-radius: 7px;
+  background: #eef2ff;
+  color: #3f63df;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ssh-connect__host-connect:hover:not(:disabled) {
+  background: #e0e8ff;
+}
+
+.ssh-connect__host-connect:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* "Disconnect" in the dialog header while a host is live. */
+.ssh-connect__disconnect {
+  flex: none;
+  height: 28px;
+  margin-right: 10px;
+  padding: 0 12px;
+  border: 1px solid #f3c9c9;
+  border-radius: 7px;
+  background: #fdecec;
+  color: #c14b4b;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ssh-connect__disconnect:hover {
+  background: #fbdcdc;
+}
+/*
+ * Diff overflow fix.
+ *
+ * A flex item defaults to min-width:auto, so a long code line pushed the row
+ * wider than its container instead of scrolling inside it. The row then spilled
+ * out, which is why the line numbers were scrolled out of view entirely.
+ * Shrinking the chain and pinning the gutter keeps them visible while the code
+ * scrolls underneath.
+ */
+.gitdiff,
+.gitdiff__body,
+.gitdiff__code {
+  min-width: 0;
+}
+
+.gitdiff__line {
+  background: #fff;
+}
+
+.gitdiff__num,
+.gitdiff__sign {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: inherit;
+}
+
+.gitdiff__num:first-child {
+  left: 0;
+}
+
+.gitdiff__sign {
+  left: 52px;
+}
+
+.gitdiff__text {
+  padding-right: 24px;
+}
+/* git-diff-view integration: the package ships its own colours, so this only
+   has to seat it in the pane and match the surrounding chrome. */
+.gitdiff__viewer {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.gitdiff__viewer .diff-view-wrapper,
+.gitdiff__viewer .diff-tailwindcss-wrapper {
+  min-width: 0;
+}
+
+/* Unified / split toggle, sitting left of the line totals. */
+.gitdiff__modes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px;
+  border-radius: 9px;
+  background: #f1f3f7;
+}
+
+.gitdiff__mode {
+  height: 28px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #5a6b82;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gitdiff__mode:hover {
+  color: #29405f;
+}
+
+.gitdiff__mode--on {
+  background: #fff;
+  color: #3f63df;
+  box-shadow: 0 1px 3px rgba(42, 65, 96, 0.14);
+}
+
+/* The totals now follow the toggle, so they only need a small gap. */
+.gitdiff__totals {
+  margin-left: 12px;
+}
+/*
+ * The viewer was mounting with no measurable height, so nothing showed. Give the
+ * wrapper a definite box and let the package scroll inside it. min-height is the
+ * belt-and-braces: even a short diff keeps a readable area.
+ */
+.gitdiff__viewer {
+  min-width: 0;
+  min-height: 200px;
+  height: 100%;
+  font-size: 12px;
+}
+
+.gitdiff__viewer > div {
+  min-height: 200px;
+}
+
+/* The package renders its own scroll container; this keeps it inside the pane. */
+.gitdiff__body {
+  display: flex;
+  flex-direction: column;
+}
+
+.gitdiff__body > .gitdiff__viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+/* The package scroll container has no height cap, so it grows to the full diff
+   height and its horizontal scrollbar ends up pinned to the bottom of the whole
+   document instead of the visible pane. Cap the chain to the pane, let the
+   package own both axes, and drop the now-redundant outer scroller. */
+.gitdiff__body > .gitdiff__viewer {
+  overflow: hidden;
+}
+
+.gitdiff__viewer > div,
+.gitdiff__viewer .diff-style-root,
+.gitdiff__viewer .diff-view-wrapper,
+.gitdiff__viewer .unified-diff-view,
+.gitdiff__viewer .split-diff-view {
+  min-height: 0;
+  height: 100%;
+}
+
+.gitdiff__viewer .unified-diff-table-wrapper,
+.gitdiff__viewer .old-diff-table-wrapper,
+.gitdiff__viewer .new-diff-table-wrapper {
+  height: 100%;
+  overflow-y: auto;
+}

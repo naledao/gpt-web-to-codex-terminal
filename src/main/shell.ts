@@ -652,11 +652,28 @@ function buildWrapper(token: string): string {
      * `Set-Location C:\nope` come back as exit code 0 — the model would be told
      * the command succeeded and would not correct itself.
      *
-     * $Error.Count is unaffected by the pipeline. Verified against seven cases
-     * (failing cmdlet, native exit code, throw, plain string); the `$?` variants
-     * got two of them wrong.
+     * `$Error` is unaffected by the pipeline, which is why it is the signal here. But
+     * `$Error.Count` ALONE was wrong, and wrong in the direction that costs the most.
+     *
+     * `2>&1` on a native command turns every line that command wrote to STDERR into an
+     * ErrorRecord — and warnings go to stderr. So `npx electron-vite build 2>&1`, a command
+     * that succeeded and printed both `BUILD=0` and `✓ built in 4.67s`, came back as exit code
+     * 1 purely because rollup had emitted two chunk-size warnings. The model was then handed
+     * `结果: 失败（退出码 1）` above a body that said the build worked, and went off to repair a
+     * build that was never broken.
+     *
+     * The two cases are distinguishable, measured on Windows PowerShell 5.1 (what this wrapper
+     * actually runs under):
+     *
+     *   cmd /c 'echo warn 1>&2' 2>&1   ->  FQID=[NativeCommandError]        false alarm
+     *   Set-Location C:\nope           ->  FQID=[PathNotFound,…SetLocationCommand]
+     *   cmd /c 'exit 3'                ->  no ErrorRecord at all; handled by $LASTEXITCODE
+     *
+     * So only the first is ignored. A native command that fails for real never reaches this
+     * branch — its exit code is non-zero and the first test takes it — which is why dropping
+     * its stderr costs nothing.
      */
-    '    if ($LASTEXITCODE -ne 0) { $ctCode = $LASTEXITCODE } elseif ($Error.Count -gt 0) { $ctCode = 1 }',
+    "    if ($LASTEXITCODE -ne 0) { $ctCode = $LASTEXITCODE } elseif (@($Error | Where-Object { $_.FullyQualifiedErrorId -notlike '*NativeCommandError*' }).Count -gt 0) { $ctCode = 1 }",
     '  } catch {',
     // A syntax error or `throw` must not take the session down with it.
     "    Write-Output ('__CT_ERROR__ ' + $_.Exception.Message)",

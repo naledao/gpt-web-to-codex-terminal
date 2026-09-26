@@ -1,8 +1,12 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import type { GitDiffHunk, GitFileChange, GitFileDiff } from '../../../shared/types'
+import { DiffModeEnum, DiffView } from '@git-diff-view/react'
+import '@git-diff-view/react/styles/diff-view.css'
+import type { GitFileChange, GitFileDiff } from '../../../shared/types'
 
 interface GitFilesViewProps {
+  /** Active app theme, so the diff viewer matches the rest of the panel. */
+  theme: 'light' | 'dark'
   cwd: string
   files: GitFileChange[]
 }
@@ -116,31 +120,46 @@ function Delta({ additions, deletions }: { additions: number; deletions: number 
   )
 }
 
-function DiffView({ diff }: { diff: GitFileDiff }): ReactElement {
-  if (diff.binary) return <p className="gitdiff__empty">二进制文件，无法显示文本差异。</p>
-  if (diff.hunks.length === 0) return <p className="gitdiff__empty">没有可显示的差异。</p>
+interface ViewerProps {
+  diff: GitFileDiff
+  theme: 'light' | 'dark'
+}
+
+/** Unified/split toggle lives in the header, so the mode is owned by the parent. */
+type DiffMode = 'unified' | 'split'
+
+function DiffViewer({ diff, theme, mode }: ViewerProps & { mode: DiffMode }): ReactElement {
+  if (diff.binary) {
+    return <p className="gitdiff__empty">二进制文件，无法显示文本差异。</p>
+  }
+  if (diff.rawHunks.length === 0) {
+    return <p className="gitdiff__empty">没有可显示的差异。</p>
+  }
+
+  const fileName = diff.path.slice(diff.path.lastIndexOf('/') + 1)
   return (
-    <div className="gitdiff__code">
-      {diff.hunks.map((hunk: GitDiffHunk, hunkIndex) => (
-        <div className="gitdiff__hunk" key={hunkIndex}>
-          <div className="gitdiff__hunk-head">{hunk.header}</div>
-          {hunk.lines.map((line, lineIndex) => (
-            <div className={'gitdiff__line gitdiff__line--' + line.kind} key={lineIndex}>
-              <span className="gitdiff__num">{line.oldNumber ?? ''}</span>
-              <span className="gitdiff__num">{line.newNumber ?? ''}</span>
-              <span className="gitdiff__sign">
-                {line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '}
-              </span>
-              <span className="gitdiff__text">{line.text || ' '}</span>
-            </div>
-          ))}
-        </div>
-      ))}
+    <div className="gitdiff__viewer">
+      <DiffView
+        data={{
+          oldFile: diff.oldContent
+            ? { fileName, fileLang: diff.lang, content: diff.oldContent }
+            : undefined,
+          newFile: diff.newContent
+            ? { fileName, fileLang: diff.lang, content: diff.newContent }
+            : undefined,
+          hunks: diff.rawHunks
+        }}
+        diffViewMode={mode === 'split' ? DiffModeEnum.Split : DiffModeEnum.Unified}
+        diffViewTheme={theme}
+        diffViewHighlight
+        diffViewWrap={false}
+        diffViewFontSize={12}
+      />
     </div>
   )
 }
 
-export default function GitFilesView({ cwd, files }: GitFilesViewProps): ReactElement {
+export default function GitFilesView({ cwd, files, theme }: GitFilesViewProps): ReactElement {
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState('')
@@ -148,6 +167,7 @@ export default function GitFilesView({ cwd, files }: GitFilesViewProps): ReactEl
   const [diffLoading, setDiffLoading] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const [copied, setCopied] = useState(false)
+  const [mode, setMode] = useState<DiffMode>('unified')
 
   // The split is remembered across openings, like the workspace sidebars.
   const [paneWidth, setPaneWidth] = useState(() => {
@@ -397,6 +417,22 @@ export default function GitFilesView({ cwd, files }: GitFilesViewProps): ReactEl
                   <path d="M10.6 5.4V3.8a1.4 1.4 0 0 0-1.4-1.4H3.8a1.4 1.4 0 0 0-1.4 1.4v5.4a1.4 1.4 0 0 0 1.4 1.4h1.6" />
                 </svg>
               </button>
+              <div className="gitdiff__modes">
+                <button
+                  type="button"
+                  className={mode === "unified" ? "gitdiff__mode gitdiff__mode--on" : "gitdiff__mode"}
+                  onClick={() => setMode("unified")}
+                >
+                  统一视图
+                </button>
+                <button
+                  type="button"
+                  className={mode === "split" ? "gitdiff__mode gitdiff__mode--on" : "gitdiff__mode"}
+                  onClick={() => setMode("split")}
+                >
+                  分离视图
+                </button>
+              </div>
               <span className="gitdiff__totals">
                 <em className="gitfiles__plus">+{diff ? diff.additions : 0}</em>
                 <em className="gitfiles__minus">-{diff ? diff.deletions : 0}</em>
@@ -406,7 +442,7 @@ export default function GitFilesView({ cwd, files }: GitFilesViewProps): ReactEl
               {diffLoading ? (
                 <p className="gitdiff__empty">正在读取差异…</p>
               ) : diff ? (
-                <DiffView diff={diff} />
+                <DiffViewer diff={diff} theme={theme} mode={mode} />
               ) : (
                 <p className="gitdiff__empty">无法读取该文件的差异。</p>
               )}

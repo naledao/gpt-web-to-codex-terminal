@@ -119,7 +119,7 @@ export default function GitDialog({ open, cwd, theme, onClose }: GitDialogProps)
   const [log, setLog] = useState<GitLogResult>(EMPTY)
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [view, setView] = useState<GitView>('log')
+  const [view, setView] = useState<GitView>('files')
 
   useEffect(() => {
     if (!open) return
@@ -167,9 +167,6 @@ export default function GitDialog({ open, cwd, theme, onClose }: GitDialogProps)
       role="dialog"
       aria-modal="true"
       aria-label="Git 管理"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
     >
       <div className="confirm-dialog__box git-dialog__box">
         <header className="git-dialog__head">
@@ -206,6 +203,17 @@ export default function GitDialog({ open, cwd, theme, onClose }: GitDialogProps)
           <div className="git-dialog__tabs">
             <button
               type="button"
+              className={view === 'files' ? 'git-dialog__tab git-dialog__tab--on' : 'git-dialog__tab'}
+              onClick={() => setView('files')}
+            >
+              <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+                <path d="M4.4 1.9h4.4l3 3v9.2H4.4z" />
+                <path d="M8.8 1.9v3h3" />
+              </svg>
+              文件改动
+            </button>
+            <button
+              type="button"
               className={view === 'log' ? 'git-dialog__tab git-dialog__tab--on' : 'git-dialog__tab'}
               onClick={() => setView('log')}
             >
@@ -216,17 +224,6 @@ export default function GitDialog({ open, cwd, theme, onClose }: GitDialogProps)
                 <path d="M4.2 5.3v5.4M5.9 8h4.2" />
               </svg>
               提交记录
-            </button>
-            <button
-              type="button"
-              className={view === 'files' ? 'git-dialog__tab git-dialog__tab--on' : 'git-dialog__tab'}
-              onClick={() => setView('files')}
-            >
-              <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
-                <path d="M4.4 1.9h4.4l3 3v9.2H4.4z" />
-                <path d="M8.8 1.9v3h3" />
-              </svg>
-              文件改动
             </button>
           </div>
 
@@ -365,7 +362,7 @@ export default function GitDialog({ open, cwd, theme, onClose }: GitDialogProps)
         ) : null}
 
         {!loading && log.isRepo && view === 'files' ? (
-          <GitFilesView cwd={cwd} files={log.files} />
+          <GitFilesView cwd={cwd} files={log.files} theme={theme === 'dark' ? 'dark' : 'light'} />
         ) : null}      </div>
     </div>
   )

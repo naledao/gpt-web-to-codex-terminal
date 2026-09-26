@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Types shared between the Electron main process, the preload bridge and the
  * React renderer. Keep this module free of runtime dependencies on `electron`
  * so it can be imported from every process.
@@ -837,6 +837,17 @@ export interface InterceptorPageEvent {
   reason?: string
   textHead?: string
   bracesBalanced?: boolean
+  /**
+   * Present on `parse-failed`: how long the reply was, how many `{…}` were found in it, and the
+   * candidate the JSON parser was actually given.
+   *
+   * `text` used to be capped at 300 characters and the user-facing hint guessed at the cause
+   * ("多半是引号没转义"). That guess is wrong often enough to send the model — and the reader —
+   * after the wrong thing, and 300 characters did not even reach the end of the `command` value.
+   */
+  textLength?: number
+  objectCount?: number
+  lastObject?: string | null
   /** Present on `scan`/`not-assistant-turn`: the selectors that failed to match. */
   wanted?: string[]
   selectors?: string[]
@@ -1382,6 +1393,14 @@ export interface GitFileDiff {
   hunks: GitDiffHunk[]
   additions: number
   deletions: number
+  /** Raw `@@` hunks, fed straight to the diff viewer. */
+  rawHunks: string[]
+  /** File contents before the change; empty for a new file. */
+  oldContent: string
+  /** File contents as they are on disk now. */
+  newContent: string
+  /** Language hint for the highlighter. */
+  lang: string
 }
 
 /** Result of inspecting the repository that contains a directory. */

@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@git-diff-view/react": "^0.1.7",
     "@svar-ui/react-filemanager": "^2.6.0",
     "@uiw/react-md-editor": "^4.1.2",
     "electron-updater": "^6.8.9",

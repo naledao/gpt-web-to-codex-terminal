@@ -1389,7 +1389,24 @@
 
       if (finished && state.lastUnparsedMessageId !== messageId && /"command"\s*:/.test(text)) {
         state.lastUnparsedMessageId = messageId
-        report({ event: 'parse-failed', text: text.slice(0, 300) })
+        /*
+         * The WHOLE reply, not the first 300 characters.
+         *
+         * The terminal line the user sees quotes 160 characters and then asserts "多半是引号没转义"
+         * — a guess baked into the message text, and one that is wrong often enough to matter.
+         * What actually answers "which character broke this" is the text JSON.parse choked on,
+         * plus the object that was extracted to feed it. Both are cheap, and 300 characters did
+         * not even reach the end of the `command` value.
+         */
+        const attempts = balancedObjects(text.replace(/```[a-zA-Z0-9_-]*/g, '\n'))
+        report({
+          event: 'parse-failed',
+          text: text.slice(0, 2000),
+          textLength: text.length,
+          objectCount: attempts.length,
+          // The candidate the parser actually worked on: `extractCommand` tries them last-first.
+          lastObject: attempts.length > 0 ? attempts[attempts.length - 1].slice(0, 1200) : null
+        })
         return
       }
 

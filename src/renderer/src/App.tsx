@@ -1623,9 +1623,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             <>
               <button
                 type="button"
-                className={sshPickerOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
-                title="切换到另一台已保存的主机"
-                onClick={() => setSshPickerOpen((value) => !value)}
+                className="panel__sync"
+                title="已保存的主机，打开连接窗口"
+                onClick={() => setSshDialogOpen(true)}
               >
                 切换
               </button>
@@ -1642,9 +1642,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             <>
               <button
                 type="button"
-                className={sshPickerOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
-                title="已保存的主机，点一下直接连接"
-                onClick={() => setSshPickerOpen((value) => !value)}
+                className="panel__sync"
+                title="已保存的主机，打开连接窗口"
+                onClick={() => setSshDialogOpen(true)}
               >
                 SSH
               </button>
@@ -1702,83 +1702,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
           paints above the DOM, so anything spilling out of this column — a dropdown
           anchored to the header, say — would be swallowed by it.
         */}
-        {terminalCollapsed || !sshPickerOpen ? null : (
-          <div className="ssh-switch">
-            <div className="ssh-switch__head">
-              <span className="field__label">已保存的主机</span>
-              <span className="panel__spacer" />
-              <button
-                type="button"
-                className="panel__sync"
-                title="打开连接表单，也可以在这里修改或删除已保存的主机"
-                onClick={() => {
-                  setSshPickerOpen(false)
-                  setSshDialogOpen(true)
-                }}
-              >
-                新建 / 管理
-              </button>
-            </div>
-
-            {sshHosts.length === 0 ? (
-              <p className="ssh-switch__empty">
-                还没有保存的主机。点「新建 / 管理」添加一台 —— 连接成功后会记住，下次点一下就能切回来。
-              </p>
-            ) : (
-              <ul className="ssh-list">
-                {sshHosts.map((saved) => {
-                  const here = sshLive && ssh?.hostId === saved.id
-                  return (
-                    <li key={saved.id} className="ssh-list__item">
-                      <button
-                        type="button"
-                        className={here ? 'ssh-list__pick ssh-list__pick--active' : 'ssh-list__pick'}
-                        disabled={sshBusy}
-                        title={
-                          here
-                            ? `当前就在这里：${saved.name}`
-                            : saved.hasPassword
-                              ? `连接到 ${saved.name}（使用已保存的密码）`
-                              : `打开表单填写密码后连接 ${saved.name}`
-                        }
-                        onClick={() => void switchSshHost(saved)}
-                      >
-                        <span className="ssh-list__name">{here ? `● ${saved.name}` : saved.name}</span>
-                        <span className="ssh-list__target">
-                          {saved.username}@{saved.host}:{saved.port}
-                        </span>
-                        <span
-                          className={saved.hasPassword ? 'ssh-list__lock' : 'ssh-list__lock ssh-list__lock--warn'}
-                        >
-                          {saved.hasPassword ? '一键连接' : '需输密码'}
-                        </span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-
-            <div className="ssh-switch__foot">
-              {sshLive ? (
-                <button
-                  type="button"
-                  className="panel__sync"
-                  title="结束当前连接，但保留屏幕上的记录"
-                  onClick={() => {
-                    setSshPickerOpen(false)
-                    void disconnectSsh()
-                  }}
-                >
-                  断开当前连接
-                </button>
-              ) : null}
-              <span className="panel__spacer" />
-              <span className="ssh-switch__note">切换会断开当前会话</span>
-            </div>
-          </div>
-        )}
-
         {terminalCollapsed ? null : sshActive ? (
           <div className="terminal-pane__meta">
             <span className="terminal-pane__id">{ssh?.name || 'SSH'}</span>
@@ -2347,6 +2270,16 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             <div className="ssh-connect__head">
               <span className="ssh-connect__title">SSH 连接</span>
               <span className="panel__spacer" />
+              {sshLive ? (
+                <button
+                  type="button"
+                  className="ssh-connect__disconnect"
+                  title="结束当前连接，但保留屏幕上的记录"
+                  onClick={() => { setSshDialogOpen(false); void disconnectSsh() }}
+                >
+                  断开当前连接
+                </button>
+              ) : null}
               <button type="button" className="ssh-connect__close" aria-label="关闭" onClick={() => setSshDialogOpen(false)}>×</button>
             </div>
 
@@ -2367,6 +2300,15 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                           <small>{saved.username}@{saved.host}:{saved.port}</small>
                         </span>
                         {saved.hasPassword ? <span className="ssh-connect__saved">已存密码</span> : null}
+                      </button>
+                      <button
+                        type="button"
+                        className="ssh-connect__host-connect"
+                        title={saved.hasPassword ? `直接连接到 ${saved.name}` : `填写密码后连接 ${saved.name}`}
+                        disabled={sshBusy}
+                        onClick={() => { setSshDialogOpen(false); void switchSshHost(saved) }}
+                      >
+                        连接
                       </button>
                       <button type="button" className="ssh-connect__host-remove" aria-label={`删除 ${saved.name}`} onClick={() => void removeSshHost(saved.id)}>×</button>
                     </div>
