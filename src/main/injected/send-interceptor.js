@@ -570,14 +570,21 @@
   }
 
   /**
-   * Actions tried, IN ORDER, once the ordinary retries are exhausted.
+   * Actions tried, IN ORDER, once the selector-matched button cannot be used at all.
    *
-   * WHY THESE EXIST. "The send button was not found" used to end the send outright, and that
-   * is survivable only while the button selectors match — they are now UNVERIFIED, because
-   * ChatGPT renders no send button until the composer holds text and no probe run has yet
-   * caught one (see `sendButtonSelectors` in src/shared/platforms.ts). The reported symptom
-   * is exactly this: the result is written into the box, the submit never happens, and every
-   * later round of the loop is lost with it.
+   * INSURANCE, not the normal path.
+   *
+   * `sendButtonSelectors` currently match. Clicking the send button and pressing Enter both
+   * still prepend the system prompt (user-tested, both routes), and a click can only reach
+   * `intercept()` through the interceptor that matches on that list — so on today's page the
+   * first branch of `submitWithRetry` wins and none of this runs.
+   *
+   * It exists because the same class of change has already happened TWICE in one generation:
+   * `#prompt-textarea` and `[data-message-author-role]` both went to zero matches and the
+   * automation died silently. When a send-button selector goes the same way, "the button was
+   * not found" ends the send OUTRIGHT — the result sits in the composer and every later round
+   * of the loop is lost with it, which is not a degradation worth accepting when a structural
+   * click costs one line.
    *
    * Both are heuristics, and both are safe to be wrong: the caller verifies by watching the
    * composer CLEAR, so an action that does nothing costs one pass and the next one runs.

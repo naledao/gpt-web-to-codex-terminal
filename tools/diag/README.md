@@ -254,6 +254,14 @@ regression, check that the tick happened in a state where the element exists.** 
 composer, an idle page, and a page with no conversation open are all states in which
 several of these selectors are *supposed* to match nothing.
 
+**Confirmed the hard way.** The `sendButton` group reported `*** BROKEN ***` in both runs,
+and those three selectors were in fact working the entire time. That was established later by
+BEHAVIOUR rather than by this probe: clicking send *and* pressing Enter both still prepend the
+system prompt, and from a click the only route into the code that prepends it is the click
+interceptor that matches on that list. A round of diagnosis went into selectors that had never
+been broken, while the actual fault — a 150ms single-sample send confirmation — sat somewhere
+else entirely.
+
 ### Rules
 
 - **Never guess a replacement selector.** A wrong guess fails silently and looks exactly

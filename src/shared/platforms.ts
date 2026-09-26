@@ -266,18 +266,23 @@ export const CHATGPT_PAGE: PageAdapter = {
     'div[contenteditable="true"]'
   ],
   /*
-   * NOT re-measured — deliberately left exactly as they were.
+   * LEFT EXACTLY AS THEY WERE — and now known to be ALIVE.
    *
-   * Every tick of both runs caught the composer EMPTY (`composerText= "\n"`), and ChatGPT
-   * does not render a send button until there is something to send: the fourth and last
-   * toolbar slot held `开始语音` instead. All three selectors below therefore reported MISS
-   * against a page where no send button existed at all, which is not evidence that they are
-   * wrong. Leaving text in the composer is what would settle it — see the probe's run notes.
+   * The probe reported MISS for all three, on every tick of both runs, which looks exactly
+   * like a dead group and is not one: ChatGPT renders no send button until the composer holds
+   * text, so there was never a send button on screen for them to match. (The probe prints that
+   * qualifier itself now, under any all-MISS button group.)
    *
-   * The failure mode if they ARE wrong is severe rather than cosmetic: the page-level click
-   * interceptor matches on this same list, so a click on send would stop reaching
-   * `intercept()` and the system prompt would silently not be prepended. That is why
-   * `submitWithRetry` now falls back to Enter instead of looping until it gives up.
+   * The evidence that they work is BEHAVIOURAL, not a selector count: clicking the send button
+   * and pressing Enter BOTH still prepend the system prompt (user-tested, both routes). The
+   * prompt can only be prepended by `intercept()`, and from a click the only route into it is
+   * the page-level click interceptor — which matches on this list. So at least one entry here
+   * still matches the real button.
+   *
+   * That also re-diagnoses the send path's original fault. It was NOT these selectors: a send
+   * attempted while ChatGPT is still finishing the previous turn never clears the composer,
+   * and the confirmation used to be a single 150ms sample. So a send that worked got reported
+   * as failed, while one the page genuinely refused was retried blind until the budget ran out.
    */
   sendButtonSelectors: [
     '[data-testid="send-button"]',

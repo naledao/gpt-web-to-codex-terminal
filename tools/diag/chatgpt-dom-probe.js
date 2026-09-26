@@ -459,7 +459,7 @@ async function inspect(wc, label) {
     const qualifiers = {
       sendButton: {
         text: composerEmpty
-          ? 'A MISS HERE PROVES NOTHING — the composer is EMPTY, and ChatGPT renders no send button until it holds text (the last toolbar slot held 开始语音 instead). Type a few characters, do NOT send, and let a tick land.'
+          ? 'A MISS HERE PROVES NOTHING — the composer is EMPTY, and ChatGPT renders no send button until it holds text (the last toolbar slot held 开始语音 instead). Type a few characters, do NOT send, and let a tick land. These selectors are in fact still WORKING — clicking send injects the system prompt — so an all-MISS here is purely a page-state artefact.'
           : 'The composer HELD TEXT at this tick, so a send button should have been on screen. This MISS is real.',
         conclusive: !composerEmpty
       },
