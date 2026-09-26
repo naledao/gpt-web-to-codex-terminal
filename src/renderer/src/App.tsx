@@ -251,6 +251,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   /** The pane the toolbox menu mounts into, so it can never spill under the native web view. */
   const toolboxPaneRef = useRef<HTMLElement>(null)
   const terminalOutputRef = useRef<HTMLDivElement>(null)
+  const promptBodyRef = useRef<HTMLDivElement>(null)
+  const promptMatchIndexRef = useRef(-1)
   /** scope:hostId of the note currently loaded into the editor. */
   const notesOwnerRef = useRef('')
 
@@ -1080,6 +1082,65 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [settingsOpen])
 
+  const clearPromptHighlights = useCallback((): void => {
+    const registry = (CSS as unknown as { highlights?: { delete(name: string): boolean } }).highlights
+    registry?.delete('prompt-search-match')
+    registry?.delete('prompt-search-active')
+    window.getSelection()?.removeAllRanges()
+  }, [])
+
+  const findInPrompt = useCallback((query: string, backwards: boolean): void => {
+    const body = promptBodyRef.current
+    const needle = query.trim().toLocaleLowerCase()
+    if (!body || needle === '') {
+      promptMatchIndexRef.current = -1
+      clearPromptHighlights()
+      return
+    }
+
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
+    const matches: Array<{ node: Text; range: Range }> = []
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text
+      const haystack = node.data.toLocaleLowerCase()
+      let from = 0
+      while (from <= haystack.length - needle.length) {
+        const start = haystack.indexOf(needle, from)
+        if (start < 0) break
+        const range = document.createRange()
+        range.setStart(node, start)
+        range.setEnd(node, start + needle.length)
+        matches.push({ node, range })
+        from = start + Math.max(1, needle.length)
+      }
+    }
+
+    if (matches.length === 0) {
+      promptMatchIndexRef.current = -1
+      clearPromptHighlights()
+      return
+    }
+
+    const previous = promptMatchIndexRef.current
+    const current = previous >= 0 && previous < matches.length ? previous : backwards ? 0 : -1
+    const index = backwards
+      ? current <= 0 ? matches.length - 1 : current - 1
+      : (current + 1) % matches.length
+    promptMatchIndexRef.current = index
+
+    const registry = (CSS as unknown as { highlights?: { set(name: string, highlight: unknown): void } }).highlights
+    const HighlightCtor = (window as typeof window & { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
+    if (registry && HighlightCtor) {
+      registry.set('prompt-search-match', new HighlightCtor(...matches.map((match) => match.range)))
+      registry.set('prompt-search-active', new HighlightCtor(matches[index].range))
+    } else {
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(matches[index].range)
+    }
+
+    matches[index].node.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [clearPromptHighlights])
   // Escape closes the injected-prompt viewer; Ctrl/Cmd+F opens its local find field.
   useEffect(() => {
     if (!promptOpen) return
@@ -1093,6 +1154,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         if (promptSearchOpen) {
           setPromptSearchOpen(false)
           setPromptSearch('')
+          promptMatchIndexRef.current = -1
+          clearPromptHighlights()
         } else {
           setPromptOpen(false)
         }
@@ -2120,20 +2183,24 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                     value={promptSearch}
                     placeholder="在注入的提示词中查找…"
                     aria-label="查找注入的提示词"
-                    onChange={(event) => setPromptSearch(event.target.value)}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setPromptSearch(value)
+                      promptMatchIndexRef.current = -1
+                      findInPrompt(value, false)
+                    }}
                     onKeyDown={(event) => {
                       if (event.key !== 'Enter' || !promptSearch.trim()) return
                       event.preventDefault()
-                      const find = (window as typeof window & { find?: (text: string, caseSensitive?: boolean, backwards?: boolean, wrapAround?: boolean, wholeWord?: boolean, searchInFrames?: boolean, showDialog?: boolean) => boolean }).find
-                      find?.(promptSearch.trim(), false, event.shiftKey, true, false, false, false)
+                      findInPrompt(promptSearch, event.shiftKey)
                     }}
                   />
                   <span className="prompt-modal__search-hint">Enter 下一个 · Shift+Enter 上一个</span>
-                  <button type="button" aria-label="关闭查找" onClick={() => { setPromptSearchOpen(false); setPromptSearch('') }}>×</button>
+                  <button type="button" aria-label="关闭查找" onClick={() => { setPromptSearchOpen(false); setPromptSearch(''); promptMatchIndexRef.current = -1; clearPromptHighlights() }}>×</button>
                 </div>
               ) : null}
 
-              <div className="prompt-modal__body">
+              <div ref={promptBodyRef} className="prompt-modal__body">
                 <MDEditor.Markdown source={interceptor?.prefix.trim() || '（暂无注入内容）'} wrapperElement={{ 'data-color-mode': 'light' }} />
               </div>
               <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div>

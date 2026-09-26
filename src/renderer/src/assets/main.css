@@ -8916,3 +8916,13 @@ body {
   height: 100%;
   overflow-y: auto;
 }
+/* Injected prompt search highlighting. */
+::highlight(prompt-search-match) {
+  background: #ffe58f;
+  color: inherit;
+}
+
+::highlight(prompt-search-active) {
+  background: #ffb84d;
+  color: inherit;
+}

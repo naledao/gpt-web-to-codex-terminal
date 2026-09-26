@@ -163,6 +163,15 @@ export const MAX_RUNTIME_MS = 30 * 60_000
 const READY_TIMEOUT_MS = 20_000
 
 /**
+ * How long an interrupt waits before reporting that the process never closed.
+ *
+ * Observation only — see `interrupt()`. The wait itself stays unbounded, because the
+ * alternatives (claim the interrupt succeeded, or tear the session down) are both decisions
+ * that need evidence this line is here to produce.
+ */
+const INTERRUPT_CONFIRM_MS = 3000
+
+/**
  * What the command runner needs from an execution backend.
  *
  * There are two — a local PowerShell session and a shell on the far side of an
@@ -331,7 +340,16 @@ export class ConversationShell implements ExecutionShell {
 
   async interrupt(): Promise<boolean> {
     const child = this.child
-    if (!child || !this.pending) return false
+    if (!child || !this.pending) {
+      /*
+       * Silent until now, and it should not be: this is the branch where 中断 does nothing at
+       * all, and from the outside it is indistinguishable from a button that is not wired up.
+       */
+      console.warn(
+        `[shell] interrupt: nothing to stop (session=${child !== null} command=${this.pending !== null})`
+      )
+      return false
+    }
 
     // Mark before killing so handleExit can distinguish a deliberate interrupt
     // from an unexpected session loss and settle run() with the right status.
@@ -348,8 +366,31 @@ export class ConversationShell implements ExecutionShell {
       child.once('error', finish)
     })
 
+    /*
+     * Watch a 'close' that never arrives — WITHOUT changing what happens if it does not.
+     *
+     * `await closed` below has no timeout, and its caller chain is
+     * renderer → IPC → CommandRunner → here, all awaiting. So if the process does not actually
+     * die, this promise never settles, the IPC reply is never sent, the 中断 button does nothing
+     * forever, and there is no error anywhere to explain it. A grandchild holding the pipes open
+     * is the documented hazard (`killChild` exists for exactly that), so this is a real
+     * possibility rather than a theoretical one.
+     *
+     * Deliberately observation-only for now: a timeout here would have to decide whether to
+     * report an interrupt that did not happen, or tear down the session, and both are guesses
+     * until the log says which half is broken.
+     */
+    const watch = setTimeout(() => {
+      console.warn(
+        `[shell] interrupt: process STILL not closed ${INTERRUPT_CONFIRM_MS}ms after the kill — ` +
+          `pid=${child.pid} exitCode=${String(child.exitCode)} killed=${String(child.killed)}`
+      )
+    }, INTERRUPT_CONFIRM_MS)
+
     this.killChild(child)
     await closed
+    clearTimeout(watch)
+    console.info(`[shell] interrupt: process closed, pid=${child.pid}`)
     return true
   }
 
@@ -578,15 +619,75 @@ export class ConversationShell implements ExecutionShell {
     this.options.onOutput?.(`${line}\n`)
   }
 
-  /** PowerShell does not kill its grandchildren; a stuck child holds the pipes open. */
+  /**
+   * Take down the session process AND its descendants.
+   *
+   * PowerShell does not kill its grandchildren, and a surviving grandchild holds the stdout
+   * pipe open — which is the whole reason `taskkill /T` is here rather than a plain kill.
+   *
+   * THE ORDER IS THE POINT, and it was wrong.
+   *
+   * This used to spawn `taskkill` and then, on the very next line, call `child.kill()`. That is
+   * a race `taskkill` always loses: `spawn` only CREATES the process, while `child.kill()` is a
+   * synchronous `TerminateProcess`. By the time taskkill runs, the parent PID is already gone —
+   * and `/T` derives the tree FROM the parent, so taskkill reports "no running instance of the
+   * task", kills nothing, and the grandchild survives.
+   *
+   * The consequences were all reported from the outside before they were understood here:
+   *
+   *   - 中断 appeared to do nothing for a long while, because the orphaned `npm` kept printing;
+   *   - `close` never fired, so `interrupt()`'s `await closed` blocked until that orphan exited
+   *     on its own, and `this.child` stayed non-null the entire time;
+   *   - so `running` stayed true and every further click took the same broken path, spawning
+   *     another doomed taskkill — which is why repeating the click changed nothing.
+   *
+   * Now the plain kill is only the FALLBACK, for the case where taskkill cannot do the job at
+   * all. `taskkill /T` kills the parent itself, so nothing is lost by not pre-killing it.
+   */
   private killChild(child: ChildProcess): void {
-    if (child.pid !== undefined) {
-      try {
-        spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true })
-      } catch {
-        /* fall through to the plain kill */
-      }
+    if (child.pid === undefined) {
+      this.forceKill(child)
+      return
     }
+
+    try {
+      const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+        windowsHide: true
+      })
+      /*
+       * `spawn` reports its failures asynchronously, so they have to be listened for: a missing
+       * `taskkill` arrives as an 'error' event long after this line returns, and with no listener
+       * that becomes an uncaught exception in the main process. Its exit code is what says
+       * whether the tree actually died — and it is the line that confirms the race above.
+       */
+      let note = ''
+      killer.stdout?.on('data', (chunk: Buffer) => {
+        note += chunk.toString('utf8')
+      })
+      killer.stderr?.on('data', (chunk: Buffer) => {
+        note += chunk.toString('utf8')
+      })
+      killer.on('error', (error: Error) => {
+        console.warn(`[shell] taskkill could not start: ${error.message} — falling back`)
+        this.forceKill(child)
+      })
+      killer.on('close', (code: number | null) => {
+        console.info(
+          `[shell] taskkill pid=${child.pid} /T /F exit=${String(code)} ` +
+            `${JSON.stringify(note.trim().slice(0, 200))}`
+        )
+        // Non-zero means the tree was NOT taken down — most often because the process was
+        // already gone, which is harmless, but also when taskkill could not see it at all.
+        if (code !== 0) this.forceKill(child)
+      })
+    } catch (error) {
+      console.warn(`[shell] taskkill threw: ${(error as Error).message}`)
+      this.forceKill(child)
+    }
+  }
+
+  /** The plain kill — no tree, so it is only worth doing when taskkill could not do better. */
+  private forceKill(child: ChildProcess): void {
     try {
       child.kill()
     } catch {

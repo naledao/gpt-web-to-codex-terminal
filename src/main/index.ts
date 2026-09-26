@@ -1,4 +1,4 @@
-﻿import { join, posix } from 'node:path'
+import { join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
@@ -593,7 +593,17 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.terminalInterrupt, async (event): Promise<TerminalState> => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return FALLBACK_TERMINAL_STATE
+    /*
+     * Logged on BOTH sides of the await, because the failure this instruments is a HANG.
+     *
+     * `shell.interrupt()` waits for the process to close and has no timeout, so if 'close'
+     * never arrives the whole promise chain stays unsettled: no IPC reply, no state update, and
+     * a 中断 button that does nothing at all — with nothing in any log to say why. An
+     * "interrupt: requested" with no matching "interrupt: completed" is precisely that case.
+     */
+    console.info('[interrupt] requested from the renderer')
     await runtime.runner.interruptTerminal()
+    console.info('[interrupt] completed')
     return runtime.runner.getTerminalState()
   })
   ipcMain.handle(IpcChannels.terminalReset, (event): TerminalState => {
