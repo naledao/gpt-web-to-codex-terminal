@@ -756,6 +756,7 @@ export interface InterceptorPageEvent {
     | 'task-finished'
     | 'send-failed'
     | 'send-recovery'
+    | 'end-task'
     | 'inject-failed'
     | 'command'
     | 'parse-failed'
@@ -805,9 +806,24 @@ export interface InterceptorPageEvent {
   sendButtonDisabled?: boolean | null
   sendButton?: InterceptorControl | null
   stopButtonFound?: boolean
+  /** Present on `end-task`: what the stop button was, when one was found at all. */
+  stopButton?: InterceptorControl | null
+  /** Present on `end-task`: which of `stopButtonSelectors` actually matched. */
+  matchedBy?: string[]
+  /**
+   * Present on `end-task`: the composer control the structural fallback clicked, when no stop
+   * selector matched. Null means it did not run — either a selector matched, or the guards
+   * (a reply pending, and an empty composer) were not satisfied.
+   */
+  primaryFallback?: InterceptorControl | null
   toolbar?: InterceptorControl[]
+  /** How many controls the toolbar held, when `toolbar` is a window onto both its ends. */
+  toolbarCount?: number
   /** Present on `send-recovery`: the action about to be attempted. */
   action?: string
+  /** Present on `end-task`: the page-side flags at the moment the task was stopped. */
+  awaitingReply?: boolean
+  taskActive?: boolean
 }
 
 /* ------------------------------------------------------------------ *

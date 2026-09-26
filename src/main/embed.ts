@@ -786,6 +786,7 @@ export class ChatGptEmbed {
         break
       case 'send-failed':
       case 'send-recovery':
+      case 'end-task':
       case 'inject-failed':
         /*
          * The DETAIL is the point, not the event name.
@@ -796,6 +797,10 @@ export class ChatGptEmbed {
          * actually contained. "The result is written into the box and never sent" is not
          * diagnosable from the word alone. The whole payload goes out now, and `DSH_APP_LOG=1`
          * mirrors it into `<userData>/logs/`.
+         *
+         * `end-task` rides along for the same reason: whether 结束任务 can stop the model turns
+         * entirely on `stopButtonSelectors`, and this is the only place that ever sees them at
+         * the one moment they exist.
          */
         console.warn(`[embed:${this.platform.id}] interceptor ${JSON.stringify(payload)}`)
         break

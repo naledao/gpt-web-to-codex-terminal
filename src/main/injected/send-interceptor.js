@@ -45,11 +45,15 @@
       'div[contenteditable="true"]'
     ],
     sendButtonSelectors: [
+      '[data-composer-footer-responsive] button[aria-label="发送"]',
+      'button[aria-label="发送"]',
       '[data-testid="send-button"]',
       'button[aria-label="Send message"]',
       'button[aria-label="发送消息"]'
     ],
     stopButtonSelectors: [
+      '[data-composer-footer-responsive] button[aria-label="停止"]',
+      'button[aria-label="停止"]',
       '[data-testid="stop-button"]',
       'button[aria-label="Stop generating"]',
       'button[aria-label="Stop streaming"]',
@@ -518,27 +522,77 @@
    * `composer toolbar buttons` section, deliberately: that section is what identified this
    * neighbourhood before, and a report from a real failure should be readable beside it.
    */
+  /**
+   * Everything that can act as a control.
+   *
+   * ONE definition, used for BOTH the walk up and the collection. They used to disagree — the
+   * walk stopped at the first ancestor holding two `<button>`s while the collection also took
+   * `[role="button"]` — and that is why the DeepSeek snapshot was useless: on that site the
+   * composer's controls are all `<div role="button">`, so the walk never stopped near the
+   * composer at all. It climbed to the first ancestor with real buttons and returned a slice of
+   * the page: twelve feature chips, no primary action, exactly where the answer should have been.
+   */
+  const CONTROL_SELECTOR = 'button, [role="button"]'
+
   const composerToolbarControls = () => {
     const element = getComposer()
     if (!element) return []
     let node = element
     let hops = 0
     while (node && node !== document.body && hops < 10) {
-      if (node.querySelectorAll('button').length >= 2) break
+      if (node.querySelectorAll(CONTROL_SELECTOR).length >= 2) break
       node = node.parentElement
       hops += 1
     }
     if (!node || node === document.body) return []
-    return [...node.querySelectorAll('button, [role="button"]')]
+    return [...node.querySelectorAll(CONTROL_SELECTOR)]
   }
 
   const describeControl = (el) => ({
     tag: el.tagName.toLowerCase(),
+    /*
+     * `role` matters, and its absence made the first DeepSeek report unreadable: that site's
+     * composer controls are all `<div role="button">`, so a snapshot that named only the tag
+     * made twelve working controls look like decoration.
+     */
+    role: el.getAttribute('role') || '',
     testid: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '',
     aria: el.getAttribute('aria-label') || '',
     disabled: controlDisabled(el),
-    cls: (typeof el.className === 'string' ? el.className : '').slice(0, 90)
+    /*
+     * Visible text. On DeepSeek this is the ONLY thing that tells one control from another:
+     * all twelve carry no aria label at all, and their class lists differ only in a modifier
+     * that was being cut off.
+     */
+    text: collapse(el.innerText || '').slice(0, 24),
+    /*
+     * 200, not 90. At 90 the twelve DeepSeek controls came back indistinguishable — which is
+     * precisely the information the snapshot exists to carry.
+     */
+    cls: (typeof el.className === 'string' ? el.className : '').slice(0, 200)
   })
+
+  /**
+   * The composer toolbar as a report payload: how many controls there are, and what they are.
+   *
+   * BOTH ENDS, not the first N. The control that matters is the composer's primary action — the
+   * send button, or the stop button while a reply is streaming — and it sits at the END of the
+   * row. The walk up to the first ancestor holding more than one button can overshoot on a site
+   * whose composer is nested inside a panel full of chips, which is what DeepSeek does: its
+   * snapshot came back as twelve feature buttons and no primary action at all, truncated exactly
+   * where the answer would have been. `toolbarCount` says when the two windows left a gap.
+   */
+  const toolbarSnapshot = () => {
+    const controls = composerToolbarControls()
+    const seen = new Set()
+    const picked = []
+    for (const el of [...controls.slice(0, 8), ...controls.slice(-16)]) {
+      if (seen.has(el)) continue
+      seen.add(el)
+      picked.push(el)
+    }
+    return { toolbarCount: controls.length, toolbar: picked.map(describeControl) }
+  }
 
   /**
    * Everything that could explain "the text went in and the send never happened".
@@ -565,7 +619,7 @@
       sendButtonDisabled: button ? controlDisabled(button) : null,
       sendButton: button ? describeControl(button) : null,
       stopButtonFound: findStopButton() !== null,
-      toolbar: composerToolbarControls().slice(0, 12).map(describeControl)
+      ...toolbarSnapshot()
     }
   }
 
@@ -742,7 +796,21 @@
        * primary slot in that state risks hitting Stop and cancelling the reply.
        */
       recoveryTried = RECOVERY_ACTIONS[recovery]
-      report({ event: 'send-recovery', action: recoveryTried, attempt })
+      /*
+       * The full diagnosis rides along here, not only on `send-failed`.
+       *
+       * A run where every send succeeds THROUGH the recovery never reports `send-failed`, so
+       * the one report carrying a toolbar snapshot never fired — and "which button is the send
+       * button?" stayed unanswered while the app appeared to work. That is exactly what the
+       * last session's log showed: six `send-recovery action=toolbar-last` lines and not one
+       * snapshot of the toolbar that made them necessary.
+       */
+      report({
+        event: 'send-recovery',
+        action: recoveryTried,
+        attempt,
+        ...diagnoseSendFailure(attempt, recoveryTried)
+      })
       runRecovery(recoveryTried, element)
     } else {
       // The send button only enables once the editor has committed the edit, and it can
@@ -882,10 +950,25 @@
     // Already injected for this draft: let the site send it normally.
     if (hasPrefix(element)) return false
 
+    const text = collapse(readComposer(element))
+
+    /*
+     * An EMPTY draft is not a message, and this is not a nicety — it is the guard against the
+     * app talking to the model on its own.
+     *
+     * Nothing above checks it: `hasPrefix` compares against a sentence that is not there, so an
+     * empty composer fails that test, and everything below then composes the SYSTEM PROMPT with
+     * an empty user tail and SENDS it — a whole message in the conversation containing nothing
+     * the user wrote. Observed twice in one session, from a control the app clicked itself.
+     *
+     * Returning false here is also the CORRECT behaviour for the user: pressing Enter in an
+     * empty composer should do nothing, which is what the site does once we stop stealing the
+     * event.
+     */
+    if (text === '') return false
+
     event.preventDefault()
     event.stopImmediatePropagation()
-
-    const text = collapse(readComposer(element))
 
     /*
      * ONE write, carrying everything.
@@ -1378,6 +1461,72 @@
     attributeFilter: pageMessageIdAttrs()
   })
 
+  /**
+   * Last resort for 结束任务: click the composer's primary action, when nothing else found a
+   * stop control.
+   *
+   * WHY THIS IS NOT A SELECTOR. DeepSeek gives its send and stop controls the SAME classes.
+   * Measured while a reply was streaming: the primary control read
+   *
+   *   <div role="button" class="ds-button ds-button--primary ds-button--filled ds-button--circle
+   *                              ds-button--m ds-button--icon-relative-m _52c986b">
+   *
+   * with no `ds-button--disabled` — byte for byte what DeepSeek's SEND selector matches once the
+   * composer holds text. The two states are told apart by the icon inside, and no CSS selector
+   * can see an icon.
+   *
+   * So adding that selector to `stopButtonSelectors` is not the fix; it is the trap. It would
+   * match an idle page too, and `checkForCommand` returns on its first line whenever
+   * `findStopButton()` is truthy — the automation would stop detecting commands entirely, and
+   * the symptom would look like the model refusing to cooperate.
+   *
+   * The composer being EMPTY is the discriminator, and only code can apply it: with nothing
+   * typed, the primary action cannot be a send, so if it is live it is the stop control. That is
+   * why this lives in `endTask` — an explicit "stop everything" from the user — and not in the
+   * selector list that gates command parsing.
+   *
+   * Two guards, both needed:
+   *
+   *   - `awaitingReplySince` — a stop control only exists while a reply is pending. Without this
+   *     the click would land on whatever the primary slot holds when idle, which on ChatGPT is
+   *     the VOICE button: ending a task would start dictation.
+   *   - empty composer — otherwise the click could submit a half-written draft.
+   */
+  const clickPrimaryWhileWaiting = () => {
+    if (state.awaitingReplySince === 0) return null
+    const element = getComposer()
+    if (!element || collapse(readComposer(element)) !== '') return null
+    const candidate = lastToolbarControl()
+    if (!candidate) return null
+
+    /*
+     * `programmatic` MUST be set around this click, and leaving it out was a real bug.
+     *
+     * The primary action also matches `sendButtonSelectors`, so the page-level CLICK interceptor
+     * claims the click and runs `intercept()` — which composes the system prompt, reports
+     * `injected`, and submits it as a message. Two consequences, both observed:
+     *
+     *   - a stray conversation turn containing the prompt and nothing the user wrote, and
+     *   - `intercept` calls `preventDefault()` + `stopImmediatePropagation()`, so the site's own
+     *     handler never sees the click and the reply is NOT stopped. The fallback could not have
+     *     worked, whatever the button was.
+     *
+     * `programmatic` is exactly the "this event is ours, do not compose" flag `sendRaw` uses.
+     * Reset on a timer rather than inline so it covers the whole dispatch, and so a throw can
+     * never leave it stuck on — a permanently-true flag would stop the prompt being injected
+     * for every later message.
+     */
+    state.programmatic = true
+    try {
+      pressButton(candidate)
+    } finally {
+      setTimeout(() => {
+        state.programmatic = false
+      }, 0)
+    }
+    return candidate
+  }
+
   /* ------------------------------------------------------------------ *
    * Public surface used by the main process
    * ------------------------------------------------------------------ */
@@ -1420,7 +1569,52 @@
         clearTimeout(settleTimer)
         settleTimer = null
       }
+
+      /*
+       * Report what the stop button looked like BEFORE clicking it.
+       *
+       * `findStopButton()` is the only thing in this app that can stop ChatGPT generating, and
+       * it is the one selector group nothing has ever observed: the DOM probe reported all four
+       * as MISS, but no probe tick ever ran while a reply was streaming, so those MISSes proved
+       * nothing. That left "does 结束任务 actually stop the model?" unanswerable from the
+       * outside — the caller just received `true` either way, which is a claim, not a fact.
+       *
+       * The toolbar inventory is what makes it answerable. It is the probe's own traversal, so
+       * when the composer's primary slot holds the stop button this names it — aria label, test
+       * id, class and all — and the selector can be written from the log rather than guessed. Read
+       * before the click, because clicking is precisely what removes it from the page.
+       */
       const stop = findStopButton()
+      /*
+       * When no stop SELECTOR matched, try the composer's primary action instead.
+       *
+       * DeepSeek cannot have a stop selector at all — see `clickPrimaryWhileWaiting` — so on
+       * that site this is the only thing that can stop a reply, and it is not a guess: it is
+       * gated on a reply actually being pending and the composer being empty.
+       */
+      const primaryFallback = stop === null ? clickPrimaryWhileWaiting() : null
+
+      report({
+        event: 'end-task',
+        stopButtonFound: stop !== null,
+        stopButton: stop ? describeControl(stop) : null,
+        // WHICH entry matched, so a working list can be pruned instead of left as a guess.
+        matchedBy: stop
+          ? PAGE.stopButtonSelectors.filter((selector) => {
+              try {
+                return stop.matches(selector)
+              } catch (_) {
+                return false
+              }
+            })
+          : [],
+        // What the structural fallback clicked, or null when it did not run.
+        primaryFallback: primaryFallback ? describeControl(primaryFallback) : null,
+        ...toolbarSnapshot(),
+        awaitingReply: state.awaitingReplySince !== 0,
+        taskActive: state.taskActive
+      })
+
       if (stop && typeof stop.click === 'function') stop.click()
       state.awaitingReplySince = 0
       state.taskActive = false

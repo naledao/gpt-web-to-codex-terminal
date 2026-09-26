@@ -266,38 +266,66 @@ export const CHATGPT_PAGE: PageAdapter = {
     'div[contenteditable="true"]'
   ],
   /*
-   * LEFT EXACTLY AS THEY WERE — and now known to be ALIVE.
+   * MEASURED, finally, and the answer was not any of the three that stood here.
    *
-   * The probe reported MISS for all three, on every tick of both runs, which looks exactly
-   * like a dead group and is not one: ChatGPT renders no send button until the composer holds
-   * text, so there was never a send button on screen for them to match. (The probe prints that
-   * qualifier itself now, under any all-MISS button group.)
+   * A live `send-recovery` report — which now carries a toolbar snapshot precisely because
+   * this question had gone unanswered twice — shows the composer's primary slot as:
    *
-   * The evidence that they work is BEHAVIOURAL, not a selector count: clicking the send button
-   * and pressing Enter BOTH still prepend the system prompt (user-tested, both routes). The
-   * prompt can only be prepended by `intercept()`, and from a click the only route into it is
-   * the page-level click interceptor — which matches on this list. So at least one entry here
-   * still matches the real button.
+   *   <button aria-label="发送" class="cursor-interaction size-token-button-composer …">
    *
-   * That also re-diagnoses the send path's original fault. It was NOT these selectors: a send
-   * attempted while ChatGPT is still finishing the previous turn never clears the composer,
-   * and the confirmation used to be a single 150ms sample. So a send that worked got reported
-   * as failed, while one the page genuinely refused was retried blind until the budget ran out.
+   * with `"testid":""` and `disabled:false`, while `composerLeft` confirms our text was
+   * sitting in the box. So the button was present and enabled the whole time: this was
+   * purely a wrong selector, not the render-latency theory that was the other candidate.
+   *
+   * Two consequences worth stating, because both were live bugs:
+   *
+   *   - Every programmatic send in two sessions went through the structural recovery instead
+   *     of a click, because this list never matched. That also means the page-level CLICK
+   *     interceptor never matched, so a message sent by clicking the button went out WITHOUT
+   *     the system prompt. It looked fine only because the prompt from the first message is
+   *     already in the conversation — which is why "but clicking still works" was not the
+   *     proof it appeared to be.
+   *   - `[data-testid="send-button"]` is dead: not one of the composer's buttons carries a
+   *     test id. It stays last as a fallback for an older render.
+   *
+   * The label follows the STOP button's shape (`停止`, not `停止生成`) — the same shortening
+   * that cost `结束任务` the ability to stop anything at all.
+   *
+   * Scoped entry first, for the same reason as the stop button: `queryFirst` searches the
+   * whole document, and `data-composer-footer-responsive` is the footer the probe walked up to.
    */
   sendButtonSelectors: [
+    '[data-composer-footer-responsive] button[aria-label="发送"]',
+    'button[aria-label="发送"]',
     '[data-testid="send-button"]',
     'button[aria-label="Send message"]',
     'button[aria-label="发送消息"]'
   ],
   /*
-   * Same status: unobserved, not disproved. Both runs ticked while nothing was generating,
-   * so no stop button was on screen either.
+   * MEASURED, from a live `end-task` report taken while a reply was streaming:
    *
-   * Left in place because this one degrades safely in both directions — a stop button that
-   * is never found only means "trust the settle timer", which is the documented behaviour
-   * for a site that has none (DeepSeek ships an empty list for exactly that reason).
+   *   <button aria-label="停止"
+   *           class="cursor-interaction size-token-button-composer flex items-center
+   *                  justify-center rounded-ful…">
+   *
+   * Not one of the four below matched it — the Chinese label is `停止`, not `停止生成`, and
+   * the button carries no test id. The consequence was not cosmetic: `结束任务` could not stop
+   * ChatGPT generating at all, because clicking this button is the ONLY thing in the app that
+   * can. It was reporting `true` while doing nothing.
+   *
+   * It is not only end-task that depends on this. `findStopButton()` also gates "do not parse a
+   * reply while it is still streaming", decides when a reply has settled, and keeps the send
+   * recovery from clicking what would be the Stop button. All four were degraded.
+   *
+   * The scoped entry comes first on purpose. The unscoped one is what was actually measured,
+   * but `queryFirst` searches the WHOLE document, and a false positive here is uniquely bad: a
+   * stop button that is "always found" makes `checkForCommand` bail on its first line forever,
+   * which is silent death for the automation. `data-composer-footer-responsive` is the footer
+   * the probe walked up to, so scoping to it should hit; the unscoped entry is the fallback.
    */
   stopButtonSelectors: [
+    '[data-composer-footer-responsive] button[aria-label="停止"]',
+    'button[aria-label="停止"]',
     '[data-testid="stop-button"]',
     'button[aria-label="Stop generating"]',
     'button[aria-label="Stop streaming"]',
@@ -388,9 +416,27 @@ export const DEEPSEEK_PAGE: PageAdapter = {
     'button[type="submit"]'
   ],
   /*
-   * No stop button was found in either run: both snapshots reported null, and a
-   * label-based filter never matched. Left empty rather than filled with a guess — the
-   * settle timer covers reply-completion without it.
+   * EMPTY, and it has to STAY empty — a measured conclusion, not an omission.
+   *
+   * A live `end-task` snapshot taken while a reply was streaming shows the composer holding two
+   * controls, the second of them:
+   *
+   *   <div role="button" class="ds-button ds-button--primary ds-button--filled ds-button--circle
+   *                              ds-button--m ds-button--icon-relative-m _52c986b">
+   *
+   * which is byte for byte what `sendButtonSelectors[0]` matches once the composer holds text,
+   * with no `ds-button--disabled` to separate the two states. Send and stop differ only in the
+   * icon INSIDE the button, and no CSS selector can see an icon.
+   *
+   * Putting that selector here anyway is the tempting move and the wrong one: it would also match
+   * an IDLE page, and `checkForCommand` returns on its first line whenever `findStopButton()` is
+   * truthy. DeepSeek would stop detecting commands entirely — silently, looking exactly like the
+   * model having stopped cooperating.
+   *
+   * So 结束任务 stops DeepSeek STRUCTURALLY instead: `clickPrimaryWhileWaiting` in
+   * send-interceptor.js clicks the composer's primary action, gated on a reply being pending and
+   * the composer being empty. The empty composer is the discriminator CSS cannot express — with
+   * nothing typed, a live primary action cannot be a send.
    */
   stopButtonSelectors: [],
   // Turns of either role; the role is decided by the reply selector, not by a class.
