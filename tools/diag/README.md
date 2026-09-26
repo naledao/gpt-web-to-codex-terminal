@@ -159,6 +159,119 @@ node --experimental-sqlite tools\diag\clear-embed-cookies.mjs
 > session cookie is gone" nor "auth cookies are present" tells you anything on its own —
 > the import path therefore verifies by probing the page, not by reading the jar.
 
+## chatgpt-dom-probe.js
+
+**The run that answers: did chatgpt.com's markup change out from under the interceptor?**
+
+The interceptor is built on facts read off the live page — the composer is a
+contenteditable div, an assistant turn is found through its message wrapper, and the
+composer clearing is the only trustworthy "the send really happened" signal. **A selector
+that stops matching fails silently**: no error, no log, the automation just never fires
+again. So "the page changed" has to be measured, not guessed.
+
+The **first generation** of that list — `#prompt-textarea`, `data-testid="send-button"`,
+`data-message-author-role`, `data-message-id` — went to zero matches in the 2026-09 markup
+change and took the automation down with it. `src/shared/platforms.ts` records what
+replaced each one. Re-run this probe after any unexplained stop.
+
+The probe does two jobs, in that order:
+
+1. **Test every selector the app currently ships** and print `HIT` / `MISS` for each.
+2. If something missed, dump enough to write the replacement from **one** run: the
+   `data-*` histogram (how a *renamed* attribute is found), the full button inventory,
+   the ancestor chain above a turn, and the raw markup of one turn.
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\chatgpt-dom-probe.js
+```
+
+A window opens on chatgpt.com, in the app's real `persist:chatgpt` partition.
+
+1. **Open a conversation that already has a few turns** — an empty page proves nothing
+   about the turn selectors.
+2. **Type a few characters into the composer, then stop. Do not send.**
+3. Wait ~15 seconds so a tick lands with the text still sitting in the box.
+4. Press Enter to send it, and **leave the reply streaming** for ~15 seconds so a tick
+   catches the stop button.
+5. Let the reply finish, wait ~15 seconds more, then close the window. The verdict is
+   written at that moment.
+
+Steps **2-4 are not optional**. The two button groups only exist in those states, and a run
+that skips them produces `MISS`es that mean nothing — see below.
+
+The probe **never types, clicks or submits** — every observation is a read of the DOM.
+The user drives.
+
+Log: `%TEMP%\gpt-login-diag\chatgpt-dom-<timestamp>.log`
+Markup: the matching `chatgpt-dom-<timestamp>.markup.html` beside it.
+
+### Reading the log
+
+| Line | Meaning |
+| --- | --- |
+| `HIT` / `MISS` per selector | the headline. A `MISS` on the *only* selector in a group is the break |
+| `^ A MISS HERE PROVES NOTHING …` | a qualifier printed under a `*** BROKEN ***` verdict when the page never had a reason to render that group. **Read it before believing the verdict** |
+| `composer: OK` / `*** BROKEN ***` | per group summary, repeated on every tick |
+| `candidate attributes` | **what replaced `data-message-author-role` / `data-message-id`.** One line per attribute with a count and sample values — the role discriminator is the *suffix* of one of those values |
+| `data-* histogram` | every `data-` attribute on the page, counted — the renamed attribute is in here |
+| `composer chain (innermost -> out)` | the composer's ancestors with a `buttons=` count each, so the toolbar container is identifiable |
+| `composer toolbar buttons` | **the send/stop button lives here.** Scoped to the composer's subtree on purpose — see the note below |
+| `id-ish attribute counts=` | counts for the dead generation (`data-message-id`, `data-testid`, `data-turn-id`, `data-message-author-role`) **and** the live one (`data-chatgpt-selection-message-id`, the `data-content-search-unit-key` role suffixes). The app dedupes executions by message id, so a `0` on the live id attribute is fatal to idempotency |
+| `turn ancestors (innermost -> body)` | walking UP from the last turn. The per-turn wrapper and the thread list are named by the level where `turnsInside` stops growing |
+| `buttons (N)` | flat inventory, capped at 45 for readability |
+| `activeIsComposer=` / `composerText=` | whether the user had started typing when the tick landed — the send-confirmation depends on the box clearing, **and an empty box means the send button does not exist** |
+| `urlLooksLikeConversation=` | whether the URL still matches `/c/<uuid>`, which is also how conversations are persisted |
+| `sidebar links=` | `a[href^="/c/"]`, for the sidebar sync feature |
+| `=== VERDICT ===` | the summary. It separates `BROKEN` groups from `NEVER TESTED` ones — a group whose absence the page state explains is not reported as broken any more |
+
+### Why the buttons are reported twice
+
+The flat `buttons (N)` list is **capped at 45 of 129**, and the sidebar rows fill that
+window — so the one button that matters, the send button in the composer toolbar, never
+appeared. The first run of this probe came back without it.
+
+`composer toolbar buttons` exists so that cannot happen again: it walks up from the
+composer to the first ancestor holding more than one button and lists **only what is
+inside it**. Small, precise, and unaffected by how many sidebar rows exist.
+
+### A MISS is only evidence when the element could have been on screen
+
+Two runs of this probe reported `sendButton: *** BROKEN ***` and `stopButton: *** BROKEN ***`
+and both verdicts were worthless: every tick had caught the composer **empty**
+(`composerText= "\n"`), and ChatGPT does not render a send button until there is something
+to send. The fourth and last toolbar slot held `开始语音` — the *voice* button — instead. The
+stop button likewise exists only while a reply is generating, and nothing was generating.
+
+A verdict that reads as "the app is broken" sent a whole round after three selectors that
+had never been given a chance to match. So the probe now:
+
+- prints a qualifier under any all-`MISS` group whose absence the page state explains,
+  naming the state the user has to produce;
+- keeps those groups out of `BROKEN` in the verdict and lists them as `NEVER TESTED`.
+
+This is a general trap, not a send-button quirk: **before treating a `MISS` as a
+regression, check that the tick happened in a state where the element exists.** An empty
+composer, an idle page, and a page with no conversation open are all states in which
+several of these selectors are *supposed* to match nothing.
+
+### Rules
+
+- **Never guess a replacement selector.** A wrong guess fails silently and looks exactly
+  like the bug you were fixing. The answer is in the histogram and the ancestor chains.
+- **The shipped-selector list is duplicated inside the probe on purpose**, so it can say
+  *which* one broke. **Change it whenever `src/shared/platforms.ts` changes**, or the
+  probe starts reporting on selectors nobody uses any more.
+- The page script is one big template literal: **one backtick inside it ends the string
+  and breaks the whole file** (`SyntaxError: Unexpected identifier`). Spelling a word
+  out in prose is cheaper than debugging that twice.
+- **`node --check` does not check the page script**, because the page script is a *string*
+  inside the file. To verify an edit to it, evaluate the template literal and parse the
+  result — slicing the raw source between the backticks leaves the escapes unprocessed and
+  produces a false `Invalid regular expression flags`, which sends you after a bug that is
+  not there.
+- Text is replaced with `«text»` in the dumped markup and long attribute values are
+  truncated — the goal is the shape, not the user's conversation.
+
 ## deepseek-probe.js
 
 Records what the embed needs to know about `chat.deepseek.com` before an adapter can be

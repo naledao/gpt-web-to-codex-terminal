@@ -65,7 +65,8 @@ export interface PageAdapter {
    * mistake as reading Markdown-rendered text: the app would be parsing words the model
    * never addressed to it.
    *
-   * First match wins; empty means the turn's own text is the answer (ChatGPT).
+   * First match wins; empty means the turn's own text is the answer, which is the right
+   * behaviour on a site that marks nothing at all. Neither platform ships empty today.
    */
   assistantReplySelectors: string[]
   /** One element per turn of either role — used to locate the scroll container. */
@@ -199,30 +200,126 @@ const SIDEBAR_SCRIPT_BY_DEFAULT = (linkSelector: string, pathPrefix: string): st
 })()`
 
 /**
- * The injected-page descriptor for ChatGPT.
+ * The injected-page descriptor for ChatGPT — SECOND GENERATION of the markup.
  *
- * Every value here was read off the live page. They are unchanged from the literals they
- * replace — this refactor must not alter ChatGPT behaviour.
+ * Measured 2026-09-26 with `tools/diag/chatgpt-dom-probe.js` (two runs). Everything below
+ * was read off the live DOM; nothing here is a guess, and the one thing that could NOT be
+ * measured is called out as such in its own comment.
+ *
+ * WHAT CHANGED. The `data-*-message*` family the app was written against is gone:
+ *
+ *   `#prompt-textarea`            MISS count=0  → the composer is now a bare `div.ProseMirror`
+ *   `[data-message-author-role]`  MISS count=0  → the role is the SUFFIX of a unit key
+ *   `data-message-id`             MISS count=0  → ids moved to a message wrapper
+ *   `data-testid`                 count=1, page-wide (a header context menu)
+ *
+ * The first two going to zero is what broke the automation, and it broke it SILENTLY —
+ * exactly the failure the file header warns about. The composer survived on the loose
+ * fallback, but `queryAllAssistant()` returned an empty list, so `checkForCommand` exited
+ * on its first line and no reply was ever parsed again.
+ *
+ * THE NEW SHAPE, innermost first, for a single assistant turn:
+ *
+ *   span.inline-markdown
+ *   └ div.MarkdownRoot-*         [data-markdown-text-style="assistant-message"]
+ *     └ div.group.flex.min-w-0…  [data-chatgpt-selection-message-id="0e8f9694-…"]
+ *       └ div                    [data-content-search-unit-key="fallback-turn-0:2:assistant"]
+ *                                [data-chatgpt-search-unit-key] [data-chatgpt-search-message-ids]
+ *         └ div.block-*
+ *           └ div.flex.flex-col… [data-content-search-turn-key="fallback-turn-0"]
+ *             └ div              [data-turn-key="7d69faae-…"]  ← the USER message id of the turn
+ *
+ * TWO SHAPES COULD SERVE as "one assistant turn", and picking both would be a bug rather
+ * than belt-and-braces:
+ *
+ *   - `[data-content-search-unit-key$=":assistant"]` is the only element whose ROLE is
+ *     readable from its own attributes — but it carries no usable id. Its
+ *     `data-chatgpt-search-message-ids` is a space-separated list with a repeated entry
+ *     (`"0e8f9694-… 0e8f9694-…"`), which is not an identity.
+ *   - `[data-chatgpt-selection-message-id]` carries the real per-message id, which is the
+ *     idempotency key the whole once-per-command guarantee rests on.
+ *
+ * They nest, so they are two DIFFERENT elements for the SAME turn. `queryAll` de-duplicates
+ * by element, not by turn, so listing both would hand one turn two nodes — and since only
+ * the id-bearing one yields a real key, the other would fall through to the content hash.
+ * One turn, two keys, one command executed twice.
+ *
+ * So the turn is the ID-BEARING element, and the role test comes from
+ * `assistantReplySelectors` instead. That is the same split DeepSeek already uses, and it
+ * stays correct whether or not the id attribute also appears on user messages: if it does,
+ * the reply marker rejects them; if it does not, they were never in the list.
  */
 export const CHATGPT_PAGE: PageAdapter = {
   composerKind: 'contenteditable',
-  composerSelectors: ['#prompt-textarea', 'div[contenteditable="true"]'],
+  /*
+   * The live selector FIRST, because `queryFirst` returns the first match in list order and
+   * the historical one is now dead weight. `[data-composer-markdown]` is the attribute the
+   * probe found on the single composer (count=1); `[role="textbox"]` is the structural
+   * restatement of the same element without depending on a ChatGPT-specific name;
+   * `#prompt-textarea` and the loose `div[contenteditable="true"]` stay last so an older or
+   * not-yet-migrated render still resolves.
+   */
+  composerSelectors: [
+    'div[contenteditable="true"][data-composer-markdown]',
+    'div[contenteditable="true"][role="textbox"]',
+    '#prompt-textarea',
+    'div[contenteditable="true"]'
+  ],
+  /*
+   * NOT re-measured — deliberately left exactly as they were.
+   *
+   * Every tick of both runs caught the composer EMPTY (`composerText= "\n"`), and ChatGPT
+   * does not render a send button until there is something to send: the fourth and last
+   * toolbar slot held `开始语音` instead. All three selectors below therefore reported MISS
+   * against a page where no send button existed at all, which is not evidence that they are
+   * wrong. Leaving text in the composer is what would settle it — see the probe's run notes.
+   *
+   * The failure mode if they ARE wrong is severe rather than cosmetic: the page-level click
+   * interceptor matches on this same list, so a click on send would stop reaching
+   * `intercept()` and the system prompt would silently not be prepended. That is why
+   * `submitWithRetry` now falls back to Enter instead of looping until it gives up.
+   */
   sendButtonSelectors: [
     '[data-testid="send-button"]',
     'button[aria-label="Send message"]',
     'button[aria-label="发送消息"]'
   ],
+  /*
+   * Same status: unobserved, not disproved. Both runs ticked while nothing was generating,
+   * so no stop button was on screen either.
+   *
+   * Left in place because this one degrades safely in both directions — a stop button that
+   * is never found only means "trust the settle timer", which is the documented behaviour
+   * for a site that has none (DeepSeek ships an empty list for exactly that reason).
+   */
   stopButtonSelectors: [
     '[data-testid="stop-button"]',
     'button[aria-label="Stop generating"]',
     'button[aria-label="Stop streaming"]',
     'button[aria-label="停止生成"]'
   ],
-  assistantSelectors: ['[data-message-author-role="assistant"]'],
-  // ChatGPT's turn text IS the answer; nothing to narrow.
-  assistantReplySelectors: [],
-  messageSelectors: ['[data-message-author-role]'],
-  messageIdAttr: 'data-message-id'
+  /*
+   * The id-bearing message wrapper. Only ONE entry: the previous
+   * `[data-message-author-role="assistant"]` is measured dead, and keeping it here would
+   * re-introduce the two-nodes-per-turn hazard described above the moment ChatGPT restores
+   * the attribute on an ancestor element. Add it back only with a probe run that shows both
+   * attributes on the SAME element.
+   */
+  assistantSelectors: ['[data-chatgpt-selection-message-id]'],
+  /*
+   * NEW, and the reason the role can move out of the turn selector: the answer lives in a
+   * marked markdown root, so `readReplyText` returns the reply and nothing else, and
+   * `isAssistantTurn` gets a structural role test that does not depend on which element the
+   * id happens to sit on.
+   */
+  assistantReplySelectors: ['[data-markdown-text-style="assistant-message"]'],
+  /*
+   * BOTH roles, for locating the scroll container only (`findScroller` takes the last match
+   * and walks up). Overlap between these two is harmless here in a way it is not for
+   * `assistantSelectors`: nothing keys identity off this list.
+   */
+  messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
+  messageIdAttr: 'data-chatgpt-selection-message-id'
 }
 
 export const CHATGPT_PLATFORM: ChatPlatform = {
