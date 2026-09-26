@@ -1126,9 +1126,8 @@
   }
 
   /**
-   * The system prompt used to advertise the malformed example
-   * `{"command":"","description",""}`. It is fixed now, but models sometimes
-   * copy old habits, so repair the obvious variants before giving up.
+   * The system prompt advertises a valid JSON schema, but models sometimes copy old
+   * habits or add a trailing comma, so repair the obvious variants before giving up.
    */
   const repairJson = (text) =>
     text

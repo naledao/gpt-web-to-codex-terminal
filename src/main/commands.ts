@@ -73,8 +73,8 @@ const MARKDOWN_MANGLED_RE = /\$\.[A-Za-z_[]/
  * `The term '...' is not recognized as the name of a cmdlet…`. The result was then sent
  * back to the model, which burned a round trip on a command nobody ever meant to issue.
  *
- * The prompt hands the model that exact `{"command":"","description":""}` example, so
- * "the model echoed the shape" is a failure mode to expect, not a freak event.
+ * The prompt hands the model a schema with `...` placeholders, so "the model echoed
+ * the shape" is a failure mode to expect, not a freak event.
  *
  * The test is deliberately narrow — "the command is ONLY a placeholder" or "it contains
  * no letters or digits at all" — because a false positive costs a legitimate command.

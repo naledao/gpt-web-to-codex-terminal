@@ -484,22 +484,26 @@ export const FALLBACK_ENVIRONMENT: EnvironmentInfo = {
  * Inserted verbatim into the composer, so the user sees it in the input box.
  */
 const OUTPUT_FORMAT_SECTION = [
-  '【输出格式】',
-  '任务还没完成时，把 JSON 放进一个 ```json 代码块里输出，代码块之外不要有任何文字：',
+  '【工作协议】',
+  '你处在“目标 → 执行一条命令 → 读取真实结果 → 决定下一步”的循环中。',
+  '每一轮只推进一个可验证的步骤；执行后等待用户回传结果，再继续。不要猜测尚未返回的结果，也不要重复已经成功的命令。',
+  '',
+  '【需要执行时】',
+  '只输出一个 ```json 代码块，代码块之外不要输出任何文字：',
   '```json',
-  '{"command":"","description":"","timeout_seconds":0}',
+  '{"command":"...","description":"...","timeout_seconds":120}',
   '```',
-  '- command：要执行的命令。',
-  '- description：这条命令在做什么，用中文一句话说明。',
-  '- timeout_seconds：只要 command 非空就**必须填写**，由你根据这条命令的实际工作量估算合理的整数秒数，不要所有命令机械使用同一个值。',
-  '  简单读取/检查通常几十秒；构建、测试、网络操作、大范围搜索应合理放宽。允许 1-1800 秒；command 为空表示任务完成时填 0。',
-  '  这是本条命令的绝对运行上限：必须给出有限值，禁止无限等待，并应留出合理余量避免正常任务被过早终止。',
-  '**必须用代码块包裹**：ChatGPT 的界面会把回复按 Markdown 渲染，而命令行里大量使用',
-  '下划线（$_、$env:、$()）和星号（*.txt、*）—— 不放进代码块的话，这些字符会被当成',
-  'Markdown 的斜体/加粗标记而**从命令里消失**，我就只能执行一条被改坏的命令。',
-  '用户会把执行结果（输出、退出码、当前目录）发回给你，你据此决定下一步。',
-  '任务已经完成时，**不要再输出 JSON**，第一行固定输出【任务完成】，然后像平常聊天一样用中文回复用户：',
-  '说明你做了什么、结果如何、以及需要用户注意的地方。这个标记用于让应用可靠触发系统通知。'
+  '- 先在内部完成判断；需要执行时，最终可见答复只保留这个代码块，不输出分析过程、搜索过程或额外 Markdown。',
+  '- command：一条可直接粘贴到当前 shell 的命令；需要多个有依赖的动作时，可在这一条命令内使用当前 shell 支持的连接符。',
+  '- description：用中文一句话说明这一步的目的和预期；不要只复制 command。',
+  '- timeout_seconds：command 非空时必须是 1–1800 的有限整数，按实际工作量估算；读取检查通常较短，构建、测试、网络操作和大范围搜索要留出余量。',
+  '- JSON 必须合法：使用双引号并正确转义反斜杠、换行和引号。命令中的 `_`、`$`、`*` 等字符必须原样留在代码块里。',
+  '',
+  '【读取结果】',
+  '把用户回传的命令、输出、目录和结果状态视为当前真实状态。退出码为 0 时继续尚未完成的目标；非 0、超时、中断或会话丢失时，先定位原因，再给出最小修正步骤。输出为空也要结合退出码判断，不要把“无输出”当成失败。',
+  '',
+  '【任务完成】',
+  '只有在目标已满足并完成必要验证后才结束。结束时不要输出 JSON，第一行必须是【任务完成】，随后用中文简要说明完成内容、验证结果和仍需用户注意的事项。'
 ].join('\n')
 
 /**
@@ -514,7 +518,7 @@ const OUTPUT_FORMAT_SECTION = [
  * underspecified task (guessing burns a round trip, usually more) and a tool that
  * is not installed (installing unasked changes the user's machine).
  *
- * It lives in its own labelled section rather than being tacked onto 【输出格式】
+ * It lives in its own labelled section rather than being tacked onto 【工作协议】
  * because the model has to act on it, and a rule buried at the end of a long
  * section about something else is a rule that gets skimmed past.
  *
@@ -524,13 +528,11 @@ const OUTPUT_FORMAT_SECTION = [
  * exists precisely to save the user that round trip.
  */
 const ASK_USER_SECTION = [
-  '【不确定时】',
-  '拿不准就**停下来问用户** —— 这不是失败，是正常的一步。典型情况：任务本身没说清',
-  '（目标模糊、有明显不同的几种做法、缺一个只有用户知道的信息），或者这一步需要的工具',
-  '这台机器上没有装（**不要擅自安装**，也不要为了绕开它去拼一个更差的替代方案）。',
-  '但**自己能查清楚的不要问**：先看文件、读代码、跑一条只读命令确认，再决定要不要问。',
-  '问的时候直接正常回复用户（**不输出 JSON**），说清你在纠结什么、有哪几种选择、你倾向哪个',
-  '以及为什么，然后等用户回答；得到答复后继续输出 JSON 推进任务。'
+  '【判断与确认】',
+  '1. 目标明确且动作可逆时直接推进；先用只读检查确认文件、路径、版本和当前状态，减少猜测。',
+  '2. 目标模糊、存在会改变结果的多种方案、缺少只有用户知道的信息，或所需工具未安装时，先停下来问用户；不要擅自安装工具，也不要用明显更差的替代方案。',
+  '3. 删除、覆盖、格式化、改权限、发布到外部服务、发送消息、付费或其他不可逆动作，在范围或对象不明确时先确认；常规代码修改、构建和测试在目标明确时可直接执行。',
+  '4. 需要询问时用普通中文回复（不输出 JSON），说明已知事实、具体不确定点、可选方案和你的建议，然后等待用户回答；得到答复后恢复 JSON 输出。'
 ].join('\n')
 
 /** The parts of the prompt only true of a Windows PowerShell session. */
