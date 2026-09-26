@@ -1,5 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Filemanager, WillowDark } from '@svar-ui/react-filemanager'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Filemanager, Willow } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
 import { Menu } from '@base-ui/react/menu'
@@ -220,8 +220,14 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [sshUploading, setSshUploading] = useState(false)
   const [sshFilesOpen, setSshFilesOpen] = useState(false)
   const [sshFileData, setSshFileData] = useState<FilemanagerEntity[]>([])
+  const [sshCurrentFiles, setSshCurrentFiles] = useState<SshFileEntry[]>([])
   const [sshFilesLoading, setSshFilesLoading] = useState(false)
+  const [sshDirectoryLoading, setSshDirectoryLoading] = useState(false)
   const [sshFilesError, setSshFilesError] = useState('')
+  const sshFilemanagerApiRef = useRef<FilemanagerApi | null>(null)
+  const [sshFilePath, setSshFilePath] = useState('/')
+  const [sshFileSearch, setSshFileSearch] = useState('')
+  const [sshFileMode, setSshFileMode] = useState<'table' | 'cards' | 'panels'>('table')
   const [sshDraft, setSshDraft] = useState<SshHostDraft>({
     id: null,
     name: '',
@@ -810,7 +816,34 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       setSshUploading(false)
     }
   }, [ssh?.status, sshUploading])
+  const refreshSshFiles = useCallback((): void => {
+    if (ssh?.status !== 'connected') return
+    setSshFilesError('')
+    setSshFilesLoading(true)
+    void window.api
+      .listSshFiles('/')
+      .then((entries) => {
+        setSshFileData(toFilemanagerEntities(entries))
+        setSshCurrentFiles(entries)
+        setSshFilePath('/')
+      })
+      .catch((error: unknown) => setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败'))
+      .finally(() => setSshFilesLoading(false))
+  }, [ssh?.status])
   const initSshFilemanager = useCallback((api: FilemanagerApi): void => {
+    sshFilemanagerApiRef.current = api
+    api.on('set-path', (event) => {
+      const id = String(event?.id ?? '/')
+      setSshFilePath(id)
+      setSshFileSearch('')
+      setSshFilesError('')
+      setSshDirectoryLoading(true)
+      void window.api
+        .listSshFiles(id)
+        .then((entries) => setSshCurrentFiles(entries))
+        .catch((error: unknown) => setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败'))
+        .finally(() => setSshDirectoryLoading(false))
+    })
     api.on('request-data', (event) => {
       const id = String(event?.id ?? '/')
       setSshFilesError('')
@@ -838,6 +871,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     let cancelled = false
     if (!sshFilesOpen || ssh?.status !== 'connected') {
       setSshFileData([])
+      setSshCurrentFiles([])
       setSshFilesError('')
       setSshFilesLoading(false)
       return () => {
@@ -849,7 +883,11 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     void window.api
       .listSshFiles('/')
       .then((entries) => {
-        if (!cancelled) setSshFileData(toFilemanagerEntities(entries))
+        if (!cancelled) {
+          setSshFileData(toFilemanagerEntities(entries))
+          setSshCurrentFiles(entries)
+          setSshFilePath('/')
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败')
@@ -1006,9 +1044,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
    * overlay alone would be hidden behind it. Hide the view while a dialog is up.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
+    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [settingsOpen, sshDialogOpen, notesOpen, globalModalOpen, promptOpen, gitDialogOpen])
+  }, [settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -1167,15 +1205,16 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
   // …and dismisses the transient panels that live in the terminal column.
   useEffect(() => {
-    if (!sshPickerOpen && !notesOpen) return
+    if (!sshPickerOpen && !notesOpen && !sshFilesOpen) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       setSshPickerOpen(false)
       setNotesOpen(false)
+      setSshFilesOpen(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [sshPickerOpen, notesOpen])
+  }, [sshPickerOpen, notesOpen, sshFilesOpen])
 
   const saveSettings = useCallback(async (): Promise<void> => {
     setSavingSettings(true)
@@ -1938,31 +1977,123 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             </div>
           </div>
         )}
-        {terminalCollapsed ? null : (
-          <>
-            {sshActive && sshFilesOpen ? (
+        {sshActive && sshFilesOpen ? (
+          <div
+            className="modal modal--ssh-files"
+            role="dialog"
+            aria-modal="true"
+            aria-label="远程文件"
+          >
+            <div className="ssh-files-modal">
+              <div className="ssh-files-modal__head">
+                <div className="ssh-files-modal__heading">
+                  <span className="ssh-files-modal__title">远程文件</span>
+                  <span className="ssh-files-modal__path" title={ssh?.modelCwd || '.'}>{ssh?.modelCwd || '.'}</span>
+                </div>
+                <span className="panel__spacer" />
+                <button type="button" className="ssh-files-modal__close" aria-label="关闭" onClick={() => setSshFilesOpen(false)}>×</button>
+              </div>
               <div className="ssh-files">
                 {sshFilesError ? <div className="ssh-files__error">{sshFilesError}</div> : null}
-                <div className="ssh-files__browser">
+                <div className={`ssh-files__browser${sshFileMode === 'table' ? ' ssh-files__browser--table' : ''}`}>
                   {sshFilesLoading ? (
                     <div className="ssh-files__loading">正在读取远程文件…</div>
                   ) : (
-                    <WillowDark>
-                      <Filemanager
-                        data={sshFileData}
-                        readonly
-                        mode="table"
-                        preview={false}
-                        icons="simple"
-                        init={initSshFilemanager}
-                      />
-                    </WillowDark>
+                    <>
+                      <div className="ssh-files__sidebar-head">
+                        <span className="ssh-files__sidebar-title">目录</span>
+                        <span className="ssh-files__sidebar-actions">
+                          <button type="button" className="ssh-files__sidebar-action" aria-label="新建" title="只读模式下不可新建">+</button>
+                          <button type="button" className="ssh-files__sidebar-action ssh-files__sidebar-action--refresh" aria-label="刷新" title="刷新目录" onClick={refreshSshFiles}>↻</button>
+                        </span>
+                      </div>
+                      <div className="ssh-files__topbar">
+                        <div className="ssh-files__crumbs" aria-label="当前目录">
+                          <svg className="ssh-files__crumb-home" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z" /></svg>
+                          <span className="ssh-files__crumb-sep">/</span>
+                          <span className="ssh-files__crumb-sep">/</span>
+                          <span className="ssh-files__crumb-current">{(sshFilePath === '/' ? ssh?.modelCwd || '/root' : sshFilePath).split('/').filter(Boolean).slice(-1)[0] || 'root'}</span>
+                        </div>
+                        <label className="ssh-files__search">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
+                          <input
+                            value={sshFileSearch}
+                            placeholder="搜索文件或文件夹..."
+                            onChange={(event) => {
+                              setSshFileSearch(event.currentTarget.value)
+                            }}
+                          />
+                        </label>
+                        <div className="ssh-files__view-modes" aria-label="视图模式">
+                          <button type="button" className={sshFileMode === 'table' ? 'is-active' : ''} aria-label="列表视图" aria-pressed={sshFileMode === 'table'} onClick={() => { setSshFileMode('table'); sshFilemanagerApiRef.current?.exec('set-mode', { mode: 'table' }) }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h3v3H4zM10 5h10M4 10.5h3v3H4zM10 12h10M4 16h3v3H4zM10 17.5h10" /></svg></button>
+                          <button type="button" className={sshFileMode === 'cards' ? 'is-active' : ''} aria-label="网格视图" aria-pressed={sshFileMode === 'cards'} onClick={() => { setSshFileMode('cards'); sshFilemanagerApiRef.current?.exec('set-mode', { mode: 'cards' }) }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg></button>
+                          <button type="button" className={sshFileMode === 'panels' ? 'is-active' : ''} aria-label="分栏视图" aria-pressed={sshFileMode === 'panels'} onClick={() => { setSshFileMode('panels'); sshFilemanagerApiRef.current?.exec('set-mode', { mode: 'panels' }) }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16 4h4v16h-4z" /></svg></button>
+                        </div>
+                      </div>                      {sshFileMode === 'table' ? (
+                        <div className="ssh-files__reference-table">
+                          <div className="ssh-files__table-head">
+                            <span className="ssh-files__table-check" aria-hidden="true" />
+                            <span className="ssh-files__table-name-head">名称 <span className="ssh-files__sort-mark"><i /><i /></span></span>
+                            <span>大小</span>
+                            <span>修改时间</span>
+                            <span>类型</span>
+                            <span />
+                          </div>
+                          {sshDirectoryLoading ? (
+                            <div className="ssh-files__directory-loading" role="status" aria-live="polite">
+                              <span className="ssh-files__directory-spinner" aria-hidden="true" />
+                              <span>正在加载...</span>
+                            </div>
+                          ) : null}                          <div className="ssh-files__table-body">
+                            {sshCurrentFiles
+                              .filter((file) => !sshFileSearch || file.name.toLowerCase().includes(sshFileSearch.toLowerCase()))
+                              .map((file) => {
+                                const size = file.size < 1024 ? `${file.size} B` : file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`
+                                const modified = new Date(file.modifiedAt)
+                                const pad = (value: number): string => String(value).padStart(2, '0')
+                                const modifiedText = `${modified.getFullYear()}-${pad(modified.getMonth() + 1)}-${pad(modified.getDate())} ${pad(modified.getHours())}:${pad(modified.getMinutes())}`
+                                return (
+                                  <div
+                                    className="ssh-files__table-row"
+                                    key={file.id}
+                                    onDoubleClick={() => {
+                                      if (file.type === 'folder') void sshFilemanagerApiRef.current?.exec('set-path', { id: file.id })
+                                      else void sshFilemanagerApiRef.current?.exec('open-file', { id: file.id })
+                                    }}
+                                  >
+                                    <span className="ssh-files__table-check" aria-hidden="true" />
+                                    <span className="ssh-files__table-file-name">
+                                      {file.type === 'folder' ? <svg viewBox="0 0 24 20" aria-hidden="true"><path d="M2.5 2.5A2.5 2.5 0 0 1 5 0h5l2 2h7A2.5 2.5 0 0 1 21.5 4.5v11A2.5 2.5 0 0 1 19 18H5a2.5 2.5 0 0 1-2.5-2.5z" /><path d="M2.5 5h19v10.5A2.5 2.5 0 0 1 19 18H5a2.5 2.5 0 0 1-2.5-2.5z" /></svg> : null}
+                                      <span>{file.name}</span>
+                                    </span>
+                                    <span>{size}</span>
+                                    <span>{modifiedText}</span>
+                                    <span>{file.type === 'folder' ? '文件夹' : '文件'}</span>
+                                    <button type="button" className="ssh-files__table-more" aria-label={`${file.name} 更多操作`}>•••</button>
+                                  </div>
+                                )
+                              })}
+                          </div>
+                        </div>
+                      ) : null}                      <Willow>
+                        <Filemanager
+                          data={sshFileData}
+                          readonly
+                          mode="table"
+                          preview={false}
+                          icons="simple"
+                          init={initSshFilemanager}
+                        />
+                      </Willow>
+                    </>
                   )}
                 </div>
               </div>
-            ) : (
-              <>
-            {/*
+            </div>
+          </div>
+        ) : null}
+        {terminalCollapsed ? null : (
+          <>            {/*
               The step the loop is on, on its own.
 
               The description was already being stored on every command and shown
@@ -2070,8 +2201,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                 onChange={(event) => setCommandDraft(event.target.value)}
               />
             </form>
-              </>
-            )}
           </>
         )}
 
@@ -2187,7 +2316,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                       const value = event.target.value
                       setPromptSearch(value)
                       promptMatchIndexRef.current = -1
-                      findInPrompt(value, false)
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== 'Enter' || !promptSearch.trim()) return
