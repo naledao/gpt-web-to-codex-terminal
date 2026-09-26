@@ -765,12 +765,31 @@ export class ChatGptEmbed {
         this.interceptor.taskFinishedAt = null
         break
       case 'task-finished':
+        /*
+         * Logged, because this is a STATE TRANSITION with teeth: it is what clears
+         * `awaitingReplySince` on the page and what decides whether the task is over. A reply
+         * judged final too early is the difference between the loop continuing and the loop
+         * stopping, and it used to leave no trace at all.
+         */
+        console.info(
+          `[embed:${this.platform.id}] task-finished completed=${payload.completed === true} ` +
+            `messageId=${payload.messageId ?? '?'}`
+        )
         if (payload.completed === true && this.interceptor.taskFinishedAt === null) {
           this.completeTask()
           this.handlers.onTaskCompleted()
         }
         break
       case 'command':
+        console.info(
+          `[embed:${this.platform.id}] command detected live=${payload.live === true} ` +
+            JSON.stringify({
+              messageId: payload.messageId,
+              command: payload.command,
+              description: payload.description,
+              timeoutSeconds: payload.timeoutSeconds
+            })
+        )
         if (payload.messageId && typeof payload.command === 'string') {
           this.handlers.onCommand({
             messageId: payload.messageId,
@@ -782,7 +801,16 @@ export class ChatGptEmbed {
         }
         break
       case 'parse-failed':
+        console.warn(`[embed:${this.platform.id}] parse-failed ${JSON.stringify(payload)}`)
         this.handlers.onParseFailed(payload.text ?? '')
+        break
+      /*
+       * The scan notes: one line per (turn, reason) saying why a settled reply produced no
+       * command. Without them, "the model answered with JSON and nothing happened" is
+       * undiagnosable — every path leading there returns silently.
+       */
+      case 'scan':
+        console.info(`[embed:${this.platform.id}] scan ${JSON.stringify(payload)}`)
         break
       case 'send-failed':
       case 'send-recovery':

@@ -2,6 +2,8 @@
 import { Filemanager, WillowDark } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
+import { Menu } from '@base-ui/react/menu'
+import GitDialog from './components/GitDialog'
 import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { SESSION_COOKIE_NAME } from '@shared/types'
@@ -204,6 +206,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [notesSaving, setNotesSaving] = useState(false)
   const [notesPreview, setNotesPreview] = useState(false)
   /** 注入提示词查看弹框。 */
+  /** The Git 管理 dialog opened from the toolbox. */
+  const [gitDialogOpen, setGitDialogOpen] = useState(false)
   const [promptOpen, setPromptOpen] = useState(false)
   const [promptSearchOpen, setPromptSearchOpen] = useState(false)
   const [promptSearch, setPromptSearch] = useState('')
@@ -244,6 +248,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   /** True when the machine in charge has a note; the marker on the 说明 button. */
   const notesSet = (notes?.text ?? '').trim() !== ''
   const slotRef = useRef<HTMLDivElement>(null)
+  /** The pane the toolbox menu mounts into, so it can never spill under the native web view. */
+  const toolboxPaneRef = useRef<HTMLElement>(null)
   const terminalOutputRef = useRef<HTMLDivElement>(null)
   /** scope:hostId of the note currently loaded into the editor. */
   const notesOwnerRef = useRef('')
@@ -998,9 +1004,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
    * overlay alone would be hidden behind it. Hide the view while a dialog is up.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !globalModalOpen && !promptOpen)
+    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [settingsOpen, sshDialogOpen, notesOpen, globalModalOpen, promptOpen])
+  }, [settingsOpen, sshDialogOpen, notesOpen, globalModalOpen, promptOpen, gitDialogOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -1564,7 +1570,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         )}
       </aside>
 
-      <section className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
+      <section ref={toolboxPaneRef} className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
         <div className="terminal-pane__head">
           <span className="panel__title">终端</span>
           <span
@@ -1646,6 +1652,33 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                 重置
               </button>
             </>
+          )}
+          {terminalCollapsed ? null : (
+            <Menu.Root onOpenChange={(open) => { if (open) setSshPickerOpen(false) }}>
+              <Menu.Trigger className="panel__sync" title="打开工具箱">
+                工具箱
+              </Menu.Trigger>
+              <Menu.Portal container={toolboxPaneRef}>
+                <Menu.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={8} collisionBoundary={toolboxPaneRef.current ?? undefined} className="toolbox-menu__positioner">
+                  <Menu.Popup className="toolbox-menu">
+                    <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setGitDialogOpen(true) }}>
+                      <span className="toolbox-menu__icon">
+                        <svg width="15" height="15" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+                          <rect x="18" y="18" width="84" height="84" rx="8" fill="#F05032" transform="rotate(45 60 60)" />
+                          <path d="M45 38 L76 69" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" />
+                          <path d="M59 52 L59 78" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" />
+                          <circle cx="45" cy="38" r="7" fill="#FFFFFF" />
+                          <circle cx="59" cy="52" r="7" fill="#FFFFFF" />
+                          <circle cx="59" cy="80" r="7" fill="#FFFFFF" />
+                          <circle cx="78" cy="71" r="7" fill="#FFFFFF" />
+                        </svg>
+                      </span>
+                      <span>Git 管理</span>
+                    </Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
           )}
           <button
             type="button"
@@ -2410,7 +2443,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
           </div>
         </div>
       ) : null}
+      <GitDialog open={gitDialogOpen} cwd={terminal?.cwd ?? ""} theme={settings?.theme ?? "light"} onClose={() => setGitDialogOpen(false)} />
     </div>
   )
 }
-

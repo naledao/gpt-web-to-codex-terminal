@@ -7459,3 +7459,1281 @@ body {
 .workspace[data-theme='dark'] .workspace__sessions {
   border-top-color: #2a3546 !important;
 }
+
+/* 工具箱下拉菜单（Base UI Menu）—— 默认跟随浅色主题 */
+.toolbox-menu__positioner {
+  z-index: 60;
+}
+
+.toolbox-menu {
+  min-width: 150px;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #dfe7f1;
+  border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(42, 65, 96, 0.14), 0 1px 3px rgba(42, 65, 96, 0.08);
+  outline: none;
+}
+
+.toolbox-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: #29405f;
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.toolbox-menu__item[data-highlighted] {
+  background: #f4f7fb;
+  color: #1d3557;
+}
+
+/* 深色主题下的工具箱菜单 */
+.workspace[data-theme='dark'] .toolbox-menu {
+  background: #141922;
+  border-color: #232b38;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+}
+
+.workspace[data-theme='dark'] .toolbox-menu__item {
+  color: #cbd6e6;
+}
+
+.workspace[data-theme='dark'] .toolbox-menu__item[data-highlighted] {
+  background: #1c2739;
+  color: #f1f5ff;
+}
+
+.toolbox-menu__icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+
+/* 弹窗里的 Git 图标：彩色品牌 Logo，不需要浅蓝衬底 */
+.confirm-dialog__icon--git {
+  background: transparent;
+  overflow: visible;
+}
+/* ---------------- Git 管理弹窗 ---------------- */
+
+.git-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(23, 32, 46, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.git-dialog__box {
+  width: min(1180px, calc(100vw - 64px));
+  height: min(880px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e4e9f1;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(20, 32, 52, 0.26);
+}
+
+/* ---------------- header ---------------- */
+
+.git-dialog__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.git-dialog__mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+}
+
+.git-dialog__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.git-dialog__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #16202f;
+}
+
+.git-dialog__path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 46vw;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8d99ab;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.git-dialog__path-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-dialog__copy {
+  flex: none;
+  display: inline-flex;
+  color: #b3bccb;
+}
+
+.git-dialog__path:hover {
+  color: #5072e8;
+}
+
+.git-dialog__path:hover .git-dialog__copy {
+  color: #5072e8;
+}
+
+.git-dialog__path--copied,
+.git-dialog__path--copied .git-dialog__copy {
+  color: #2f9e5f;
+}
+
+.git-dialog__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.git-dialog__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid #e2e7ef;
+  background: #f6f8fb;
+  color: #5a6b82;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.git-dialog__pill--branch {
+  border-color: #c9d6fb;
+  background: #eef2ff;
+  color: #4a5fe0;
+  font-weight: 700;
+}
+
+.git-dialog__pill--dirty {
+  border-color: #f5dfa4;
+  background: #fdf5e3;
+  color: #b5820c;
+  font-weight: 700;
+}
+
+.git-dialog__close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #f1f3f7;
+  color: #55617a;
+  cursor: pointer;
+}
+
+.git-dialog__close:hover {
+  background: #e6e9f0;
+  color: #2b3648;
+}
+
+.git-dialog__hint {
+  margin: 60px 0;
+  text-align: center;
+  color: #7b8798;
+  font-size: 13px;
+}
+
+/* ---------------- log ---------------- */
+
+.gitlog {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gitlog__columns,
+.gitlog__row {
+  display: grid;
+  grid-template-columns: 132px 132px minmax(0, 1fr) 230px 130px 56px;
+  align-items: center;
+}
+
+.gitlog__columns {
+  flex: none;
+  padding: 0 22px;
+  height: 54px;
+  border-bottom: 1px solid #eef1f6;
+  color: #8d99ab;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.gitlog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.gitlog__row {
+  min-height: 68px;
+  padding: 0 22px;
+  border-bottom: 1px solid #f1f4f8;
+  font-size: 14px;
+  color: #26313f;
+}
+
+.gitlog__row:hover {
+  background: #fafbfd;
+}
+
+.gitlog__row--index {
+  background: #f4f7fb;
+}
+
+.gitlog__row--index:hover {
+  background: #eef3fa;
+}
+
+.gitlog__labels {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 10px;
+}
+
+.gitlog__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid #e3e8ef;
+  background: #f5f7fa;
+  color: #55627a;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitlog__label--branch {
+  border-color: #c9d6fb;
+  background: #eef2ff;
+  color: #4a5fe0;
+  font-weight: 700;
+}
+
+/* Graph column: one absolutely-positioned lane line per live column. */
+.gitlog__graph {
+  position: relative;
+  align-self: stretch;
+  min-width: 40px;
+}
+
+.gitlog__lane {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #c9d5ea;
+}
+
+.gitlog__row--index .gitlog__lane {
+  background: transparent;
+}
+
+.gitlog__node {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border: 2.5px solid #4a6cf7;
+  border-radius: 50%;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.gitlog__node--index {
+  border: 0;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  background: #1f2b3d;
+}
+
+/* Dotted connector from the index label across to its node. */
+/* Dotted connector from the index label across to its node. */
+.gitlog__dashed {
+  position: absolute;
+  top: 50%;
+  left: -30px;
+  width: 39px;
+  border-top: 2px dotted #b9c4d8;
+}
+
+.gitlog__message {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding-right: 16px;
+}
+
+.gitlog__icon {
+  flex: none;
+  display: inline-flex;
+  color: #6b7b93;
+}
+
+.gitlog__subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1f2b3d;
+  font-weight: 600;
+}
+
+.gitlog__row--index .gitlog__subject {
+  color: #9aa5b6;
+  font-weight: 600;
+}
+
+.gitlog__chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.gitlog__chip--mod {
+  background: #fdf5e3;
+  color: #b5820c;
+}
+
+.gitlog__chip--add {
+  background: #e8f6ec;
+  color: #2f9e5f;
+}
+
+.gitlog__author {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.gitlog__avatar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.gitlog__author-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #3a4658;
+}
+
+.gitlog__time {
+  color: #7b8798;
+  white-space: nowrap;
+}
+
+.gitlog__menu {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.gitlog__more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #97a2b3;
+  font-size: 15px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.gitlog__more:hover {
+  background: #eef1f6;
+  color: #4a5b73;
+}
+
+/* ---------------- dark theme ---------------- */
+
+.git-dialog--dark .git-dialog__box {
+  border-color: #263041;
+  background: #0f141c;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.55);
+}
+
+.git-dialog--dark .git-dialog__head,
+.git-dialog--dark .gitlog__columns {
+  border-bottom-color: #1e2836;
+}
+
+.git-dialog--dark .git-dialog__title {
+  color: #e8eef8;
+}
+
+.git-dialog--dark .git-dialog__path {
+  color: #7d8ba0;
+}
+
+.git-dialog--dark .gitlog__columns {
+  color: #7d8ba0;
+}
+
+.git-dialog--dark .gitlog__row {
+  border-bottom-color: #1a2331;
+  color: #c6d2e2;
+}
+
+.git-dialog--dark .gitlog__row:hover {
+  background: #141c27;
+}
+
+.git-dialog--dark .gitlog__row--index {
+  background: #151e2b;
+}
+
+.git-dialog--dark .gitlog__subject {
+  color: #dbe5f2;
+}
+
+.git-dialog--dark .gitlog__label {
+  border-color: #263041;
+  background: #17202c;
+  color: #9fb0c6;
+}
+
+.git-dialog--dark .gitlog__label--branch {
+  border-color: #33427a;
+  background: #1b2540;
+  color: #8fa6ff;
+}
+
+.git-dialog--dark .gitlog__lane {
+  background: #2c3a52;
+}
+
+.git-dialog--dark .gitlog__node {
+  background: #0f141c;
+}
+
+.git-dialog--dark .gitlog__node--index {
+  background: #8fa6ff;
+}
+
+.git-dialog--dark .gitlog__icon {
+  color: #7d8ba0;
+}
+
+.git-dialog--dark .gitlog__author-name,
+.git-dialog--dark .gitlog__time {
+  color: #9fb0c6;
+}
+
+.git-dialog--dark .git-dialog__close {
+  background: #1a2331;
+  color: #9fb0c6;
+}
+
+.git-dialog--dark .git-dialog__close:hover {
+  background: #223044;
+  color: #dbe5f2;
+}
+/* Vertical dotted segment from the index node down to the branch tip. */
+.gitlog__dashed-down {
+  position: absolute;
+  top: 50%;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  border-left: 2px dotted #b9c4d8;
+}
+
+/* The index row keeps its own dark node even though its lane line is hidden. */
+.gitlog__row--index .gitlog__node--index {
+  z-index: 1;
+}
+/* ---------------- toolbox tabs ---------------- */
+
+.git-dialog__tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 4px;
+  border-radius: 12px;
+  background: #f1f3f7;
+}
+
+.git-dialog__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #5a6b82;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.git-dialog__tab:hover {
+  color: #29405f;
+}
+
+.git-dialog__tab--on {
+  background: #fff;
+  color: #4a6cf7;
+  box-shadow: 0 1px 3px rgba(42, 65, 96, 0.14);
+}
+
+/* The meta pills now sit next to the tabs, so they must not push them apart. */
+.git-dialog__meta {
+  margin-left: 10px;
+}
+
+/* ---------------- dark theme ---------------- */
+
+.git-dialog--dark .git-dialog__tabs {
+  background: #1a2331;
+}
+
+.git-dialog--dark .git-dialog__tab {
+  color: #9fb0c6;
+}
+
+.git-dialog--dark .git-dialog__tab:hover {
+  color: #dbe5f2;
+}
+
+.git-dialog--dark .git-dialog__tab--on {
+  background: #253247;
+  color: #8fa6ff;
+  box-shadow: none;
+}
+
+
+/* ---------------- changed files: list | diff ---------------- */
+
+.gitfiles {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 26%) minmax(0, 1fr);
+}
+
+.gitfiles__pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid #eef1f6;
+}
+
+.gitfiles__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 16px 18px 10px;
+}
+
+.gitfiles__title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #16202f;
+}
+
+.gitfiles__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4a5fe0;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.gitfiles__totals {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.gitfiles__plus {
+  color: #2f9e5f;
+  font-style: normal;
+}
+
+.gitfiles__minus {
+  color: #d14949;
+  font-style: normal;
+}
+
+.gitfiles__filters {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0 18px 10px;
+}
+
+.gitfiles__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #e2e7ef;
+  border-radius: 9px;
+  background: #fff;
+  color: #5a6b82;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gitfiles__chip:hover {
+  border-color: #c9d6fb;
+  color: #3f63df;
+}
+
+.gitfiles__chip--on {
+  border-color: #b8c8fb;
+  background: #eef2ff;
+  color: #3f63df;
+}
+
+.gitfiles__chip em {
+  font-style: normal;
+  opacity: 0.72;
+}
+
+.gitfiles__search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 18px 10px;
+  padding: 0 12px;
+  height: 38px;
+  border: 1px solid #e2e7ef;
+  border-radius: 10px;
+  color: #9aa5b6;
+}
+
+.gitfiles__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #26313f;
+  font-size: 13px;
+  outline: none;
+}
+
+.gitfiles__tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 10px 16px;
+}
+
+.gitfiles__none {
+  margin: 30px 0;
+  text-align: center;
+  color: #8d99ab;
+  font-size: 13px;
+}
+
+.gitfiles__folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5a6b82;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gitfiles__folder:hover {
+  background: #f4f7fb;
+}
+
+.gitfiles__caret {
+  flex: none;
+  display: inline-flex;
+  color: #9aa5b6;
+  transition: transform 0.12s ease;
+}
+
+.gitfiles__caret--open {
+  transform: rotate(90deg);
+}
+
+.gitfiles__folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitfiles__folder-count {
+  margin-left: auto;
+  font-style: normal;
+  color: #a4aebd;
+  font-size: 12px;
+}
+
+.gitfiles__file {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 36px;
+  padding: 0 8px 0 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gitfiles__file:hover {
+  background: #f4f7fb;
+}
+
+.gitfiles__file--on {
+  background: #eef2ff;
+}
+
+.gitfiles__ext {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.gitfiles__ext--ts {
+  background: #e6f0ff;
+  color: #2f6fd0;
+}
+
+.gitfiles__ext--tsx {
+  background: #e3f4f8;
+  color: #1f7f95;
+}
+
+.gitfiles__ext--json {
+  background: #fdf5e3;
+  color: #b5820c;
+}
+
+.gitfiles__ext--doc {
+  background: #eceff4;
+  color: #5a6b82;
+}
+
+.gitfiles__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #26313f;
+  font-size: 13px;
+}
+
+.gitfiles__badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.gitfiles__badge--mod {
+  background: #fdf5e3;
+  color: #b5820c;
+}
+
+.gitfiles__badge--add {
+  background: #e8f6ec;
+  color: #2f9e5f;
+}
+
+.gitfiles__badge--del {
+  background: #fdecec;
+  color: #d14949;
+}
+
+.gitfiles__badge--ren {
+  background: #eef2ff;
+  color: #4a5fe0;
+}
+
+.gitfiles__delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ---------------- diff viewer ---------------- */
+
+.gitdiff {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gitdiff__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.gitdiff__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #26313f;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.gitdiff__copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9aa5b6;
+  cursor: pointer;
+}
+
+.gitdiff__copy:hover {
+  background: #f1f3f7;
+  color: #4a5b73;
+}
+
+.gitdiff__totals {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 13.5px;
+  font-weight: 800;
+}
+
+.gitdiff__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #fbfcfe;
+}
+
+.gitdiff__empty {
+  margin: 60px 0;
+  text-align: center;
+  color: #8d99ab;
+  font-size: 13px;
+}
+
+.gitdiff__code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.gitdiff__hunk-head {
+  padding: 7px 16px;
+  background: #eef2f8;
+  color: #5a6b82;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.gitdiff__line {
+  display: flex;
+  white-space: pre;
+}
+
+.gitdiff__line--add {
+  background: #e9f7ed;
+}
+
+.gitdiff__line--del {
+  background: #fdecec;
+}
+
+.gitdiff__num {
+  flex: none;
+  width: 52px;
+  padding: 0 10px;
+  color: #a4aebd;
+  text-align: right;
+  user-select: none;
+}
+
+.gitdiff__sign {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  color: #8d99ab;
+  user-select: none;
+}
+
+.gitdiff__line--add .gitdiff__sign {
+  color: #2f9e5f;
+}
+
+.gitdiff__line--del .gitdiff__sign {
+  color: #d14949;
+}
+
+.gitdiff__text {
+  flex: 1;
+  min-width: 0;
+  padding-right: 16px;
+  color: #26313f;
+}
+/* The counts are <em> elements: give them their own centred line box so the
+   larger chip font does not push them above the label baseline. */
+.gitfiles__chip em,
+.gitfiles__folder-count,
+.gitfiles__badge,
+.gitfiles__plus,
+.gitfiles__minus,
+.gitfiles__totals em,
+.gitdiff__totals em {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.gitfiles__count {
+  line-height: 1;
+}
+/* Latin digits sit on the cap-height while CJK glyphs fill the em box, so at the
+   same font-size the number reads as sitting high next to Chinese text. The few
+   rules below nudge the counts back onto the label\'s optical centre. */
+.gitfiles__chip em {
+  position: relative;
+  top: 1px;
+}
+
+.gitfiles__folder-count,
+.gitfiles__totals em,
+.gitdiff__totals em {
+  position: relative;
+  top: 1px;
+}
+/* The chip is a flex row, which turns the label and the count into two separate
+   boxes. Flex centres each box, but a digit\'s box is shorter than a CJK glyph\'s
+   and the two fonts sit differently inside them, so the number reads as high.
+   Letting the chip be plain inline text puts both back on one shared baseline. */
+.gitfiles__chip {
+  display: inline-block;
+  line-height: 30px;
+  padding: 0 12px;
+  text-align: center;
+}
+
+.gitfiles__chip em {
+  display: inline;
+  margin-left: 7px;
+  line-height: inherit;
+  position: static;
+  top: auto;
+  font-style: normal;
+}
+/* The list is a single flat column now: every row is a file, so the path detail
+   shown after the name is the folder it lives in. */
+.gitfiles__file {
+  height: 42px;
+  padding: 0 10px;
+}
+
+.gitfiles__name {
+  flex: none;
+}
+
+.gitfiles__folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a4aebd;
+  font-size: 12px;
+}
+
+.gitfiles__delta {
+  flex: none;
+}
+
+.gitfiles__badge {
+  margin-left: 2px;
+}
+/* ---------------- nested file tree ---------------- */
+
+.gitfiles__tree {
+  padding: 6px 10px 16px;
+}
+
+.gitfiles__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gitfiles__row:hover {
+  background: #f4f7fb;
+}
+
+.gitfiles__row--on {
+  background: #eef2ff;
+}
+
+/* One fixed-width dotted rule per level of depth, so children line up under
+   their folder even though the rows themselves are flat buttons. */
+.gitfiles__guide {
+  flex: none;
+  width: 14px;
+  height: 100%;
+  margin-left: 2px;
+  border-left: 1px dotted #d5dce6;
+}
+
+.gitfiles__caret {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: #97a2b3;
+  transition: transform 0.12s ease;
+}
+
+.gitfiles__caret--open {
+  transform: rotate(90deg);
+}
+
+.gitfiles__folder-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: #7b8fae;
+}
+
+.gitfiles__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #26313f;
+  font-size: 13px;
+}
+
+.gitfiles__row--folder .gitfiles__name {
+  color: #33405a;
+  font-weight: 700;
+}
+
+.gitfiles__folder-count {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 21px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #eef2f8;
+  color: #5a6b82;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+/* A folder has no badge, so its count keeps the row\'s right edge steady. */
+.gitfiles__row--folder .gitfiles__delta {
+  margin-left: 0;
+}
+
+.gitfiles__row--folder .gitfiles__delta {
+  width: 104px;
+  justify-content: flex-end;
+}
+
+.gitfiles__row--file .gitfiles__delta {
+  margin-left: auto;
+}
+
+.gitfiles__badge {
+  margin-left: auto;
+}
+
+.gitfiles__row--file .gitfiles__badge + .gitfiles__delta {
+  margin-left: 0;
+  width: 104px;
+  justify-content: flex-end;
+}
+
+.gitfiles__zero {
+  color: #b9c2cf;
+  font-style: normal;
+}
+
+.gitfiles__delta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: none;
+  width: 104px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+/* Drag the divider to trade width between the file list and the diff. */
+.gitfiles__resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  z-index: 3;
+  cursor: ew-resize;
+  background: transparent;
+}
+
+.gitfiles__resizer:hover {
+  background: rgba(76, 108, 247, 0.18);
+}
+
+.gitfiles__pane {
+  position: relative;
+}
+
+.gitfiles {
+  grid-template-columns: 360px minmax(0, 1fr);
+}

@@ -470,12 +470,16 @@ export class CommandRunner {
 
     // Already known: this is the idempotency guard, and it is what makes a page
     // reload (which re-renders every old message) harmless.
-    if (!created) return true
+    if (!created) {
+      console.info(`[cmd] duplicate, already stored — not run again ${key}`)
+      return true
+    }
 
     // An empty command means the model considers the task finished. Check it
     // before the generic notice so the log does not say "检测到命令" and then
     // immediately "任务完成".
     if (parsed.command.trim() === '') {
+      console.info(`[cmd] model reported completion (empty command) ${JSON.stringify({ key })}`)
       this.deps.store.setExecutionStatus(key, 'skipped')
       this.appendLine({ kind: 'notice', text: '模型报告任务完成（command 为空）' })
       this.broadcastExecutions(conversationId)
@@ -504,6 +508,15 @@ export class CommandRunner {
     }
 
     const autoRun = this.automation.mode === 'auto' && !this.automation.paused
+    /*
+     * The single gate that decides whether the loop advances by itself. It is a plain boolean
+     * computed from two settings that can be changed from the UI at any moment, so "the command
+     * was stored but never ran" is most often this line — and it left no trace at all.
+     */
+    console.info(
+      `[cmd] stored mode=${this.automation.mode} paused=${this.automation.paused} ` +
+        `autoRun=${autoRun} ${JSON.stringify({ key, description: parsed.description })}`
+    )
 
     if (MARKDOWN_MANGLED_RE.test(parsed.command)) {
       this.appendLine({
@@ -574,11 +587,24 @@ export class CommandRunner {
   private async execute(messageId: string): Promise<void> {
     // Two fast clicks on 运行 would otherwise both pass the status check below
     // and run the command twice.
-    if (this.inFlight.has(messageId)) return
+    if (this.inFlight.has(messageId)) {
+      console.info(`[cmd] not run: already in flight ${messageId}`)
+      return
+    }
 
     const record = this.deps.store.getExecution(messageId)
-    if (!record) return
-    if (record.status !== 'pending' && record.status !== 'blocked') return
+    if (!record) {
+      console.warn(`[cmd] not run: no execution record for ${messageId}`)
+      return
+    }
+    if (record.status !== 'pending' && record.status !== 'blocked') {
+      /*
+       * The common one after a reconnect or a reload: the command IS stored, and its status says
+       * it has already had its turn. Without this the command looks like it was swallowed.
+       */
+      console.info(`[cmd] not run: status=${record.status} ${messageId}`)
+      return
+    }
 
     const request = (this.executionRequest += 1)
     this.inFlight.add(messageId)
@@ -594,7 +620,14 @@ export class CommandRunner {
     const conversationId = record.conversationId
     const messageId = record.messageId
     const shell = await this.prepareExecutionShell()
-    if (!shell) return
+    if (!shell) {
+      /*
+       * No backend could be prepared — an SSH attach that failed, a shell that would not start.
+       * The record stays `pending` forever and nothing else says so.
+       */
+      console.warn(`[cmd] not run: no shell could be prepared ${messageId}`)
+      return
+    }
     if (request !== this.executionRequest) {
       this.deps.store.setExecutionStatus(messageId, 'skipped')
       this.broadcastExecutions(conversationId)

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+﻿import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/types'
 import type {
@@ -17,6 +17,8 @@ import type {
   ExecutionRecord,
   ExternalAuthNotice,
   InterceptorStatus,
+  GitFileDiff,
+  GitLogResult,
   ManagedSessionSummary,
   WorkspaceState,
   SessionImportDraft,
@@ -40,6 +42,9 @@ import type {
  */
 const api: AppApi = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IpcChannels.getAppInfo),
+
+  getGitLog: (cwd: string): Promise<GitLogResult> => ipcRenderer.invoke(IpcChannels.gitLog, cwd),
+  getGitDiff: (cwd: string, path: string): Promise<GitFileDiff> => ipcRenderer.invoke(IpcChannels.gitDiff, cwd, path),
 
   listManagedSessions: (): Promise<ManagedSessionSummary[]> =>
     ipcRenderer.invoke(IpcChannels.managerSessionsList),

@@ -1274,13 +1274,38 @@
   }
 
   /**
+   * One line explaining why a settled reply produced no command — at most once per reason.
+   *
+   * WHY THIS EXISTS. Every early return in `checkForCommand` below is silent, and between them
+   * they cover the whole distance from "the reply is on screen" to "a command ran". So when a
+   * model answers with a perfectly good JSON block and nothing happens, there is nothing
+   * anywhere to read: not in the app log, not in the terminal, not in the UI. That is not a
+   * hypothetical — it is why this was added, after a DeepSeek reply sat there unexecuted with
+   * only three `injected` lines in the log to show for the session.
+   *
+   * Deduped by (turn, reason) rather than throttled by time: the settle timer re-runs on every
+   * mutation, so an undeduped note would bury the log, while a time throttle would hide the
+   * ONE transition that matters — the same turn moving from "no command yet" to "handled".
+   */
+  let lastScanNote = ''
+  const noteScan = (messageId, reason, extra) => {
+    const key = `${messageId}\u0000${reason}`
+    if (key === lastScanNote) return
+    lastScanNote = key
+    report({ event: 'scan', reason, messageId, ...extra })
+  }
+
+  /**
    * Runs after the reply has been quiet for REPLY_SETTLE_MS. Only the LAST
    * assistant message is considered, and each message id is reported at most
    * once — the main process does the durable deduplication against SQLite.
    */
   const checkForCommand = () => {
     const nodes = queryAllAssistant()
-    if (nodes.length === 0) return
+    if (nodes.length === 0) {
+      noteScan('', 'no-turns', { selectors: PAGE.assistantSelectors })
+      return
+    }
 
     const node = nodes[nodes.length - 1]
 
@@ -1295,7 +1320,19 @@
      * Before the turn key, so a user turn never becomes `lastAssistantId` and never spends a
      * content hash.
      */
-    if (!isAssistantTurn(node)) return
+    if (!isAssistantTurn(node)) {
+      /*
+       * Usually correct — the newest turn is the user's own message. But it is ALSO exactly
+       * what a reply marker that stopped matching looks like, and the two are indistinguishable
+       * from the outside without this note. Its `tag`/`cls` say which one it was.
+       */
+      noteScan(turnKeyOf(node), 'not-assistant-turn', {
+        tag: node.tagName.toLowerCase(),
+        cls: String(node.className || '').slice(0, 120),
+        wanted: PAGE.assistantReplySelectors
+      })
+      return
+    }
 
     /*
      * `turnKeyOf`, never a raw attribute read.
@@ -1306,7 +1343,26 @@
      * is the exact failure this guard exists to prevent now.
      */
     const messageId = turnKeyOf(node)
-    if (!messageId || messageId === state.lastCommandMessageId) return
+    if (!messageId) {
+      // `turnKeyOf` only returns '' for a turn that renders no text at all, so this is a
+      // placeholder rather than a reply — worth one line, because it is also what an empty
+      // identity would look like if that function ever regressed.
+      noteScan('', 'no-key', { cls: String(node.className || '').slice(0, 120) })
+      return
+    }
+    if (messageId === state.lastCommandMessageId) {
+      /*
+       * Already dealt with — routinely correct, since the observer re-runs on every mutation.
+       *
+       * But it is ALSO what this turn looks like after the branch below has marked it handled
+       * EARLY, while the model was merely pausing mid-reply. That mistake is invisible from
+       * here and total: the real command in the same turn can never be parsed afterwards,
+       * because this guard returns first, every time, silently. One note per turn is what makes
+       * the two cases tellable apart.
+       */
+      noteScan(messageId, 'already-handled')
+      return
+    }
 
     /*
      * The narrowed answer text, never the whole turn: on DeepSeek the turn's text starts
@@ -1351,6 +1407,22 @@
         })
       }
 
+      /*
+       * The catch-all, and the one that would have answered the question this was written for.
+       *
+       * A site with NO stop button cannot tell "still streaming, just quiet" from "finished" —
+       * `findStopButton()` above is the only thing that could, and on DeepSeek it is always null
+       * by design. So a pause longer than REPLY_SETTLE_MS mid-reply is taken as final, the turn
+       * is marked handled, and the command that arrives afterwards is skipped forever by the
+       * `already-handled` guard. The three fields below are what separate that from an ordinary
+       * "the model wrote prose and meant nothing by it".
+       */
+      noteScan(messageId, 'no-command', {
+        textHead: collapse(text).slice(0, 120),
+        bracesBalanced: finished,
+        awaitingReply: state.awaitingReplySince !== 0
+      })
+
       return
     }
 
@@ -1365,7 +1437,12 @@
     // would let the shell finish before the current assistant turn is done, so the
     // raw result gets inserted into a composer that ChatGPT still refuses to send.
     // The stop button disappearing mutates the DOM and schedules another check.
-    if (findStopButton()) return
+    if (findStopButton()) {
+      // A command is on screen and the reply is still generating. Nothing is wrong; the stop
+      // button disappearing mutates the DOM and schedules another check.
+      noteScan(messageId, 'still-generating')
+      return
+    }
 
     const live = state.awaitingReplySince !== 0
     state.lastCommandMessageId = messageId

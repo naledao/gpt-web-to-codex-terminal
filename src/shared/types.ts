@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Types shared between the Electron main process, the preload bridge and the
  * React renderer. Keep this module free of runtime dependencies on `electron`
  * so it can be imported from every process.
@@ -86,7 +86,9 @@ export const IpcChannels = {
   updateCheck: 'update:check',
   updateDownload: 'update:download',
   updateInstall: 'update:install',
-  updateChanged: 'update:changed'
+  updateChanged: 'update:changed',
+  gitLog: 'git:log',
+  gitDiff: 'git:diff'
 } as const
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels]
@@ -760,6 +762,7 @@ export interface InterceptorPageEvent {
     | 'inject-failed'
     | 'command'
     | 'parse-failed'
+    | 'scan'
     | 'sent-raw'
     | 'raw-busy'
   count?: number
@@ -821,6 +824,24 @@ export interface InterceptorPageEvent {
   toolbarCount?: number
   /** Present on `send-recovery`: the action about to be attempted. */
   action?: string
+
+  /*
+   * Present on `scan`: why a settled reply produced no command.
+   *
+   * Every early return between "the reply is on screen" and "a command ran" is silent, so
+   * without these a model that answers with a perfectly good JSON block and gets nothing back
+   * leaves no evidence anywhere. `reason` names the bail; the rest is whatever that bail needs
+   * to be read — the marker a turn failed to match, the text that parsed to nothing, whether the
+   * braces had balanced yet.
+   */
+  reason?: string
+  textHead?: string
+  bracesBalanced?: boolean
+  /** Present on `scan`/`not-assistant-turn`: the selectors that failed to match. */
+  wanted?: string[]
+  selectors?: string[]
+  tag?: string
+  cls?: string
   /** Present on `end-task`: the page-side flags at the moment the task was stopped. */
   awaitingReply?: boolean
   taskActive?: boolean
@@ -1103,6 +1124,10 @@ export interface TerminalNotes {
  */
 export interface AppApi {
   getAppInfo(): Promise<AppInfo>
+  /** Read the Git history of the repository that contains `cwd`. */
+  getGitLog(cwd: string): Promise<GitLogResult>
+  /** Read the unified diff of one changed path. */
+  getGitDiff(cwd: string, path: string): Promise<GitFileDiff>
   /** Sessions currently owned by the outer manager. */
   listManagedSessions(): Promise<ManagedSessionSummary[]>
   /**
@@ -1295,3 +1320,77 @@ export interface AppApi {
   /** Fires on every updater phase/progress change. */
   onUpdateChanged(listener: (status: UpdateStatus) => void): () => void
 }
+
+/** Author of a Git commit. */
+export interface GitAuthor {
+  name?: string
+  email?: string
+}
+
+/** One commit in the log, shaped for the log table. */
+export interface GitLogEntry {
+  hash: string
+  branch: string
+  parents: string[]
+  message: string
+  author?: GitAuthor
+  committerDate: string
+  authorDate?: string
+}
+
+/** Counts of changed files in the working tree and index. */
+export interface GitIndexStatus {
+  modified: number
+  added: number
+  deleted: number
+}
+
+/** How a path changed, used to pick the badge colour in the file list. */
+export type GitChangeKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
+
+/** One changed path, with the line counts the file list shows. */
+export interface GitFileChange {
+  path: string
+  /** Previous path, only set for renames. */
+  oldPath?: string
+  kind: GitChangeKind
+  /** Single-letter status as Git reports it, for the badge. */
+  code: string
+  additions: number
+  deletions: number
+}
+
+/** One line of a unified diff. */
+export interface GitDiffLine {
+  kind: 'context' | 'add' | 'del'
+  oldNumber?: number
+  newNumber?: number
+  text: string
+}
+
+/** One @@ hunk of a unified diff. */
+export interface GitDiffHunk {
+  header: string
+  lines: GitDiffLine[]
+}
+
+/** The diff of a single changed path. */
+export interface GitFileDiff {
+  path: string
+  /** True when Git refuses to render a text diff for this path. */
+  binary: boolean
+  hunks: GitDiffHunk[]
+  additions: number
+  deletions: number
+}
+
+/** Result of inspecting the repository that contains a directory. */
+export interface GitLogResult {
+  isRepo: boolean
+  currentBranch: string
+  entries: GitLogEntry[]
+  indexStatus: GitIndexStatus
+  files: GitFileChange[]
+  error?: string
+}
+

@@ -8,6 +8,7 @@ import {
   IpcChannels,
   isConversationId
 } from '../shared/types'
+import { readGitDiff, readGitLog } from './git'
 import { CHAT_PLATFORMS, CHATGPT_PLATFORM, DEFAULT_PLATFORM_ID, platformById } from '../shared/platforms'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
@@ -23,6 +24,8 @@ import type {
   ExecutionMode,
   ExecutionRecord,
   ExternalAuthNotice,
+  GitFileDiff,
+  GitLogResult,
   InterceptorStatus,
   ManagedSessionSummary,
   WorkspaceState,
@@ -388,6 +391,13 @@ function createManagerWindow(): void {
 function registerIpcHandlers(): void {
   const fromManager = (event: IpcMainEvent | IpcMainInvokeEvent): boolean =>
     managerWindow !== null && !managerWindow.isDestroyed() && event.sender === managerWindow.webContents
+
+  ipcMain.handle(IpcChannels.gitLog, async (_event, cwd: string): Promise<GitLogResult> => readGitLog(cwd))
+
+  ipcMain.handle(
+    IpcChannels.gitDiff,
+    async (_event, cwd: string, path: string): Promise<GitFileDiff> => readGitDiff(cwd, path)
+  )
 
   ipcMain.handle(IpcChannels.getAppInfo, (): AppInfo => ({
     name: app.getName(),

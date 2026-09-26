@@ -365,9 +365,34 @@ export class SessionRuntime {
        * answer to "which conversation is this session driving".
        */
       onCommand: (command) => {
-        if (isActive()) this.handleDetectedCommand(command)
+        /*
+         * Logged on BOTH sides of the gate.
+         *
+         * "The page reported a command" and "the app acted on one" are different facts, and
+         * `isActive()` is what sits between them: with another platform in front, a command read
+         * from a background view is dropped here — deliberately, and until now invisibly. That is
+         * the combination that makes "the model answered with JSON and nothing ran" impossible to
+         * diagnose from a log, which is exactly how this was found.
+         */
+        if (!isActive()) {
+          console.warn(
+            `[session] command DROPPED, this session is not the visible one ${JSON.stringify({
+              messageId: command.messageId,
+              command: command.command
+            })}`
+          )
+          return
+        }
+        console.info(
+          `[session] command accepted ${JSON.stringify({
+            messageId: command.messageId,
+            description: command.description
+          })}`
+        )
+        this.handleDetectedCommand(command)
       },
       onParseFailed: (text) => {
+        console.warn(`[session] reply did not parse as a command ${JSON.stringify({ text })}`)
         if (isActive()) this.runner.noteParseFailure(text)
       }
     }
@@ -649,15 +674,29 @@ export class SessionRuntime {
     // id. Keep the command by message id and associate it when onConversation has
     // persisted the new chat, rather than losing it permanently.
     this.deferredCommands.set(command.messageId, command)
+    /*
+     * A deferred command is in limbo, and until now it was in limbo silently — if the
+     * conversation id never arrives, it is simply never heard from again.
+     */
+    console.info(
+      `[session] command DEFERRED until a conversation id exists ` +
+        `${JSON.stringify({ messageId: command.messageId, waiting: this.deferredCommands.size })}`
+    )
   }
 
   private flushDeferredCommands(conversationId: string): void {
     if (this.deferredCommands.size === 0) return
+    const before = this.deferredCommands.size
     for (const [messageId, command] of this.deferredCommands) {
       if (this.runner.handleDetected(command, conversationId)) {
         this.deferredCommands.delete(messageId)
       }
     }
+    console.info(
+      `[session] flushed deferred commands for ${conversationId}: ` +
+        `${before - this.deferredCommands.size}/${before} accepted, ` +
+        `${this.deferredCommands.size} still waiting`
+    )
   }
 
   /**
