@@ -149,6 +149,15 @@
     lastUnparsedMessageId: null
   }
 
+  /** User-image batches stay page-side until main explicitly asks for their bytes. */
+  const pendingUserImageCaptures = new Map()
+  let userImageCaptureSerial = 0
+  // ChatGPT clears its file input as soon as the upload is accepted. Keep a short-lived
+  // copy of the bytes from the selection/paste/drop event so the later send event does
+  // not depend on that input or on a thumbnail still being present in the DOM.
+  let lastDraftImageAttachments = []
+  let lastDraftImageCapturedAt = 0
+  let lastDraftImagePromise = Promise.resolve([])
   const report = (payload) => {
     try {
       console.log(LOG_TAG + JSON.stringify(payload))
@@ -230,6 +239,93 @@
     return String(node.innerText || '')
   }
 
+  /** Preserve the rendered answer structure as Markdown for the app-owned transcript. */
+  const readReplyMarkdown = (node) => {
+    if (!node) return ''
+    let root = node
+    const markers = PAGE.assistantReplySelectors
+    if (markers && markers.length > 0) {
+      for (const selector of markers) {
+        const answer = node.querySelector(selector)
+        if (answer) {
+          root = answer
+          break
+        }
+      }
+    }
+
+    const render = (current, depth = 0) => {
+      if (!current) return ''
+      if (current.nodeType === Node.TEXT_NODE) return String(current.nodeValue || '')
+      if (current.nodeType !== Node.ELEMENT_NODE) return ''
+
+      const element = current
+      const tag = element.tagName.toLowerCase()
+      const children = () => [...element.childNodes].map((child) => render(child, depth)).join('')
+      // ChatGPT's current renderer uses a span marker for inline code instead of a
+      // semantic <code> element. Preserve the Markdown delimiter so the backup transcript
+      // renders the same gray monospace pill as the native page.
+      if (element.getAttribute('data-markdown-copy') === 'inline-code') {
+        return `\`${String(element.textContent || '').replace(/\`/g, '\\\`')}\``
+      }
+
+      if (tag === 'br') return '\n'
+      if (tag === 'hr') return '\n\n---\n\n'
+      if (tag === 'pre') {
+        const code = element.querySelector('code')
+        const raw = String((code || element).textContent || '').replace(/\n$/, '')
+        const languageClass = String(code?.className || '')
+        const languageMatch = languageClass.match(/(?:language-|lang-)([\w+-]+)/)
+        const language = languageMatch ? languageMatch[1] : ''
+        return `\n\n\`\`\`${language}\n${raw}\n\`\`\`\n\n`
+      }
+      if (tag === 'code') return `\`${String(element.textContent || '').replace(/\`/g, '\\`')}\``
+      if (tag === 'strong' || tag === 'b') return `**${children()}**`
+      if (tag === 'em' || tag === 'i') return `*${children()}*`
+      if (tag === 'del' || tag === 's') return `~~${children()}~~`
+      if (tag === 'a') {
+        const label = children().trim() || String(element.getAttribute('href') || '')
+        const href = String(element.getAttribute('href') || '')
+        return href ? `[${label}](${href})` : label
+      }
+      if (/^h[1-6]$/.test(tag)) return `\n\n${'#'.repeat(Number(tag[1]))} ${children().trim()}\n\n`
+      if (tag === 'blockquote') {
+        const body = children().trim().split('\n').map((line) => `> ${line}`).join('\n')
+        return `\n\n${body}\n\n`
+      }
+      if (tag === 'ul' || tag === 'ol') {
+        const items = [...element.children]
+          .filter((child) => child.tagName.toLowerCase() === 'li')
+          .map((child, index) => {
+            const prefix = tag === 'ol' ? `${index + 1}. ` : '- '
+            const body = render(child, depth + 1).trim().replace(/\n+/g, '\n')
+            return `${'  '.repeat(depth)}${prefix}${body}`
+          })
+          .join('\n')
+        return `\n${items}\n`
+      }
+      if (tag === 'li') return children()
+      if (tag === 'p') return `\n\n${children().trim()}\n\n`
+      if (tag === 'table') {
+        const rows = [...element.querySelectorAll('tr')].map((row) =>
+          [...row.querySelectorAll(':scope > th, :scope > td')].map((cell) => String(cell.innerText || '').trim())
+        )
+        if (rows.length === 0) return children()
+        const width = Math.max(...rows.map((row) => row.length))
+        const normalized = rows.map((row) => [...row, ...Array(Math.max(0, width - row.length)).fill('')])
+        const header = normalized[0]
+        const body = normalized.slice(1)
+        return `\n\n| ${header.join(' | ')} |\n| ${header.map(() => '---').join(' | ')} |${body.length ? `\n${body.map((row) => `| ${row.join(' | ')} |`).join('\n')}` : ''}\n\n`
+      }
+      if (tag === 'div' || tag === 'section' || tag === 'article') return children()
+      return children()
+    }
+
+    return render(root)
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
   /** True when this turn is an ASSISTANT one, decided by structure rather than by class. */
   const isAssistantTurn = (node) => {
     // A missing element is not an assistant turn. The callers do not currently pass null,
@@ -392,6 +488,399 @@
     return `text:${(hash >>> 0).toString(16)}:${text.length}`
   }
 
+  const userTurns = () => queryAllMessages().filter((node) => !isAssistantTurn(node))
+
+  /** Best-effort test for an image currently attached to the composer. */
+  const hasDraftImageAttachment = () => {
+    const fileInputs = [...document.querySelectorAll('input[type="file"]')]
+    if (fileInputs.some((input) => [...(input.files || [])].some((file) => String(file.type || '').startsWith('image/')))) {
+      return true
+    }
+    const composer = getComposer()
+    if (!composer) return false
+    let root = composer
+    for (let depth = 0; depth < 6 && root; depth += 1, root = root.parentElement) {
+      const images = [...root.querySelectorAll('img')]
+      if (images.some((image) => {
+        const src = String(image.currentSrc || image.src || '')
+        const width = Number(image.naturalWidth || image.width || 0)
+        const height = Number(image.naturalHeight || image.height || 0)
+        return src !== '' && width >= 40 && height >= 40
+      })) return true
+    }
+    return false
+  }
+
+  const beginUserImageCapture = () => {
+    userImageCaptureSerial += 1
+    const token = `img:${Date.now().toString(36)}:${userImageCaptureSerial.toString(36)}`
+    const turns = userTurns()
+    const baselineImages = new Map(
+      [...document.querySelectorAll('img')].map((image) => [image, imageSourceOf(image)])
+    )
+    pendingUserImageCaptures.set(token, {
+      baselineTurn: turns.length > 0 ? turns[turns.length - 1] : null,
+      baselineImages,
+      draftPromise: Promise.all([captureDraftImageAttachments(), lastDraftImagePromise]).then((batches) => {
+        const seen = new Set()
+        return batches.flat().filter((attachment) => {
+          const contentKey = attachment?.contentKey || attachment?.dataBase64
+          if (!contentKey || seen.has(contentKey)) return false
+          seen.add(contentKey)
+          return true
+        })
+      })
+    })
+    return token
+  }
+
+  const discardUserImageCapture = (token) => {
+    if (token) pendingUserImageCaptures.delete(token)
+  }
+
+  const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error || new Error('attachment read failed'))
+    reader.onload = () => {
+      const value = String(reader.result || '')
+      const comma = value.indexOf(',')
+      resolve(comma >= 0 ? value.slice(comma + 1) : '')
+    }
+    reader.readAsDataURL(blob)
+  })
+
+  // Different capture paths can encode identical pixels as different PNG bytes.
+  // Normalize only for de-duplication; the original bytes remain the persisted data.
+  const canonicalImageKey = async (blob) => {
+    try {
+      if (typeof createImageBitmap !== 'function') return ''
+      const bitmap = await createImageBitmap(blob)
+      const canvas = document.createElement('canvas')
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+      const context = canvas.getContext('2d')
+      if (!context) {
+        bitmap.close()
+        return ''
+      }
+      context.drawImage(bitmap, 0, 0)
+      bitmap.close()
+      const dataUrl = canvas.toDataURL('image/png')
+      const comma = dataUrl.indexOf(',')
+      if (comma < 0) return ''
+      const base64 = dataUrl.slice(comma + 1)
+      if (!globalThis.crypto?.subtle) return base64
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+      return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
+    } catch (_) {
+      return ''
+    }
+  }
+
+  const imageSourceOf = (image) => {
+    if (!image) return ''
+    const direct = String(image.currentSrc || image.src || '').trim()
+    if (direct) return direct
+    for (const attribute of ['data-src', 'data-original', 'data-url']) {
+      const value = String(image.getAttribute(attribute) || '').trim()
+      if (value) return value
+    }
+    const srcset = String(image.getAttribute('srcset') || '').trim()
+    return srcset ? srcset.split(',')[0].trim().split(/\s+/)[0] : ''
+  }
+
+  const imageLooksLikeAttachment = (image) => {
+    const src = imageSourceOf(image)
+    if (!src) return false
+    // Local upload previews are usually blob URLs and can still report zero
+    // natural dimensions while React is hydrating them.
+    if (/^(?:blob:|data:image\/)/i.test(src)) return true
+    const width = Number(image.naturalWidth || image.width || 0)
+    const height = Number(image.naturalHeight || image.height || 0)
+    return width >= 40 && height >= 40
+  }
+
+  const collectImages = (root) => {
+    if (!root) return []
+    const found = []
+    if (root.tagName === 'IMG') found.push(root)
+    found.push(...root.querySelectorAll('img'))
+    return found
+  }
+
+  const imageMimeType = (source) => {
+    const value = String(source || '').toLowerCase()
+    if (value.startsWith('data:image/')) {
+      const match = /^data:([^;,]+)/i.exec(value)
+      if (match) return match[1]
+    }
+    const extension = value.split(/[?#]/)[0].split('.').pop()
+    return {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+      gif: 'image/gif', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml'
+    }[extension] || ''
+  }
+
+  const fileNameForImage = (image, index, mimeType) => {
+    const alt = String(image.getAttribute('alt') || '').trim()
+    if (alt && /\.[a-z0-9]{2,8}$/i.test(alt)) return alt
+    try {
+      const url = new URL(String(image.currentSrc || image.src || ''), location.href)
+      const last = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '')
+      if (last && /\.[a-z0-9]{2,8}$/i.test(last)) return last
+    } catch (_) {
+      /* fall through */
+    }
+    const ext = {
+      'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
+      'image/avif': 'avif', 'image/bmp': 'bmp', 'image/svg+xml': 'svg'
+    }[mimeType] || 'img'
+    return `image-${index + 1}.${ext}`
+  }
+
+  const fileNameForFile = (file, index, mimeType) => {
+    const name = String(file?.name || '').trim()
+    if (name) return name
+    const ext = {
+      'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
+      'image/avif': 'avif', 'image/bmp': 'bmp', 'image/svg+xml': 'svg'
+    }[mimeType] || 'img'
+    return `image-${index + 1}.${ext}`
+  }
+
+  const readFileAttachment = async (file, index) => {
+    const mimeType = String(file?.type || '').toLowerCase()
+    if (!mimeType.startsWith('image/')) return null
+    try {
+      const dataBase64 = await blobToBase64(file)
+      if (!dataBase64) return null
+      return {
+        fileName: fileNameForFile(file, index, mimeType),
+        mimeType,
+        dataBase64,
+        width: null,
+        height: null,
+        sizeBytes: Number(file.size || 0),
+        contentKey: (await canonicalImageKey(file)) || dataBase64
+      }
+    } catch (_) {
+      return null
+    }
+  }
+
+  const readImageAttachment = async (image, index) => {
+    const source = imageSourceOf(image)
+    if (!source) return null
+    try {
+      const response = await fetch(source, { credentials: 'include' })
+      if (!response.ok) throw new Error(`image fetch failed: ${response.status}`)
+      const blob = await response.blob()
+      const mimeType = String(blob.type || imageMimeType(source)).toLowerCase()
+      if (!mimeType.startsWith('image/')) return null
+      const dataBase64 = await blobToBase64(blob)
+      if (!dataBase64) return null
+      return {
+        fileName: fileNameForImage(image, index, mimeType),
+        mimeType,
+        dataBase64,
+        width: Number(image.naturalWidth || image.width || 0) || null,
+        height: Number(image.naturalHeight || image.height || 0) || null,
+        sizeBytes: Number(blob.size || 0),
+        contentKey: (await canonicalImageKey(blob)) || dataBase64
+      }
+    } catch (_) {
+      // A sent-turn image can be rendered from a browser blob or a URL that refuses
+      // fetch(), even though the page has already decoded it for display. Reading the
+      // decoded element through a canvas covers blob URLs and same-origin thumbnails.
+      try {
+        if (!image.complete || Number(image.naturalWidth || image.width || 0) <= 0) return null
+        const width = Number(image.naturalWidth || image.width || 0)
+        const height = Number(image.naturalHeight || image.height || 0)
+        if (width <= 0 || height <= 0) return null
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const context = canvas.getContext('2d')
+        if (!context) return null
+        context.drawImage(image, 0, 0, width, height)
+        const dataUrl = canvas.toDataURL('image/png')
+        const comma = dataUrl.indexOf(',')
+        if (comma < 0) return null
+        const dataBase64 = dataUrl.slice(comma + 1)
+        if (!dataBase64) return null
+        return {
+          fileName: fileNameForImage(image, index, 'image/png'),
+          mimeType: 'image/png',
+          dataBase64,
+          width,
+          height,
+          sizeBytes: Math.floor(dataBase64.length * 0.75),
+          contentKey: dataBase64
+        }
+      } catch (_) {
+        return null
+      }
+    }
+  }
+
+  const readImageCandidates = async (images, files = []) => {
+    const attachments = []
+    const seenSources = new Set()
+    const seenData = new Set()
+    for (const file of files) {
+      const attachment = await readFileAttachment(file, attachments.length)
+      const contentKey = attachment?.contentKey || attachment?.dataBase64
+      if (!attachment || !contentKey || seenData.has(contentKey)) continue
+      seenData.add(contentKey)
+      attachments.push(attachment)
+    }
+    for (const image of images) {
+      const source = imageSourceOf(image)
+      if (!source || seenSources.has(source) || !imageLooksLikeAttachment(image)) continue
+      seenSources.add(source)
+      const attachment = await readImageAttachment(image, attachments.length)
+      const contentKey = attachment?.contentKey || attachment?.dataBase64
+      if (!attachment || !contentKey || seenData.has(contentKey)) continue
+      seenData.add(contentKey)
+      attachments.push(attachment)
+    }
+    return attachments
+  }
+
+  const captureDraftImageAttachments = async () => {
+    const files = [...document.querySelectorAll('input[type="file"]')]
+      .flatMap((input) => [...(input.files || [])])
+      .filter((file) => String(file.type || '').startsWith('image/'))
+    const images = []
+    const seen = new Set()
+    let root = getComposer()
+    for (let depth = 0; depth < 8 && root; depth += 1, root = root.parentElement) {
+      for (const image of collectImages(root)) {
+        if (seen.has(image)) continue
+        seen.add(image)
+        if (imageLooksLikeAttachment(image)) images.push(image)
+      }
+    }
+    // Some ChatGPT builds render the upload preview in a portal that is not an
+    // ancestor of the composer. A blob URL is still a strong attachment signal;
+    // ordinary remote page images are deliberately not included by this fallback.
+    if (images.length === 0) {
+      for (const image of document.querySelectorAll('img')) {
+        if (seen.has(image)) continue
+        if (/^blob:/i.test(imageSourceOf(image))) {
+          seen.add(image)
+          images.push(image)
+        }
+      }
+    }
+    if (files.length === 0 && images.length === 0) return []
+    return readImageCandidates(images, files)
+  }
+
+  const rememberDraftFiles = (fileList) => {
+    const files = [...(fileList || [])]
+      .filter((file) => String(file?.type || '').toLowerCase().startsWith('image/'))
+    if (files.length === 0) return
+    // Do not await inside the DOM event handler. FileReader continues after the
+    // page has finished dispatching the event, and the next send can use the cache.
+    lastDraftImagePromise = readImageCandidates([], files).then((attachments) => {
+      if (attachments.length > 0) {
+        lastDraftImageAttachments = attachments
+        lastDraftImageCapturedAt = Date.now()
+      }
+      return attachments
+    }).catch(() => [])
+  }
+
+  // Cover the three browser paths used by ChatGPT's attachment picker. Capture phase
+  // is intentional because the app may stop propagation before a bubbling listener sees
+  // the file input or drop target.
+  document.addEventListener('change', (event) => {
+    const target = event.target
+    if (target instanceof HTMLInputElement && target.type === 'file') rememberDraftFiles(target.files)
+  }, true)
+  document.addEventListener('paste', (event) => {
+    rememberDraftFiles(event.clipboardData?.files)
+  }, true)
+  document.addEventListener('drop', (event) => {
+    rememberDraftFiles(event.dataTransfer?.files)
+  }, true)
+
+  const cachedDraftAttachments = () => {
+    if (Date.now() - lastDraftImageCapturedAt > 120_000) return []
+    return lastDraftImageAttachments
+  }
+
+  const takeUserImageAttachments = async (token) => {
+    const capture = pendingUserImageCaptures.get(token)
+    if (!capture) return []
+    pendingUserImageCaptures.delete(token)
+
+    // Read the file input/thumbnail captured before ChatGPT clears the composer.
+    // This is the reliable path for local files and blob previews; waiting for
+    // the sent turn alone loses both when the SPA replaces the composer.
+    try {
+      const draftAttachments = await Promise.race([
+        capture.draftPromise || Promise.resolve([]),
+        new Promise((resolve) => setTimeout(() => resolve([]), 2200))
+      ])
+      const mergedDraftAttachments = [
+        ...(Array.isArray(draftAttachments) ? draftAttachments : []),
+        ...cachedDraftAttachments()
+      ].filter((attachment, index, all) =>
+        attachment && attachment.dataBase64 && all.findIndex((item) =>
+          (item?.contentKey || item?.dataBase64) === (attachment.contentKey || attachment.dataBase64)
+        ) === index
+      )
+      lastDraftImageAttachments = []
+      lastDraftImageCapturedAt = 0
+      lastDraftImagePromise = Promise.resolve([])
+      if (mergedDraftAttachments.length > 0) {
+        report({ event: 'user-image-capture', phase: 'draft', count: mergedDraftAttachments.length })
+        return mergedDraftAttachments
+      }
+      report({ event: 'user-image-capture', phase: 'draft', count: 0 })
+    } catch (_) {
+      /* fall through to the sent-turn scan */
+    }
+
+    const deadline = Date.now() + 3000
+    let turn = null
+    let turnSeenAt = 0
+    let images = []
+    const newImages = () => [...document.querySelectorAll('img')].filter((image) => {
+      const previousSource = capture.baselineImages?.get(image)
+      const source = imageSourceOf(image)
+      return source !== '' && (previousSource === undefined || previousSource !== source) && imageLooksLikeAttachment(image)
+    })
+    while (Date.now() < deadline) {
+      const turns = userTurns()
+      const newest = turns.length > 0 ? turns[turns.length - 1] : null
+      if (newest && newest !== capture.baselineTurn) {
+        if (turn !== newest) {
+          turn = newest
+          turnSeenAt = Date.now()
+        }
+        images = collectImages(turn).filter((image) => imageLooksLikeAttachment(image))
+        if (images.length > 0) break
+        // Text-only sends should not make persistence wait the full timeout. Keep a
+        // little longer than the old 700ms window because ChatGPT may append the
+        // uploaded thumbnail after it has already inserted the text turn.
+        if (Date.now() - turnSeenAt >= 1500) return []
+      }
+      images = newImages()
+      if (images.length > 0) break
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    if (images.length === 0) {
+      report({ event: 'user-image-capture', phase: 'sent-turn', count: 0 })
+      return []
+    }
+    const attachments = await readImageCandidates(images)
+    report({ event: 'user-image-capture', phase: 'sent-turn', count: attachments.length })
+    return attachments
+  }
   /* ------------------------------------------------------------------ *
    * Keeping the newest message in view
    * ------------------------------------------------------------------ */
@@ -708,7 +1197,8 @@
     done,
     deadline = 0,
     recovery = 0,
-    graceUntil = 0
+    graceUntil = 0,
+    attachmentToken = null
   ) => {
     /** Which recovery action THIS pass used, so the report can name it. */
     let recoveryTried = null
@@ -732,6 +1222,8 @@
         // The send landed, so the new turn is about to render below the fold.
         scheduleScrollToBottom()
       }
+      if (ok && !isRaw) report({ event: 'user-message', text: userTextOf(text), attachmentToken: attachmentToken || undefined })
+      if (!ok) discardUserImageCapture(attachmentToken)
       report(
         ok
           ? isRaw
@@ -816,7 +1308,7 @@
       // The send button only enables once the editor has committed the edit, and it can
       // disappear entirely while a reply is streaming. Both are worth waiting out.
       setTimeout(
-        () => submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil),
+        () => submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil, attachmentToken),
         80
       )
       return
@@ -847,14 +1339,14 @@
        */
       if (recoveryTried !== null) {
         if (recovery + 1 < RECOVERY_ACTIONS.length) {
-          submitWithRetry(text, attempt, isRaw, done, deadline, recovery + 1, graceUntil)
+          submitWithRetry(text, attempt, isRaw, done, deadline, recovery + 1, graceUntil, attachmentToken)
         } else {
           finish(false)
         }
         return
       }
       if (Date.now() < deadline) {
-        submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil)
+        submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil, attachmentToken)
         return
       }
       finish(false)
@@ -951,6 +1443,7 @@
     if (hasPrefix(element)) return false
 
     const text = collapse(readComposer(element))
+    const draftHasImage = hasDraftImageAttachment()
 
     /*
      * An EMPTY draft is not a message, and this is not a nicety — it is the guard against the
@@ -965,7 +1458,12 @@
      * empty composer should do nothing, which is what the site does once we stop stealing the
      * event.
      */
-    if (text === '') return false
+    if (text === '' && !draftHasImage) return false
+
+    // Always track a real user send, even when the pre-send thumbnail detector misses the
+    // attachment. ChatGPT commonly clears its file input after upload, while the sent turn
+    // still contains the image; tracking every text send lets us recover it there.
+    const attachmentToken = beginUserImageCapture()
 
     event.preventDefault()
     event.stopImmediatePropagation()
@@ -1014,7 +1512,8 @@
         null,
         Date.now() + SEND_ATTEMPT_BUDGET_MS,
         0,
-        Date.now() + SEND_BUTTON_GRACE_MS
+        Date.now() + SEND_BUTTON_GRACE_MS,
+        attachmentToken
       )
       return true
     }
@@ -1049,7 +1548,8 @@
           null,
           Date.now() + SEND_ATTEMPT_BUDGET_MS,
           0,
-          Date.now() + SEND_BUTTON_GRACE_MS
+          Date.now() + SEND_BUTTON_GRACE_MS,
+          attachmentToken
         ),
       60
     )
@@ -1265,6 +1765,37 @@
     return null
   }
 
+  /**
+   * A command-shaped reply must never fall through to the clean transcript. DeepSeek can
+   * render the command before its final streamed text is stable, and its rendered turn key
+   * may then differ from the key reported with the command event. The content marker is the
+   * reliable safety net in that case; the main process also applies the same guard at insert
+   * time for pages that report an assistant turn through another path.
+   */
+  const looksLikeCommandReply = (text) => /\{\s*["']command["']\s*:\s*["']/s.test(String(text || ''))
+
+  // Older transcript rows were saved before the page's inline-code marker was
+  // understood. Refresh only turns with a stable page id: the main process updates
+  // existing rows by that id, and never creates history rows from a page scan.
+  const reportedHistoryMarkdown = new Map()
+  const syncRenderedAssistantHistory = () => {
+    if (!PAGE.messageIdAttr || findStopButton()) return
+    for (const node of queryAllAssistant()) {
+      if (!isAssistantTurn(node)) continue
+      const messageId = messageIdOf(node)
+      if (!messageId) continue
+      const text = readReplyMarkdown(node)
+      if (!text || looksLikeCommandReply(text) || reportedHistoryMarkdown.get(messageId) === text) continue
+      reportedHistoryMarkdown.set(messageId, text)
+      report({ event: 'assistant-history-markdown', messageId, text })
+    }
+  }
+  const scheduleRenderedAssistantHistory = () => {
+    if (!PAGE.messageIdAttr) return
+    setTimeout(syncRenderedAssistantHistory, 800)
+    setTimeout(syncRenderedAssistantHistory, 2800)
+  }
+
   let settleTimer = null
 
   const scheduleCheck = () => {
@@ -1378,6 +1909,23 @@
     // send is usually an empty placeholder turn. Consuming the flag there made
     // the real reply look like restored history.
     if (!parsed) {
+      // Do not persist an unparseable or still-streaming command as ordinary assistant prose.
+      // Leaving it unhandled lets a later DOM mutation retry the parser; the DB guard prevents
+      // the same class of leak if the page reports the turn by another route.
+      if (looksLikeCommandReply(text)) {
+        if (state.lastUnparsedMessageId !== messageId) {
+          state.lastUnparsedMessageId = messageId
+          const attempts = balancedObjects(text.replace(/```[a-zA-Z0-9_-]*/g, '\n'))
+          report({
+            event: 'parse-failed',
+            text: text.slice(0, 2000),
+            textLength: text.length,
+            objectCount: attempts.length,
+            lastObject: attempts.length > 0 ? attempts[attempts.length - 1].slice(0, 1200) : null
+          })
+        }
+        return
+      }
       // Only complain about a reply that is actually FINISHED. An unbalanced brace
       // count means it is still streaming, and reporting then is a pure false
       // alarm: the very first fragment of a command is `{"command":"`, which
@@ -1416,6 +1964,13 @@
         state.lastCommandMessageId = messageId
         state.awaitingReplySince = 0
         if (completed) state.taskActive = false
+        // ChatGPT can remove the stop control before its Markdown renderer has
+        // replaced the final plain text with <code>/<strong>/<table> nodes. Read
+        // once more after that DOM pass so the database keeps the formatting.
+        setTimeout(() => {
+          const latest = queryAllAssistant().find((candidate) => turnKeyOf(candidate) === messageId) || node
+          report({ event: 'assistant-message', messageId, text: readReplyMarkdown(latest) || text })
+        }, 250)
         report({
           event: 'task-finished',
           messageId,
@@ -1542,7 +2097,15 @@
     true
   )
 
-  const observer = new MutationObserver(scheduleCheck)
+  let historyPath = location.pathname
+  const observer = new MutationObserver(() => {
+    scheduleCheck()
+    if (location.pathname !== historyPath) {
+      historyPath = location.pathname
+      reportedHistoryMarkdown.clear()
+      scheduleRenderedAssistantHistory()
+    }
+  })
   observer.observe(document.body, {
     childList: true,
     subtree: true,
@@ -1653,6 +2216,7 @@
         enabled: state.enabled,
         prefixLength: state.prefix.length
       })
+      scheduleRenderedAssistantHistory()
       return { ...state }
     },
 
@@ -1783,6 +2347,7 @@
       })
     },
 
+    takeUserImageAttachments,
     checkNow,
     armBaseline,
     status: () => ({ ...state })

@@ -3,6 +3,7 @@ import interceptorSource from './injected/send-interceptor.js?raw'
 import { FALLBACK_ENVIRONMENT, buildTerminalPrefix, isConversationId } from '../shared/types'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
+  ConversationImageAttachmentInput,
   EmbedBounds,
   EmbedCommand,
   EmbedState,
@@ -139,6 +140,12 @@ export interface EmbedHandlers {
   onSynced(conversations: ScrapedConversation[]): void
   /** Terminal-mode interceptor changed state. */
   onInterceptor(status: InterceptorStatus): void
+  /** Clean user text, with the injected system prefix already removed. */
+  onUserMessage(text: string, attachments: ConversationImageAttachmentInput[]): void
+  /** A finished assistant turn that answered a live send. */
+  onAssistantMessage(messageId: string, text: string): void
+  /** Re-read Markdown for an already stored assistant turn in restored history. */
+  onAssistantHistoryMarkdown(messageId: string, text: string): void
   /** The model's reply contained a command. */
   onCommand(command: ParsedCommand): void
   /** An explicitly marked plain-text reply reports that the task is complete. */
@@ -715,6 +722,40 @@ export class ChatGptEmbed {
    * The count is accumulated HERE rather than taken from the page, because the
    * page's own counter resets on every full reload.
    */
+  private async deliverUserMessage(text: string, attachmentToken: string | null): Promise<void> {
+    let attachments: ConversationImageAttachmentInput[] = []
+    if (attachmentToken) {
+      const contents = this.liveContents()
+      if (contents && !contents.isDestroyed()) {
+        try {
+          const raw = (await contents.executeJavaScript(
+            `window.__cmdTerminalInterceptor?.takeUserImageAttachments
+              ? window.__cmdTerminalInterceptor.takeUserImageAttachments(${JSON.stringify(attachmentToken)})
+              : []`
+          )) as unknown
+          if (Array.isArray(raw)) {
+            attachments = raw
+              .filter((value): value is Record<string, unknown> => value !== null && typeof value === 'object')
+              .map((value) => ({
+                fileName: typeof value.fileName === 'string' ? value.fileName : '',
+                mimeType: typeof value.mimeType === 'string' ? value.mimeType : '',
+                dataBase64: typeof value.dataBase64 === 'string' ? value.dataBase64 : '',
+                width: typeof value.width === 'number' && Number.isFinite(value.width) ? value.width : null,
+                height: typeof value.height === 'number' && Number.isFinite(value.height) ? value.height : null,
+                sizeBytes:
+                  typeof value.sizeBytes === 'number' && Number.isFinite(value.sizeBytes)
+                    ? value.sizeBytes
+                    : 0
+              }))
+              .filter((value) => value.mimeType.startsWith('image/') && value.dataBase64 !== '')
+          }
+        } catch (error) {
+          console.warn(`[embed:${this.platform.id}] user attachment capture failed:`, (error as Error).message)
+        }
+      }
+    }
+    if (text.trim() !== '' || attachments.length > 0) this.handlers.onUserMessage(text, attachments)
+  }
   private handlePageReport(message: string): void {
     if (typeof message !== 'string' || !message.startsWith(INTERCEPTOR_LOG_TAG)) return
 
@@ -756,6 +797,37 @@ export class ChatGptEmbed {
             `page-head=${JSON.stringify(payload.prefixHead ?? '')} ` +
             `${payload.prefixLength === this.interceptor.prefix.length ? 'MATCH' : 'MISMATCH'}`
         )
+        break
+      case 'user-message': {
+        const text = typeof payload.text === 'string' ? payload.text : ''
+        const attachmentToken =
+          typeof payload.attachmentToken === 'string' && payload.attachmentToken !== ''
+            ? payload.attachmentToken
+            : null
+        console.info(
+          `[embed:${this.platform.id}] user-message textLength=${text.length} ` +
+            `attachmentToken=${attachmentToken ? 'yes' : 'no'}`
+        )
+        if (text.trim() !== '' || attachmentToken) {
+          void this.deliverUserMessage(text, attachmentToken)
+        }
+        break
+      }
+      case 'user-image-capture':
+        console.info(
+          `[embed:${this.platform.id}] user-image-capture ` +
+            `phase=${payload.phase ?? '?'} count=${payload.count ?? 0}`
+        )
+        break
+      case 'assistant-message':
+        if (payload.messageId && typeof payload.text === 'string' && payload.text.trim() !== '') {
+          this.handlers.onAssistantMessage(payload.messageId, payload.text)
+        }
+        break
+      case 'assistant-history-markdown':
+        if (payload.messageId && typeof payload.text === 'string' && payload.text.trim() !== '') {
+          this.handlers.onAssistantHistoryMarkdown(payload.messageId, payload.text)
+        }
         break
       case 'sent':
         this.interceptor.lastSentText = payload.text ?? null

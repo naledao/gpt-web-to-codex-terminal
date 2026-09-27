@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Types shared between the Electron main process, the preload bridge and the
  * React renderer. Keep this module free of runtime dependencies on `electron`
  * so it can be imported from every process.
@@ -20,6 +20,8 @@ export const IpcChannels = {
   embedGetAuthState: 'embed:get-auth-state',
   openChatgptExternal: 'app:open-chatgpt-external',
   conversationsList: 'conversations:list',
+  conversationMessagesList: 'conversation-messages:list',
+  conversationAttachmentRead: 'conversation-attachment:read',
   conversationsSync: 'conversations:sync',
   conversationsRemove: 'conversations:remove',
   conversationsMove: 'conversations:move',
@@ -78,6 +80,7 @@ export const IpcChannels = {
   managerSessionDestroy: 'manager:session-destroy',
   managerSessionsChanged: 'manager:sessions-changed',
   sessionSwitchPlatform: 'session:switch-platform',
+  sessionShowModelMenu: 'session:show-model-menu',
   workspaceGetState: 'workspace:get-state',
   workspaceShowManager: 'workspace:show-manager',
   workspaceSetOpenSshDialog: 'workspace:set-open-ssh-dialog',
@@ -299,6 +302,15 @@ export interface AppSettings {
    * Empty string means direct.
    */
   updateProxy: string
+  /** User-selected avatar stored as an image data URL. Empty string uses the default icon. */
+  userAvatarDataUrl: string
+  /** Original image used by the visual avatar crop editor. */
+  userAvatarSourceDataUrl: string
+  /** Avatar crop position inside the circular frame, as percentages. */
+  userAvatarPositionX: number
+  userAvatarPositionY: number
+  /** Zoom level used by the visual avatar crop editor. */
+  userAvatarScale: number
 }
 
 /** Everything the renderer may change; every field is optional. */
@@ -366,6 +378,39 @@ export interface Conversation {
   updatedAt: number
 }
 
+/** Image bytes captured from the embedded chat page after a user send. */
+export interface ConversationImageAttachmentInput {
+  fileName: string
+  mimeType: string
+  dataBase64: string
+  width: number | null
+  height: number | null
+  sizeBytes: number
+}
+
+/** Persisted metadata for one message attachment. The bytes stay on disk. */
+export interface ConversationAttachment {
+  id: string
+  messageId: string
+  kind: 'image'
+  mimeType: string
+  fileName: string
+  sha256: string
+  width: number | null
+  height: number | null
+  sizeBytes: number
+  ordinal: number
+}
+/** One clean user/assistant turn persisted for the app-owned conversation view. */
+export interface ConversationMessage {
+  id: string
+  conversationId: string
+  role: 'user' | 'assistant'
+  sourceMessageId: string | null
+  content: string
+  attachments: ConversationAttachment[]
+  createdAt: number
+}
 /** One entry scraped out of the page's own sidebar markup. */
 export interface ScrapedConversation {
   id: string
@@ -773,6 +818,10 @@ export interface InterceptorPageEvent {
     | 'configured'
     | 'injected'
     | 'sent'
+    | 'user-message'
+    | 'user-image-capture'
+    | 'assistant-message'
+    | 'assistant-history-markdown'
     | 'task-finished'
     | 'send-failed'
     | 'send-recovery'
@@ -785,6 +834,10 @@ export interface InterceptorPageEvent {
     | 'raw-busy'
   count?: number
   text?: string
+  /** Token for a page-side batch of user image attachments, on user-message. */
+  attachmentToken?: string
+  /** Capture diagnostics: where the image was found and how many were read. */
+  phase?: 'draft' | 'sent-turn'
   enabled?: boolean
   prefixLength?: number
   /**
@@ -1179,6 +1232,8 @@ export interface AppApi {
    * keeps its own and switching is a change of which one is in front.
    */
   switchSessionPlatform(platformId: string): Promise<boolean>
+  /** Pop a native menu of the chat platforms; resolves to the chosen id, or null when dismissed. */
+  showModelMenu(currentId: string): Promise<string | null>
   onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
   getWorkspaceState(): Promise<WorkspaceState>
   showWorkspaceManager(): Promise<boolean>
@@ -1234,6 +1289,10 @@ export interface AppApi {
 
   /** All stored conversations, newest first. */
   listConversations(): Promise<Conversation[]>
+  /** Clean user/assistant transcript for one conversation, oldest first. */
+  listConversationMessages(conversationId: string): Promise<ConversationMessage[]>
+  /** Read one persisted attachment as a data URL for renderer display. */
+  readConversationAttachment(attachmentId: string): Promise<string | null>
   /** Scrape the page's sidebar and merge it into the database. */
   syncConversations(): Promise<Conversation[]>
   removeConversation(id: string): Promise<Conversation[]>
@@ -1430,4 +1489,6 @@ export interface GitLogResult {
   files: GitFileChange[]
   error?: string
 }
+
+
 

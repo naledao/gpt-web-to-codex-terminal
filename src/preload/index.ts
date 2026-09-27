@@ -1,4 +1,4 @@
-﻿import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/types'
 import type {
@@ -8,6 +8,7 @@ import type {
   AppSettingsPatch,
   AutomationState,
   Conversation,
+  ConversationMessage,
   EmbedAuthState,
   EmbedBounds,
   EmbedCommand,
@@ -63,6 +64,9 @@ const api: AppApi = {
 
   switchSessionPlatform: (platformId: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.sessionSwitchPlatform, platformId),
+
+  showModelMenu: (currentId: string): Promise<string | null> =>
+    ipcRenderer.invoke(IpcChannels.sessionShowModelMenu, currentId),
 
   onManagedSessionsChanged: (listener: (items: ManagedSessionSummary[]) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, items: ManagedSessionSummary[]): void => listener(items)
@@ -144,6 +148,12 @@ const api: AppApi = {
 
   listConversations: (): Promise<Conversation[]> =>
     ipcRenderer.invoke(IpcChannels.conversationsList),
+
+  listConversationMessages: (conversationId: string): Promise<ConversationMessage[]> =>
+    ipcRenderer.invoke(IpcChannels.conversationMessagesList, conversationId),
+
+  readConversationAttachment: (attachmentId: string): Promise<string | null> =>
+    ipcRenderer.invoke(IpcChannels.conversationAttachmentRead, attachmentId),
 
   syncConversations: (): Promise<Conversation[]> =>
     ipcRenderer.invoke(IpcChannels.conversationsSync),

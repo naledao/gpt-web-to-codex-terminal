@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --bg: #0b0e14;
   --bg-elevated: #141922;
   --bg-chrome: #10151d;
@@ -121,10 +121,10 @@ body {
 .address {
   /*
    * The ONLY growing item in the bar, so it fills the space between the navigation buttons on
-   * its left and the model select on its right — the three of them end up touching, with no
+   * its left and the model select on its right 鈥?the three of them end up touching, with no
    * slack left anywhere to open a gap.
    *
-   * This went: `flex: 1` → capped at 360px → capped + `margin-left: auto` → back to `flex: 1`.
+   * This went: `flex: 1` 鈫?capped at 360px 鈫?capped + `margin-left: auto` 鈫?back to `flex: 1`.
    * The two auto margins it passed through are gone with it; an auto margin on a growing item
    * is both redundant and harmful, because it would take the free space the field is meant to
    * fill.
@@ -181,6 +181,215 @@ body {
 }
 
 /* Only ever seen before the native view paints, or if it fails to load. */
+.stage__alternate-card {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+}
+.conversation-transcript {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  padding: 34px clamp(22px, 7vw, 96px) 48px;
+  background: #fbfbfc;
+  color: #24272d;
+}
+
+.conversation-transcript__empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: #8b9099;
+  font-size: 13px;
+}
+
+.conversation-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto 26px;
+}
+
+.conversation-message--user {
+  flex-direction: row-reverse;
+}
+
+.conversation-message__avatar {
+  display: grid;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  box-sizing: border-box;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(31, 35, 40, 0.06);
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(31, 35, 40, 0.05);
+}
+
+.conversation-message--user .conversation-message__avatar {
+  background: #e4f1ff;
+  color: #5f88b8;
+}
+
+.conversation-message--assistant .conversation-message__avatar {
+  background: #eeeafb;
+  color: #7566a8;
+}
+
+.conversation-message__avatar svg {
+  width: 18px;
+  height: 18px;
+}
+
+.conversation-message__assistant-icon {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  border-radius: 7px;
+}.conversation-message__user-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.conversation-message__content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.conversation-message--user .conversation-message__content {
+  align-items: flex-end;
+}
+
+.conversation-message__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 2px 7px;
+  color: #858a93;
+}
+
+.conversation-message--user .conversation-message__meta {
+  flex-direction: row-reverse;
+}
+
+.conversation-message__role {
+  font-size: 12px;
+  font-weight: 650;
+  color: #5f646c;
+}
+
+.conversation-message__time {
+  font-size: 11px;
+  font-weight: 400;
+  color: #a0a4ab;
+}
+
+.conversation-message__body {
+  min-width: 0;
+  border: 1px solid rgba(31, 35, 40, 0.055);
+  border-radius: 18px;
+  box-shadow: 0 1px 3px rgba(31, 35, 40, 0.035);
+}
+
+.conversation-message--user .conversation-message__body {
+  width: fit-content;
+  max-width: min(78%, 760px);
+  padding: 12px 16px;
+  background: #eaf4ff;
+  border-top-right-radius: 7px;
+}
+
+.conversation-message--assistant .conversation-message__body {
+  width: min(100%, 900px);
+  padding: 15px 18px;
+  background: #f3f1f8;
+  border-top-left-radius: 7px;
+}
+
+.conversation-message__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.conversation-message__attachment {
+  display: block;
+  max-width: min(100%, 420px);
+  max-height: 420px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.conversation-message__body .wmde-markdown {
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.conversation-message__body .wmde-markdown > :first-child {
+  margin-top: 0;
+}
+
+.conversation-message__body .wmde-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.conversation-message__body .wmde-markdown pre {
+  overflow-x: auto;
+}
+
+.conversation-message__body .wmde-markdown code:not(pre code) {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: #ececec;
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.9em;
+}
+
+@media (max-width: 720px) {
+  .conversation-transcript {
+    padding: 22px 14px 36px;
+  }
+
+  .conversation-message {
+    gap: 9px;
+    margin-bottom: 22px;
+  }
+
+  .conversation-message__avatar {
+    flex-basis: 30px;
+    width: 30px;
+    height: 30px;
+  }
+
+  .conversation-message--user .conversation-message__body {
+    max-width: 88%;
+  }
+
+  .conversation-message--assistant .conversation-message__body {
+    padding: 13px 15px;
+  }
+}
 .stage__hint {
   position: absolute;
   inset: 0;
@@ -359,7 +568,7 @@ body {
  * Lives in the terminal pane's normal flow rather than floating over it.
  *
  * The pane sits to the LEFT of the embedded page, which is a native view that
- * always paints above the DOM — a dropdown anchored to the header would spill out
+ * always paints above the DOM 鈥?a dropdown anchored to the header would spill out
  * of this column and be swallowed by it. Taking vertical space instead of
  * overlaying is the only layout that cannot break.
  */
@@ -419,7 +628,7 @@ body {
   margin-bottom: 6px;
 }
 
-/* Which machine this note belongs to — the one thing that must not be guessed. */
+/* Which machine this note belongs to 鈥?the one thing that must not be guessed. */
 .notes__owner {
   flex: none;
   max-width: 55%;
@@ -701,7 +910,7 @@ body {
   line-height: 1.5;
 }
 
-/* A hint with no text at all — a state whose description was removed — must not
+/* A hint with no text at all 鈥?a state whose description was removed 鈥?must not
  * leave its 7px margin behind as a gap. */
 .terminal__hint:empty {
   display: none;
@@ -985,7 +1194,7 @@ body {
  *
  * Green rather than amber: this is the intended state while an SSH session is
  * attached, not a warning. It is loud because the stakes are "which computer is
- * about to run this" — the one fact the user must never have to guess at.
+ * about to run this" 鈥?the one fact the user must never have to guess at.
  */
 .badge--remote {
   background: rgba(63, 185, 80, 0.18);
@@ -1050,7 +1259,7 @@ body {
    * `appearance: none` because the native control draws its drop-down arrow with SYSTEM colours:
    * on Windows that is a light box, which looks broken against this dark bar. Removing the
    * native rendering also removes the arrow, so the chevron below is drawn as a background image
-   * (an inline SVG — no asset to load, and allowed by the renderer's CSP `img-src data:`).
+   * (an inline SVG 鈥?no asset to load, and allowed by the renderer's CSP `img-src data:`).
    */
   appearance: none;
   padding: 0 24px 0 10px;
@@ -1180,7 +1389,7 @@ body {
   color: var(--text);
 }
 
-/* A proxy is configured — worth noticing, since it changes how the page loads. */
+/* A proxy is configured 鈥?worth noticing, since it changes how the page loads. */
 .toolbar__settings--on {
   color: #e3b341;
 }
@@ -1192,7 +1401,7 @@ body {
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 300;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1204,7 +1413,7 @@ body {
  *
  * The settings dialog now carries a long session-import block, so growing to fit
  * the content pushed the buttons off-screen on a short window. Capping the box and
- * letting `.modal__body` scroll keeps the title, the close button and 保存 always
+ * letting `.modal__body` scroll keeps the title, the close button and 淇濆瓨 always
  * reachable. `min-height: 0` on the body is load-bearing: a flex item defaults to
  * `min-height: auto` and would refuse to shrink below its content, so the body
  * would overflow the box instead of scrolling inside it.
@@ -1285,7 +1494,7 @@ body {
  * The session-import value box.
  *
  * A textarea rather than an input because a SPLIT session token arrives as two cookies
- * (`.0` and `.1`) and has to be pasted whole — an input would scroll one of them out of
+ * (`.0` and `.1`) and has to be pasted whole 鈥?an input would scroll one of them out of
  * sight and make a correct paste look wrong. `resize: vertical` only: the dialog is a
  * fixed-height flex column now, and a horizontally resizable box can push its footer
  * off-screen.
@@ -1528,7 +1737,7 @@ body {
   color: var(--danger);
 }
 
-/* The host the model is currently driving — the one row that must be unmistakable. */
+/* The host the model is currently driving 鈥?the one row that must be unmistakable. */
 .ssh-list__pick--active {
   border-color: rgba(126, 231, 135, 0.35);
   background: rgba(63, 185, 80, 0.12);
@@ -1552,12 +1761,12 @@ body {
 
 /*
  * The footer is a direct child of `.modal__box` in the settings dialog, and the body
- * is the only scroll container — so 保存 stays put while the settings list scrolls.
+ * is the only scroll container 鈥?so 淇濆瓨 stays put while the settings list scrolls.
  *
- * The SSH dialog cannot use that shape: its 连接 button is `type="submit"` and must
+ * The SSH dialog cannot use that shape: its 杩炴帴 button is `type="submit"` and must
  * live inside the form, and a footer inside a scroll container scrolls away. There
- * the FORM becomes the scroll container and the footer is exempted from it — same
- * result, without `form="…"` attribute indirection.
+ * the FORM becomes the scroll container and the footer is exempted from it 鈥?same
+ * result, without `form="鈥?` attribute indirection.
  *
  * No negative margins here: `.modal__body` keeps its padding and the form simply
  * fills it. Bleeding the form to the edges would make its content scroll behind the
@@ -2390,7 +2599,7 @@ body {
   font-weight: 700;
 }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-header::before {
-  content: '类型';
+  content: '绫诲瀷';
   position: absolute;
   z-index: 3;
   right: 58px;
@@ -2413,7 +2622,7 @@ body {
 }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-row:hover { background: #f8faff; }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-row::before {
-  content: '文件夹';
+  content: '鏂囦欢澶?;
   position: absolute;
   right: 58px;
   top: 50%;
@@ -2424,7 +2633,7 @@ body {
   pointer-events: none;
 }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-row::after {
-  content: '•••';
+  content: '鈥⑩€⑩€?;
   position: absolute;
   right: 16px;
   top: 50%;
@@ -2863,6 +3072,30 @@ body {
 .settings-card__heading { display:flex; align-items:center; gap:12px; margin-bottom:16px; color:#182235; font-size:17px; font-weight:700; }
 .settings-card__icon { width:31px; height:31px; display:grid; place-items:center; border-radius:10px; background:#eef2ff; color:#5667f0; font-size:19px; font-weight:700; }
 .settings-proxy-row { display:grid; grid-template-columns: 180px minmax(240px,1fr) 96px 40px; align-items:center; gap:12px; min-height:56px; }
+.settings-avatar-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:42px; margin-top:4px; padding-top:4px; border-top:1px solid #edf0f5; }
+.settings-avatar-control { display:grid; justify-items:center; gap:6px; width:min(100%, 200px); }
+.settings-avatar-preview-img { width:96px; height:96px; object-fit:cover; border-radius:50%; }
+.settings-avatar-preview { width:36px; height:36px; display:grid; place-items:center; flex:none; overflow:hidden; border:1px solid #dce3ed; border-radius:50%; background:#eef4fb; color:#667a95; }
+.settings-avatar-preview img { width:100%; height:100%; object-fit:cover; }
+.settings-avatar-preview svg { width:22px; height:22px; }
+.settings-avatar-input { display:none; }
+.settings-avatar-button { min-height:36px; padding:0 13px; border:1px solid #d5dce8; border-radius:9px; background:#fff; color:#344054; font-size:12px; font-weight:600; cursor:pointer; }
+.settings-avatar-button:hover { background:#f5f7fb; }
+.settings-avatar-button--secondary { color:#6b7280; }
+.settings-avatar-position { flex:1 0 100%; display:grid; gap:8px; min-width:220px; padding-top:2px; }
+.settings-avatar-position label { display:grid; grid-template-columns:92px minmax(130px,1fr); align-items:center; gap:10px; color:#667085; font-size:12px; }
+.settings-avatar-position input[type="range"] { width:100%; accent-color:#6657ed; cursor:pointer; }
+.settings-avatar-control { display:grid; justify-items:center; gap:6px; width:min(100%, 200px); }
+.settings-avatar-preview-img { width:96px; height:96px; object-fit:cover; border-radius:50%; }
+.settings-avatar-editor { display:grid; place-items:center; overflow:hidden; border-radius:16px; background:#171b23; box-shadow:0 8px 24px rgba(31,35,40,.12); touch-action:none; }
+.settings-avatar-editor canvas { display:block; cursor:grab; }
+.settings-avatar-editor canvas:active { cursor:grabbing; }
+.settings-avatar-zoom { display:grid; grid-template-columns:36px minmax(150px,1fr) 44px; align-items:center; gap:9px; width:100%; color:#667085; font-size:12px; }
+.settings-avatar-zoom input[type="range"] { width:100%; accent-color:#6657ed; cursor:pointer; }
+.settings-avatar-zoom span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+.settings-avatar-hint { width:100%; color:#8b97aa; font-size:11px; line-height:1.55; text-align:center; }
+.settings-avatar-empty { display:none; }
+.settings-avatar-actions { display:flex; justify-content:center; gap:10px; width:100%; }
 .settings-proxy-row + .settings-proxy-row { margin-top:4px; }
 .settings-proxy-row__label { color:#28364b; font-size:14px; font-weight:600; }
 .settings-proxy-row__label small { display:block; margin-top:7px; color:#8b97aa; font-size:11px; font-weight:500; }
@@ -7876,6 +8109,14 @@ body {
   color: #e7edf7 !important;
 }
 
+.workspace[data-theme='dark'] .settings-avatar-row { border-color:#2d3a4d; }
+.workspace[data-theme='dark'] .settings-avatar-preview { background:#182231; border-color:#344258; color:#9fb0c6; }
+.workspace[data-theme='dark'] .settings-avatar-button { background:#0d141e; border-color:#344258; color:#e7edf7; }
+.workspace[data-theme='dark'] .settings-avatar-button:hover { background:#16202d; }
+.workspace[data-theme='dark'] .settings-avatar-position label { color:#98a6ba; }
+.workspace[data-theme='dark'] .settings-avatar-zoom { color:#98a6ba; }
+.workspace[data-theme='dark'] .settings-avatar-hint { color:#7f8ca0; }
+.workspace[data-theme='dark'] .settings-avatar-empty { background:#111925; border-color:#344258; color:#7f8ca0; }
 .workspace[data-theme='dark'] .settings-theme-select option {
   background: #111923;
   color: #e7edf7;
@@ -8235,7 +8476,7 @@ body {
   border-top-color: #2a3546 !important;
 }
 
-/* 工具箱下拉菜单（Base UI Menu）—— 默认跟随浅色主题 */
+/* 宸ュ叿绠变笅鎷夎彍鍗曪紙Base UI Menu锛夆€斺€?榛樿璺熼殢娴呰壊涓婚 */
 .toolbox-menu__positioner {
   z-index: 60;
 }
@@ -8268,7 +8509,7 @@ body {
   color: #1d3557;
 }
 
-/* 深色主题下的工具箱菜单 */
+/* 娣辫壊涓婚涓嬬殑宸ュ叿绠辫彍鍗?*/
 .workspace[data-theme='dark'] .toolbox-menu {
   background: #141922;
   border-color: #232b38;
@@ -8294,12 +8535,12 @@ body {
 }
 
 
-/* 弹窗里的 Git 图标：彩色品牌 Logo，不需要浅蓝衬底 */
+/* 寮圭獥閲岀殑 Git 鍥炬爣锛氬僵鑹插搧鐗?Logo锛屼笉闇€瑕佹祬钃濊‖搴?*/
 .confirm-dialog__icon--git {
   background: transparent;
   overflow: visible;
 }
-/* ---------------- Git 管理弹窗 ---------------- */
+/* ---------------- Git 绠＄悊寮圭獥 ---------------- */
 
 .git-dialog {
   display: flex;
@@ -9701,3 +9942,43 @@ body {
   background: #ffb84d;
   color: inherit;
 }
+
+/* Placeholder toggle in the AI chat toolbar. */
+.toolbar .toolbar__toggle {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.toolbar__toggle-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  margin: auto;
+}
+
+.toolbar .toolbar__toggle--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

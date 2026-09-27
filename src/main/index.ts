@@ -1,4 +1,4 @@
-import { join, posix } from 'node:path'
+﻿import { join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
@@ -17,6 +17,7 @@ import type {
   AppSettingsPatch,
   AutomationState,
   Conversation,
+  ConversationMessage,
   EmbedAuthState,
   EmbedBounds,
   EmbedCommand,
@@ -85,16 +86,31 @@ const SETTING_THEME = 'theme'
 const SETTING_EMBED_PROXY = 'embedProxy'
 const SETTING_SSH_PROXY = 'sshProxy'
 const SETTING_UPDATE_PROXY = 'updateProxy'
+const SETTING_USER_AVATAR = 'userAvatarDataUrl'
+const SETTING_USER_AVATAR_SOURCE = 'userAvatarSourceDataUrl'
+const SETTING_USER_AVATAR_POSITION_X = 'userAvatarPositionX'
+const SETTING_USER_AVATAR_POSITION_Y = 'userAvatarPositionY'
+const SETTING_USER_AVATAR_SCALE = 'userAvatarScale'
 const SETTING_LOCAL_MACHINE_ID = 'localMachineId'
 const SETTING_WORKSPACE_SESSION_ID = 'workspaceSessionId'
 const SETTING_WORKSPACE_OPEN_SSH_DIALOG = 'workspaceOpenSshDialog'
+
+function readAvatarPosition(value: string | null): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 50
+}
+
+function readAvatarScale(value: string | null): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(4, parsed)) : 1
+}
 
 let managerWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let quitting = false
 let store: ConversationStore | null = null
 let localMachineId = ''
-let settings: AppSettings = { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '' }
+let settings: AppSettings = { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 }
 const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
 let workspaceOpenSshDialog = false
@@ -476,6 +492,33 @@ function registerIpcHandlers(): void {
     if (!fromManager(event)) return false
     return destroySession(String(id))
   })
+  ipcMain.handle(
+    IpcChannels.sessionShowModelMenu,
+    (event, currentId: string): Promise<string | null> =>
+      new Promise((resolve) => {
+        const win = BrowserWindow.fromWebContents(event.sender)
+        if (!win) {
+          resolve(null)
+          return
+        }
+        let settled = false
+        const settle = (value: string | null): void => {
+          if (settled) return
+          settled = true
+          resolve(value)
+        }
+        const menu = Menu.buildFromTemplate(
+          CHAT_PLATFORMS.map((platform) => ({
+            label: platform.label,
+            type: 'radio' as const,
+            checked: platform.id === currentId,
+            click: () => settle(platform.id)
+          }))
+        )
+        menu.popup({ window: win, callback: () => settle(null) })
+      })
+  )
+
   ipcMain.handle(IpcChannels.sessionSwitchPlatform, (event, platformId: string): boolean => {
     if (!fromManager(event)) return false
     const runtime = currentSessionId === null ? undefined : runtimes.get(currentSessionId)
@@ -526,6 +569,17 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IpcChannels.conversationsList, (event): Conversation[] => runtimeForEvent(event)?.currentMachineConversations() ?? [])
+  ipcMain.handle(IpcChannels.conversationMessagesList, (event, conversationId: string): ConversationMessage[] => {
+    if (!runtimeForEvent(event) || !store) return []
+    const id = typeof conversationId === 'string' ? conversationId : ''
+    return id === '' ? [] : store.listConversationMessages(id)
+  })
+  ipcMain.handle(IpcChannels.conversationAttachmentRead, (event, attachmentId: string): string | null => {
+    if (!runtimeForEvent(event) || !store) return null
+    const id = typeof attachmentId === 'string' ? attachmentId : ''
+    return id === '' ? null : store.readConversationAttachment(id)
+  })
+
   ipcMain.handle(IpcChannels.conversationsSync, async (event): Promise<Conversation[]> => runtimeForEvent(event)?.refreshFromSidebar() ?? [])
   ipcMain.handle(IpcChannels.conversationsRemove, (event, id: string): Conversation[] => {
     const runtime = runtimeForEvent(event)
@@ -675,7 +729,7 @@ function registerIpcHandlers(): void {
     return runtime.ssh.getState()
   })
 
-  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => isManagerEvent(event) ? { ...settings } : { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '' })
+  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => isManagerEvent(event) ? { ...settings } : { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 })
   ipcMain.handle(IpcChannels.settingsUpdate, async (event, patch: AppSettingsPatch): Promise<AppSettings> => {
     if (!isManagerEvent(event) || !store) return { ...settings }
     if (patch?.theme === 'light' || patch?.theme === 'dark') {
@@ -699,6 +753,29 @@ function registerIpcHandlers(): void {
       settings = { ...settings, updateProxy: proxy }
       store.setSetting(SETTING_UPDATE_PROXY, proxy)
       await applyUpdateProxy(proxy)
+    }
+    if (typeof patch?.userAvatarDataUrl === 'string') {
+      settings = { ...settings, userAvatarDataUrl: patch.userAvatarDataUrl }
+      store.setSetting(SETTING_USER_AVATAR, patch.userAvatarDataUrl)
+    }
+    if (typeof patch?.userAvatarSourceDataUrl === 'string') {
+      settings = { ...settings, userAvatarSourceDataUrl: patch.userAvatarSourceDataUrl }
+      store.setSetting(SETTING_USER_AVATAR_SOURCE, patch.userAvatarSourceDataUrl)
+    }
+    if (typeof patch?.userAvatarPositionX === 'number' && Number.isFinite(patch.userAvatarPositionX)) {
+      const value = Math.max(0, Math.min(100, patch.userAvatarPositionX))
+      settings = { ...settings, userAvatarPositionX: value }
+      store.setSetting(SETTING_USER_AVATAR_POSITION_X, String(value))
+    }
+    if (typeof patch?.userAvatarPositionY === 'number' && Number.isFinite(patch.userAvatarPositionY)) {
+      const value = Math.max(0, Math.min(100, patch.userAvatarPositionY))
+      settings = { ...settings, userAvatarPositionY: value }
+      store.setSetting(SETTING_USER_AVATAR_POSITION_Y, String(value))
+    }
+    if (typeof patch?.userAvatarScale === 'number' && Number.isFinite(patch.userAvatarScale)) {
+      const value = Math.max(1, Math.min(4, patch.userAvatarScale))
+      settings = { ...settings, userAvatarScale: value }
+      store.setSetting(SETTING_USER_AVATAR_SCALE, String(value))
     }
     return { ...settings }
   })
@@ -750,7 +827,12 @@ if (!app.requestSingleInstanceLock()) {
       theme: conversationStore.getSetting(SETTING_THEME) === 'dark' ? 'dark' : 'light',
       embedProxy: conversationStore.getSetting(SETTING_EMBED_PROXY) ?? '',
       sshProxy: conversationStore.getSetting(SETTING_SSH_PROXY) ?? '',
-      updateProxy: conversationStore.getSetting(SETTING_UPDATE_PROXY) ?? ''
+      updateProxy: conversationStore.getSetting(SETTING_UPDATE_PROXY) ?? '',
+      userAvatarDataUrl: conversationStore.getSetting(SETTING_USER_AVATAR) ?? '',
+      userAvatarSourceDataUrl: conversationStore.getSetting(SETTING_USER_AVATAR_SOURCE) ?? conversationStore.getSetting(SETTING_USER_AVATAR) ?? '',
+      userAvatarPositionX: readAvatarPosition(conversationStore.getSetting(SETTING_USER_AVATAR_POSITION_X)),
+      userAvatarPositionY: readAvatarPosition(conversationStore.getSetting(SETTING_USER_AVATAR_POSITION_Y)),
+      userAvatarScale: readAvatarScale(conversationStore.getSetting(SETTING_USER_AVATAR_SCALE))
     }
     await applyEmbedProxy(settings.embedProxy)
     setUpdaterBroadcast((status) => {
@@ -805,3 +887,5 @@ app.on('will-quit', () => {
   store?.close()
   store = null
 })
+
+

@@ -1,14 +1,18 @@
 import { DatabaseSync } from 'node:sqlite'
-import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, extname, join } from 'node:path'
+import { nativeImage } from 'electron'
 import type {
   Conversation,
+  ConversationImageAttachmentInput,
   ExecutionRecord,
   ExecutionStatus,
   ScrapedConversation,
   SshHost
 } from '../shared/types'
+
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -34,6 +38,42 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
   ON conversations (updated_at DESC);
+
+-- Clean user/assistant transcript. Internal system prompts, terminal command output, and
+-- assistant command instructions never enter this table; those stay in the automation pipeline.
+CREATE TABLE IF NOT EXISTS conversation_messages (
+  id                TEXT PRIMARY KEY,
+  conversation_id   TEXT NOT NULL,
+  role              TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+  source_message_id TEXT,
+  content           TEXT NOT NULL,
+  created_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation
+  ON conversation_messages (conversation_id, created_at ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_messages_source
+  ON conversation_messages (conversation_id, role, source_message_id)
+  WHERE source_message_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS message_attachments (
+  id           TEXT PRIMARY KEY,
+  message_id   TEXT NOT NULL,
+  kind         TEXT NOT NULL CHECK(kind IN ('image')),
+  mime_type    TEXT NOT NULL,
+  file_name    TEXT NOT NULL,
+  storage_path TEXT NOT NULL,
+  sha256       TEXT NOT NULL,
+  width        INTEGER,
+  height       INTEGER,
+  size_bytes   INTEGER NOT NULL,
+  ordinal      INTEGER NOT NULL,
+  created_at   INTEGER NOT NULL,
+  UNIQUE(message_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_message_attachments_message
+  ON message_attachments (message_id, ordinal ASC);
+CREATE INDEX IF NOT EXISTS idx_message_attachments_sha256
+  ON message_attachments (sha256);
 
 -- One row per command the model asked for. The primary key is ChatGPT's own
 -- assistant message id, which is what makes "运行过的命令不能运行了" survive a
@@ -116,6 +156,39 @@ interface ConversationRow {
   updated_at: number
 }
 
+interface ConversationMessageRow {
+  id: string
+  conversation_id: string
+  role: 'user' | 'assistant'
+  source_message_id: string | null
+  content: string
+  created_at: number
+}
+interface MessageAttachmentRow {
+  id: string
+  message_id: string
+  kind: 'image'
+  mime_type: string
+  file_name: string
+  storage_path: string
+  sha256: string
+  width: number | null
+  height: number | null
+  size_bytes: number
+  ordinal: number
+  created_at: number
+}
+
+/**
+ * Command replies belong to the execution pipeline, not to the clean chat transcript.
+ * DeepSeek does not keep the same message identity between the streamed command event and
+ * the later rendered Markdown, so matching only `executions.message_id` is not sufficient.
+ * The command protocol is deliberately narrow: a JSON object with a string `command` field.
+ */
+function isAssistantCommandReply(content: string): boolean {
+  return /\{\s*["']command["']\s*:\s*["']/s.test(String(content || ''))
+}
+
 interface ExecutionRow {
   message_id: string
   conversation_id: string
@@ -172,14 +245,18 @@ function toExecutionRecord(row: ExecutionRow): ExecutionRecord {
  */
 export class ConversationStore {
   private readonly db: DatabaseSync
+  private readonly attachmentsDir: string
 
   constructor(filePath: string) {
     // userData exists once Electron is ready, but be defensive on first run.
     mkdirSync(dirname(filePath), { recursive: true })
+    this.attachmentsDir = join(dirname(filePath), 'attachments')
+    mkdirSync(this.attachmentsDir, { recursive: true })
     this.db = new DatabaseSync(filePath)
     this.db.exec('PRAGMA journal_mode = WAL;')
     this.db.exec(SCHEMA)
     this.migrate()
+    this.removeDuplicateMessageAttachments()
   }
 
   /**
@@ -248,6 +325,80 @@ export class ConversationStore {
     this.db.exec(
       'CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations (project_id, updated_at DESC)'
     )
+    // Older builds briefly stored assistant command JSON as chat. Remove both rows whose
+    // source id matches an execution and DeepSeek rows whose streamed/rendered ids differ.
+    this.db.exec(
+      "DELETE FROM conversation_messages WHERE role = 'assistant' AND source_message_id IN (SELECT message_id FROM executions)"
+    )
+    const commandRows = this.db
+      .prepare("SELECT id, content FROM conversation_messages WHERE role = 'assistant'")
+      .all() as unknown as Array<{ id: string; content: string }>
+    const removeCommandReply = this.db.prepare('DELETE FROM conversation_messages WHERE id = ?')
+    let removedCommandReplies = 0
+    for (const row of commandRows) {
+      if (!isAssistantCommandReply(row.content)) continue
+      removeCommandReply.run(row.id)
+      removedCommandReplies += 1
+    }
+    if (removedCommandReplies > 0) {
+      console.info(`[db] removed ${removedCommandReplies} assistant command reply record(s)`)
+    }
+  }
+
+  /**
+   * Return a stable identity for the decoded image pixels. Raw PNG/JPEG bytes can
+   * differ after the browser's canvas fallback while displaying the same picture.
+   */
+  private attachmentContentHash(bytes: Buffer, rawHash = createHash('sha256').update(bytes).digest('hex')): string {
+    try {
+      const image = nativeImage.createFromBuffer(bytes)
+      if (!image.isEmpty()) return createHash('sha256').update(image.toPNG()).digest('hex')
+    } catch (_) {
+      /* malformed or unsupported image: retain the raw-byte identity */
+    }
+    return rawHash
+  }
+
+  /** Remove duplicate decoded images left by older capture builds. */
+  private removeDuplicateMessageAttachments(): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id, message_id, storage_path, sha256
+           FROM message_attachments
+          ORDER BY message_id ASC, ordinal ASC, rowid ASC`
+      )
+      .all() as unknown as Array<{ id: string; message_id: string; storage_path: string; sha256: string }>
+    if (rows.length < 2) return
+
+    const seen = new Set<string>()
+    const duplicates: Array<{ id: string; storagePath: string }> = []
+    for (const row of rows) {
+      const absolutePath = join(this.attachmentsDir, row.storage_path)
+      let contentHash = row.sha256
+      try {
+        if (existsSync(absolutePath)) contentHash = this.attachmentContentHash(readFileSync(absolutePath), row.sha256)
+      } catch (_) {
+        /* leave an unreadable attachment identifiable by its stored raw hash */
+      }
+      const key = `${row.message_id}:${contentHash}`
+      if (seen.has(key)) duplicates.push({ id: row.id, storagePath: row.storage_path })
+      else seen.add(key)
+    }
+    if (duplicates.length === 0) return
+
+    const remove = this.db.prepare('DELETE FROM message_attachments WHERE id = ?')
+    for (const duplicate of duplicates) remove.run(duplicate.id)
+    const stillReferenced = this.db.prepare('SELECT 1 FROM message_attachments WHERE storage_path = ? LIMIT 1')
+    for (const duplicate of duplicates) {
+      if (stillReferenced.get(duplicate.storagePath)) continue
+      const absolutePath = join(this.attachmentsDir, duplicate.storagePath)
+      try {
+        if (existsSync(absolutePath)) unlinkSync(absolutePath)
+      } catch (_) {
+        /* the row is gone; a later orphan sweep can remove an undeletable file */
+      }
+    }
+    console.info(`[db] removed ${duplicates.length} duplicate image attachment(s)`)
   }
 
   /**
@@ -415,7 +566,39 @@ export class ConversationStore {
     return Number(result.changes) > 0
   }
   remove(id: string): void {
+    const paths = this.db
+      .prepare(
+        `SELECT DISTINCT storage_path
+           FROM message_attachments
+          WHERE message_id IN (
+            SELECT id FROM conversation_messages WHERE conversation_id = ?
+          )`
+      )
+      .all(id) as unknown as Array<{ storage_path: string }>
+
+    this.db
+      .prepare(
+        `DELETE FROM message_attachments
+          WHERE message_id IN (
+            SELECT id FROM conversation_messages WHERE conversation_id = ?
+          )`
+      )
+      .run(id)
+    this.db.prepare('DELETE FROM conversation_messages WHERE conversation_id = ?').run(id)
     this.db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+
+    for (const row of paths) {
+      const stillReferenced = this.db
+        .prepare('SELECT 1 AS ok FROM message_attachments WHERE storage_path = ? LIMIT 1')
+        .get(row.storage_path)
+      if (stillReferenced) continue
+      const absolutePath = join(this.attachmentsDir, row.storage_path)
+      try {
+        if (existsSync(absolutePath)) unlinkSync(absolutePath)
+      } catch (error) {
+        console.warn('[db] failed to remove orphaned attachment:', (error as Error).message)
+      }
+    }
   }
 
   /**
@@ -429,8 +612,7 @@ export class ConversationStore {
     const invalid = rows.filter((row) => !isValid(row.id))
     if (invalid.length === 0) return 0
 
-    const statement = this.db.prepare('DELETE FROM conversations WHERE id = ?')
-    for (const row of invalid) statement.run(row.id)
+    for (const row of invalid) this.remove(row.id)
     return invalid.length
   }
 
@@ -479,6 +661,156 @@ export class ConversationStore {
     return true
   }
 
+  /** Persist one clean chat turn plus any user image attachments. */
+  appendConversationMessage(
+    conversationId: string,
+    role: 'user' | 'assistant',
+    content: string,
+    sourceMessageId: string | null = null,
+    now = Date.now(),
+    attachments: ConversationImageAttachmentInput[] = []
+  ): string | null {
+    if (content.trim() === '' && attachments.length === 0) return null
+    // A command is already represented by an execution record. Keep it out of the
+    // user-facing transcript even if a page adapter reports it as a normal assistant turn.
+    if (role === 'assistant' && isAssistantCommandReply(content)) return null
+    const id = randomUUID()
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO conversation_messages
+           (id, conversation_id, role, source_message_id, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, conversationId, role, sourceMessageId, content, now)
+    if (Number(result.changes) === 0) return null
+    if (role === 'user' && attachments.length > 0) this.persistMessageAttachments(id, attachments, now)
+    return id
+  }
+
+  /** Restore Markdown for a message already captured from this exact page turn. */
+  refreshAssistantMessageMarkdown(conversationId: string, sourceMessageId: string, content: string): boolean {
+    if (!sourceMessageId || !content.trim() || isAssistantCommandReply(content)) return false
+    const result = this.db.prepare(
+      `UPDATE conversation_messages
+          SET content = ?
+        WHERE conversation_id = ? AND role = 'assistant' AND source_message_id = ?
+          AND content <> ?
+          AND NOT EXISTS (SELECT 1 FROM executions WHERE message_id = ?)`
+    ).run(content, conversationId, sourceMessageId, content, sourceMessageId)
+    return Number(result.changes) > 0
+  }
+
+  private persistMessageAttachments(
+    messageId: string,
+    attachments: ConversationImageAttachmentInput[],
+    now: number
+  ): void {
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO message_attachments
+         (id, message_id, kind, mime_type, file_name, storage_path, sha256, width, height, size_bytes, ordinal, created_at)
+       VALUES (?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    const seenContent = new Set<string>()
+    let ordinal = 0
+    for (const attachment of attachments) {
+      if (!attachment.mimeType.startsWith('image/') || attachment.dataBase64 === '') continue
+      const bytes = Buffer.from(attachment.dataBase64, 'base64')
+      if (bytes.length === 0 || bytes.length > MAX_ATTACHMENT_BYTES) continue
+      const sha256 = createHash('sha256').update(bytes).digest('hex')
+      const contentHash = this.attachmentContentHash(bytes, sha256)
+      if (seenContent.has(contentHash)) continue
+      seenContent.add(contentHash)
+      const sourceExt = extname(attachment.fileName).toLowerCase()
+      const mimeExt: Record<string, string> = {
+        'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif',
+        'image/avif': '.avif', 'image/bmp': '.bmp', 'image/svg+xml': '.svg'
+      }
+      const extension = /^\.[a-z0-9]{1,8}$/.test(sourceExt) ? sourceExt : (mimeExt[attachment.mimeType] ?? '.img')
+      const storagePath = `${sha256}${extension}`
+      const absolutePath = join(this.attachmentsDir, storagePath)
+      if (!existsSync(absolutePath)) writeFileSync(absolutePath, bytes)
+      insert.run(randomUUID(), messageId, attachment.mimeType, attachment.fileName || storagePath, storagePath, sha256, attachment.width, attachment.height, bytes.length, ordinal, now)
+      ordinal += 1
+    }
+  }
+  listConversationMessages(conversationId: string): Array<{
+    id: string
+    conversationId: string
+    role: 'user' | 'assistant'
+    sourceMessageId: string | null
+    content: string
+    attachments: Array<{
+      id: string
+      messageId: string
+      kind: 'image'
+      mimeType: string
+      fileName: string
+      sha256: string
+      width: number | null
+      height: number | null
+      sizeBytes: number
+      ordinal: number
+    }>
+    createdAt: number
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, conversation_id, role, source_message_id, content, created_at
+           FROM conversation_messages
+          WHERE conversation_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM executions
+               WHERE executions.message_id = conversation_messages.source_message_id
+            )
+          ORDER BY created_at ASC, rowid ASC`
+      )
+      .all(conversationId) as unknown as ConversationMessageRow[]
+    // Also filter at read time so a long-lived process cannot expose a legacy command row
+    // that was written before the startup migration (or by an older running session).
+    const visibleRows = rows.filter(
+      (row) => row.role !== 'assistant' || !isAssistantCommandReply(row.content)
+    )
+    const attachmentsForMessage = this.db.prepare(
+      `SELECT id, message_id, kind, mime_type, file_name, storage_path, sha256, width, height, size_bytes, ordinal, created_at
+         FROM message_attachments
+        WHERE message_id = ?
+        ORDER BY ordinal ASC`
+    )
+    return visibleRows.map((row) => {
+      const attachmentRows = attachmentsForMessage.all(row.id) as unknown as MessageAttachmentRow[]
+      return {
+        id: row.id,
+        conversationId: row.conversation_id,
+        role: row.role,
+        sourceMessageId: row.source_message_id,
+        content: row.content,
+        attachments: attachmentRows.map((attachment) => ({
+          id: attachment.id,
+          messageId: attachment.message_id,
+          kind: attachment.kind,
+          mimeType: attachment.mime_type,
+          fileName: attachment.file_name,
+          sha256: attachment.sha256,
+          width: attachment.width,
+          height: attachment.height,
+          sizeBytes: attachment.size_bytes,
+          ordinal: attachment.ordinal
+        })),
+        createdAt: row.created_at
+      }
+    })
+  }
+
+  readConversationAttachment(attachmentId: string): string | null {
+    const row = this.db
+      .prepare('SELECT * FROM message_attachments WHERE id = ?')
+      .get(attachmentId) as unknown as MessageAttachmentRow | undefined
+    if (!row || row.kind !== 'image') return null
+    const absolutePath = join(this.attachmentsDir, row.storage_path)
+    if (!existsSync(absolutePath)) return null
+    const data = readFileSync(absolutePath).toString('base64')
+    return `data:${row.mime_type};base64,${data}`
+  }
   /** Mark a stored command as finished (or as skipped/blocked). */
   finishExecution(
     messageId: string,

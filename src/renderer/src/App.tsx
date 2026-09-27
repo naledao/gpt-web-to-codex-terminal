@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, Willow } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
 import { Menu } from '@base-ui/react/menu'
+import AvatarEditor from 'react-avatar-editor'
+import type { AvatarEditorRef } from 'react-avatar-editor'
 import GitDialog from './components/GitDialog'
+import brandIcon from './assets/brand-icon.png'
 import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { SESSION_COOKIE_NAME } from '@shared/types'
@@ -13,6 +16,8 @@ import type {
   AppSettings,
   AutomationState,
   Conversation,
+  ConversationAttachment,
+  ConversationMessage,
   EmbedState,
   ExecutionMode,
   ExecutionRecord,
@@ -139,6 +144,38 @@ function formatDuration(milliseconds: number): string {
     : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+function conversationMessagesEqual(left: ConversationMessage[], right: ConversationMessage[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((message, index) => {
+    const other = right[index]
+    if (
+      message.id !== other.id ||
+      message.conversationId !== other.conversationId ||
+      message.role !== other.role ||
+      message.sourceMessageId !== other.sourceMessageId ||
+      message.content !== other.content ||
+      message.createdAt !== other.createdAt ||
+      message.attachments.length !== other.attachments.length
+    ) {
+      return false
+    }
+    return message.attachments.every((attachment, attachmentIndex) => {
+      const otherAttachment = other.attachments[attachmentIndex]
+      return (
+        attachment.id === otherAttachment.id &&
+        attachment.messageId === otherAttachment.messageId &&
+        attachment.mimeType === otherAttachment.mimeType &&
+        attachment.fileName === otherAttachment.fileName &&
+        attachment.sha256 === otherAttachment.sha256 &&
+        attachment.width === otherAttachment.width &&
+        attachment.height === otherAttachment.height &&
+        attachment.sizeBytes === otherAttachment.sizeBytes &&
+        attachment.ordinal === otherAttachment.ordinal
+      )
+    })
+  })
+}
+
 
 interface AppProps {
   initialSshDialogOpen?: boolean
@@ -150,6 +187,29 @@ interface AppProps {
   onThemeChange: (theme: AppTheme) => void
 }
 
+function ConversationAttachmentImage({ attachment }: { attachment: ConversationAttachment }): JSX.Element | null {
+  const [src, setSrc] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void window.api.readConversationAttachment(attachment.id).then((value) => {
+      if (!cancelled) setSrc(value)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [attachment.id])
+
+  if (!src) return null
+  return (
+    <img
+      className="conversation-message__attachment"
+      src={src}
+      alt={attachment.fileName || 'Image attachment'}
+      loading="lazy"
+    />
+  )
+}
 export default function App({ initialSshDialogOpen = false, platformId = '', globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
@@ -157,6 +217,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [interceptor, setInterceptor] = useState<InterceptorStatus | null>(null)
   const [automation, setAutomation] = useState<AutomationState | null>(null)
   const [executions, setExecutions] = useState<ExecutionRecord[]>([])
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([])
   const [terminal, setTerminal] = useState<TerminalState | null>(null)
   const [durationNow, setDurationNow] = useState(() => Date.now())
   const [address, setAddress] = useState('')
@@ -166,9 +227,15 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [panelWidth, setPanelWidth] = useState(() => readStoredNumber(STORAGE_PANEL_WIDTH, PANEL_DEFAULT_WIDTH))
   const [panelCollapsed, setPanelCollapsed] = useState(() => readStoredBool(STORAGE_PANEL_COLLAPSED, false))
   const [switchingPlatform, setSwitchingPlatform] = useState(false)
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [placeholderToggle, setPlaceholderToggle] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [userAvatarDraft, setUserAvatarDraft] = useState('')
+  const [userAvatarSourceDraft, setUserAvatarSourceDraft] = useState('')
+  const [userAvatarPositionXDraft, setUserAvatarPositionXDraft] = useState(50)
+  const [userAvatarPositionYDraft, setUserAvatarPositionYDraft] = useState(50)
+  const [userAvatarScaleDraft, setUserAvatarScaleDraft] = useState(1)
+  const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const [proxyDraft, setProxyDraft] = useState('')
   const [themeDraft, setThemeDraft] = useState<AppTheme>('light')
   const [savingSettings, setSavingSettings] = useState(false)
@@ -254,6 +321,11 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   /** True when the machine in charge has a note; the marker on the 说明 button. */
   const notesSet = (notes?.text ?? '').trim() !== ''
   const slotRef = useRef<HTMLDivElement>(null)
+  const conversationTranscriptRef = useRef<HTMLDivElement>(null)
+  /** Whether the user has left the backup transcript pinned to its bottom edge. */
+  const conversationStickToBottomRef = useRef(true)
+  const userAvatarInputRef = useRef<HTMLInputElement>(null)
+  const userAvatarEditorRef = useRef<AvatarEditorRef>(null)
   /** The pane the toolbox menu mounts into, so it can never spill under the native web view. */
   const toolboxPaneRef = useRef<HTMLElement>(null)
   const terminalOutputRef = useRef<HTMLDivElement>(null)
@@ -420,6 +492,27 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     }
   }, [])
 
+  const refreshConversationMessages = useCallback(async (): Promise<void> => {
+    if (!conversationId) {
+      setConversationMessages([])
+      return
+    }
+    try {
+      const next = await window.api.listConversationMessages(conversationId)
+      setConversationMessages((current) => (conversationMessagesEqual(current, next) ? current : next))
+    } catch {
+      /* leave the previous transcript in place */
+    }
+  }, [conversationId])
+
+  useEffect(() => {
+    void refreshConversationMessages()
+  }, [refreshConversationMessages])
+
+  useEffect(
+    () => window.api.onInterceptorEvent(() => void refreshConversationMessages()),
+    [refreshConversationMessages]
+  )
   // Executions belong to whichever conversation is on screen.
   const refreshExecutions = useCallback(async (): Promise<void> => {
     if (!conversationId) {
@@ -451,6 +544,45 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     const element = terminalOutputRef.current
     if (element) element.scrollTop = element.scrollHeight
   }, [terminal?.lines, ssh?.lines])
+
+  const trackConversationScroll = useCallback(() => {
+    const element = conversationTranscriptRef.current
+    if (!element) return
+    const distanceFromBottom = element.scrollHeight - element.clientHeight - element.scrollTop
+    conversationStickToBottomRef.current = distanceFromBottom <= 24
+  }, [])
+
+  // A fresh switch into the backup view starts at the newest message. Once the user scrolls
+  // away, later layout changes keep that choice instead of pulling the view back down.
+  useEffect(() => {
+    if (placeholderToggle) conversationStickToBottomRef.current = true
+  }, [placeholderToggle])
+
+  // Keep the newest message visible while the transcript finishes rendering.
+  useEffect(() => {
+    if (!placeholderToggle) return
+    const element = conversationTranscriptRef.current
+    if (!element) return
+
+    const scroll = (): void => {
+      if (!conversationStickToBottomRef.current) return
+      element.scrollTop = element.scrollHeight
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(scroll)
+    })
+
+    const observer = new ResizeObserver(() => {
+      window.requestAnimationFrame(scroll)
+    })
+    for (const child of Array.from(element.children)) observer.observe(child)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [placeholderToggle, conversationMessages.length])
 
   /**
    * The embedded page is a NATIVE view, not a DOM node, so it cannot be
@@ -995,6 +1127,11 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         setThemeDraft(value.theme)
         setSshProxyDraft(value.sshProxy)
         setUpdateProxyDraft(value.updateProxy)
+        setUserAvatarDraft(value.userAvatarDataUrl)
+        setUserAvatarSourceDraft(value.userAvatarSourceDataUrl || value.userAvatarDataUrl)
+        setUserAvatarPositionXDraft(value.userAvatarPositionX)
+        setUserAvatarPositionYDraft(value.userAvatarPositionY)
+        setUserAvatarScaleDraft(value.userAvatarScale)
       })
       .catch(() => {
         /* the dialog renders a placeholder */
@@ -1044,9 +1181,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
    * overlay alone would be hidden behind it. Hide the view while a dialog is up.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
+    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen])
+  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -1217,6 +1354,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   }, [sshPickerOpen, notesOpen, sshFilesOpen])
 
   const saveSettings = useCallback(async (): Promise<void> => {
+    let avatarDataUrl = userAvatarDraft
+    if (!userAvatarSourceDraft) avatarDataUrl = ''
+    else if (userAvatarEditorRef.current) avatarDataUrl = userAvatarEditorRef.current.getImageScaledToCanvas().toDataURL('image/png')
     setSavingSettings(true)
     try {
       // Show back what main actually stored — it normalises a bare "host:port"
@@ -1225,7 +1365,12 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         theme: themeDraft,
         embedProxy: proxyDraft,
         sshProxy: sshProxyDraft,
-        updateProxy: updateProxyDraft
+        updateProxy: updateProxyDraft,
+        userAvatarDataUrl: avatarDataUrl,
+        userAvatarSourceDataUrl: userAvatarSourceDraft,
+        userAvatarPositionX: userAvatarPositionXDraft,
+        userAvatarPositionY: userAvatarPositionYDraft,
+        userAvatarScale: userAvatarScaleDraft
       })
       setSettings(next)
       onThemeChange(next.theme)
@@ -1233,13 +1378,18 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       setProxyDraft(next.embedProxy)
       setSshProxyDraft(next.sshProxy)
       setUpdateProxyDraft(next.updateProxy)
+      setUserAvatarDraft(next.userAvatarDataUrl)
+      setUserAvatarSourceDraft(next.userAvatarSourceDataUrl || next.userAvatarDataUrl)
+      setUserAvatarPositionXDraft(next.userAvatarPositionX)
+      setUserAvatarPositionYDraft(next.userAvatarPositionY)
+      setUserAvatarScaleDraft(next.userAvatarScale)
       setSettingsOpen(false)
     } catch {
       /* leave the dialog open so the input is not lost */
     } finally {
       setSavingSettings(false)
     }
-  }, [onThemeChange, proxyDraft, sshProxyDraft, themeDraft, updateProxyDraft])
+  }, [onThemeChange, proxyDraft, sshProxyDraft, themeDraft, updateProxyDraft, userAvatarDraft, userAvatarSourceDraft, userAvatarPositionXDraft, userAvatarPositionYDraft, userAvatarScaleDraft])
 
   /** Drag the terminal's right edge to resize the column. */
   const startResize = useCallback(
@@ -1370,54 +1520,38 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
             A dropdown rather than a row of buttons: one-of-N is what a select is for, and the
             list is expected to grow.
           */}
-          <div
-            className={`model-picker${modelMenuOpen ? ' model-picker--open' : ''}`}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setModelMenuOpen(false)
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                setModelMenuOpen(false)
-              }
-            }}
-          >
+          <div className="model-picker">
             <button
               type="button"
               className="model-picker__trigger"
               aria-label="模型"
-              aria-haspopup="listbox"
-              aria-expanded={modelMenuOpen}
+              aria-haspopup="menu"
               disabled={taskRunning || switchingPlatform || platformId === ''}
               title={taskRunning ? '任务运行中不能切换模型' : '切换模型'}
-              onClick={() => setModelMenuOpen((value) => !value)}
+              onClick={() => {
+                void window.api.showModelMenu(platformId).then((next) => {
+                  if (next && next !== platformId) void switchPlatform(next)
+                })
+              }}
             >
               <span>{CHAT_PLATFORMS.find((platform) => platform.id === platformId)?.label || '模型'}</span>
               <svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" /></svg>
             </button>
-            {modelMenuOpen ? (
-              <div className="model-picker__menu" role="listbox" aria-label="选择模型">
-                {CHAT_PLATFORMS.map((platform) => (
-                  <button
-                    key={platform.id}
-                    type="button"
-                    role="option"
-                    aria-selected={platform.id === platformId}
-                    className={`model-picker__option${platform.id === platformId ? ' model-picker__option--active' : ''}`}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      setModelMenuOpen(false)
-                      if (platform.id !== platformId) void switchPlatform(platform.id)
-                    }}
-                  >
-                    <span>{platform.label}</span>
-                    {platform.id === platformId ? <span className="model-picker__check">✓</span> : null}
-                  </button>
-                ))}
-              </div>
-            ) : null}
           </div>
 
+          <button
+            type="button"
+            role="switch"
+            aria-checked={placeholderToggle}
+            aria-label="切换对话视图"
+            title="切换对话视图"
+            className={placeholderToggle ? 'toolbar__toggle toolbar__toggle--on' : 'toolbar__toggle'}
+            onClick={() => setPlaceholderToggle((value) => !value)}
+          >
+            <svg className="toolbar__toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M7 10h14l-4-4m0 8H3l4 4" />
+            </svg>
+          </button>
           <button
             type="button"
             title="设置"
@@ -1437,12 +1571,67 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
           the DOM and cannot be rounded or z-ordered.
         */}
         <div className="stage__slot" ref={slotRef}>
-          <div className="stage__hint">
-            <p className="stage__hint-title">正在加载 chatgpt.com …</p>
-            <p className="stage__hint-sub">
-              若长时间空白，通常是 Cloudflare 人机校验或该网络无法访问 chatgpt.com。
-            </p>
-          </div>
+          {placeholderToggle ? (
+            <div className="stage__alternate-card" aria-label="对话视图">
+              <div
+                className="conversation-transcript"
+                ref={conversationTranscriptRef}
+                onScroll={trackConversationScroll}
+              >
+                {conversationMessages.length === 0 ? (
+                  <div className="conversation-transcript__empty">暂无对话记录</div>
+                ) : (
+                  conversationMessages.map((message) => (
+                    <article
+                      key={message.id}
+                      className={`conversation-message conversation-message--${message.role}`}
+                    >
+                      <div className="conversation-message__avatar" aria-hidden="true">
+                        {message.role === 'user' ? (
+                          settings?.userAvatarDataUrl ? (
+                            <img className="conversation-message__user-icon" src={settings.userAvatarDataUrl} alt="" style={{ objectPosition: `${settings.userAvatarPositionX}% ${settings.userAvatarPositionY}%` }} />
+                          ) : (
+                            <svg viewBox="0 0 24 24">
+                              <circle cx="12" cy="8" r="4" fill="currentColor" />
+                              <path d="M4.5 20c.7-4.1 3.2-6.2 7.5-6.2s6.8 2.1 7.5 6.2" fill="currentColor" />
+                            </svg>
+                          )
+                        ) : (
+                          <img className="conversation-message__assistant-icon" src={brandIcon} alt="" />
+                        )}
+                      </div>
+                      <div className="conversation-message__content">
+                        <div className="conversation-message__meta">
+                          <time className="conversation-message__time" dateTime={new Date(message.createdAt).toISOString()}>
+                            {formatTime(message.createdAt)}
+                          </time>
+                        </div>
+                        <div className="conversation-message__body">
+                          {message.attachments.length > 0 ? (
+                            <div className="conversation-message__attachments">
+                              {message.attachments.map((attachment) => (
+                                <ConversationAttachmentImage key={attachment.id} attachment={attachment} />
+                              ))}
+                            </div>
+                          ) : null}
+                          {message.content.trim() !== '' ? (
+                            <MDEditor.Markdown source={message.content} wrapperElement={{ 'data-color-mode': 'light' }} />
+                          ) : null}
+                        </div>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="stage__hint">
+              <p className="stage__hint-title">正在加载 chatgpt.com …</p>
+              <p className="stage__hint-sub">
+                若长时间空白，通常是 Cloudflare 人机校验或该网络无法访问 chatgpt.com。
+              </p>
+            </div>
+          )}
         </div>
       </main>
 
@@ -1634,7 +1823,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                           tabIndex={locked ? -1 : 0}
                           draggable={Boolean(conversation.project)}
                           aria-disabled={locked}
-                          title={locked ? '任务进行中，结束任务后才能切换对话' : `${displayTitle(conversation)}\n${conversation.url}`}
+                          title={locked ? '任务进行中，结束任务后才能切换对话' : `${displayTitle(conversation)}
+${conversation.url}`}
                           onDragStart={(event) => {
                             event.dataTransfer.setData('text/plain', conversation.id)
                             event.dataTransfer.effectAllowed = 'move'
@@ -1827,7 +2017,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                 <button
                   type="button"
                   className="terminal-pane__cwd"
-                  title={`${ssh.modelCwd || '目录尚未确定'}\n点击编辑，回车切换目录`}
+                  title={`${ssh.modelCwd || '目录尚未确定'}
+点击编辑，回车切换目录`}
                   onClick={() => setCwdDraft(ssh.modelCwd ?? '')}
                 >
                   {ssh.modelCwd || '设置目录…'}
@@ -1885,7 +2076,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
               <button
                 type="button"
                 className="terminal-pane__cwd"
-                title={terminal?.cwd ? `${terminal.cwd}\n点击修改目录` : '设置终端目录'}
+                title={terminal?.cwd ? `${terminal.cwd}
+点击修改目录` : '设置终端目录'}
                 onClick={() => setCwdDraft(terminal?.cwd ?? '')}
               >
                 {terminal?.cwd || '设置目录…'}
@@ -2133,7 +2325,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                       className="pending__command"
                       title={
                         record.description
-                          ? `${record.description}\n\n${record.command}`
+                          ? `${record.description}
+
+${record.command}`
                           : record.command
                       }
                     >
@@ -2334,7 +2528,13 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
               <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div>
             </div>
           </div>
-        ) : null}      {settingsOpen ? (
+        ) : null}      {avatarEditorOpen && userAvatarSourceDraft ? (
+        <div className="modal modal--avatar-editor" role="dialog" aria-modal="true" aria-label="编辑头像">
+          <div className="modal__box avatar-editor-modal">
+            <div className="settings-modal__title">编辑头像</div>
+          </div>
+        </div>
+      ) : null}      {settingsOpen ? (
         <div
           className="modal modal--settings"
           role="dialog"
@@ -2364,7 +2564,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                 <div className="settings-appearance-row">
                   <div>
                     <div className="settings-proxy-row__label">应用主题</div>
-                    <small className="settings-appearance-hint">切换应用界面整体的明暗外观</small>
                   </div>
                   <select
                     className="settings-theme-select"
@@ -2375,6 +2574,86 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                     <option value="light">浅色</option>
                     <option value="dark">深色</option>
                   </select>
+                </div>
+                <div className="settings-avatar-row">
+                  <div>
+                    <div className="settings-proxy-row__label">用户头像</div>
+                  </div>
+                  <div className="settings-avatar-control">
+                    {userAvatarDraft ? <img className="settings-avatar-preview-img" src={userAvatarDraft} alt="头像" /> : null}
+                    <input
+                      ref={userAvatarInputRef}
+                      className="settings-avatar-input"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0]
+                        event.currentTarget.value = ''
+                        if (!file) return
+                        const reader = new FileReader()
+                        reader.onload = () => {
+                          if (typeof reader.result === 'string') {
+                            setUserAvatarSourceDraft(reader.result)
+                            setUserAvatarDraft(reader.result)
+                            setUserAvatarPositionXDraft(50)
+                            setUserAvatarPositionYDraft(50)
+                            setUserAvatarScaleDraft(1)
+                            setAvatarEditorOpen(true)
+                          }
+                        }
+                        reader.readAsDataURL(file)
+                      }}
+                    />
+                    {userAvatarSourceDraft && avatarEditorOpen ? (
+                      <>
+                        <div
+                          className="settings-avatar-editor"
+                          onWheel={(event) => {
+                            event.preventDefault()
+                            setUserAvatarScaleDraft((value) => Math.max(1, Math.min(4, Number((value + (event.deltaY < 0 ? 0.08 : -0.08)).toFixed(2)))))
+                          }}
+                        >
+                          <AvatarEditor
+                            key={userAvatarSourceDraft}
+                            ref={userAvatarEditorRef}
+                            image={userAvatarSourceDraft}
+                            width={220}
+                            height={220}
+                            border={18}
+                            borderRadius={110}
+                            scale={userAvatarScaleDraft}
+                            position={{ x: userAvatarPositionXDraft / 100, y: userAvatarPositionYDraft / 100 }}
+                            color={[24, 28, 36, 0.62]}
+                            onPositionChange={(position) => {
+                              setUserAvatarPositionXDraft(Math.max(0, Math.min(100, position.x * 100)))
+                              setUserAvatarPositionYDraft(Math.max(0, Math.min(100, position.y * 100)))
+                            }}
+                          />
+                        </div>
+                        <div className="settings-avatar-zoom">
+                          <span>缩放</span>
+                          <input
+                            type="range"
+                            min="1"
+                            max="4"
+                            step="0.01"
+                            value={userAvatarScaleDraft}
+                            onChange={(event) => setUserAvatarScaleDraft(Number(event.target.value))}
+                          />
+                          <span>{Math.round(userAvatarScaleDraft * 100)}%</span>
+                        </div>
+                        <div className="settings-avatar-hint">拖动图片调整位置，滚轮或滑块缩放；圆形框就是聊天头像的裁切范围。</div>
+                      </>
+                    ) : (
+                      <div className="settings-avatar-empty"></div>
+                    )}
+                    <div className="settings-avatar-actions">
+                      <button type="button" className="settings-avatar-button" onClick={() => userAvatarInputRef.current?.click()}>更换头像</button>
+                      {userAvatarSourceDraft && avatarEditorOpen ? (
+                        <button type="button" className="settings-avatar-button settings-avatar-button--secondary" onClick={() => { setUserAvatarDraft(''); setUserAvatarSourceDraft(''); setUserAvatarPositionXDraft(50); setUserAvatarPositionYDraft(50); setUserAvatarScaleDraft(1) }}>恢复默认</button>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
               </section>
 
@@ -2427,7 +2706,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
               <section className="settings-card settings-session-card">
                 <div className="settings-card__heading">
                   <span className="settings-card__icon">▣</span>
-                  <span>浏览器登录态</span>
+                  <span>ChatGPT 浏览器登录态</span>
                 </div>
                 <div className="settings-session-row">
                   <label>Cookie 名称</label>
@@ -2438,7 +2717,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
                   <textarea className="address__input session-import__value settings-input" value={sessionCookieValue} spellCheck={false} autoComplete="off" rows={3} placeholder="粘贴整行 cookie，或只粘 Value 一列的内容" onChange={(event) => setSessionCookieValue(event.target.value)} />
                   <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
                 </div>
-                <div className="settings-local-note">ⓘ 仅在本机处理，不会上传</div>
                 {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
               </section>
             </div>
@@ -2584,3 +2862,23 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     </div>
   )
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

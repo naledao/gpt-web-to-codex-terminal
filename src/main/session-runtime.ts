@@ -10,6 +10,7 @@ import type { ChatPlatform } from '../shared/platforms'
 import type {
   AutomationState,
   Conversation,
+  ConversationImageAttachmentInput,
   EmbedBounds,
   EmbedCommand,
   EnvironmentInfo,
@@ -181,6 +182,16 @@ export class SessionRuntime {
    * `deferredCommands` exists for.
    */
   private pendingGoal = ''
+  /** Clean chat turns waiting for a brand-new conversation to receive its URL/id. */
+  private readonly pendingConversationMessages = new Map<
+    string,
+    Array<{
+      role: 'user' | 'assistant'
+      text: string
+      sourceMessageId: string | null
+      attachments: ConversationImageAttachmentInput[]
+    }>
+  >()
 
   constructor(private readonly options: SessionRuntimeOptions) {
     this.id = options.id ?? randomUUID()
@@ -336,11 +347,22 @@ export class SessionRuntime {
         this.options.store.upsert(conversation, this.currentConversationProject())
         this.flushDeferredCommands(conversation.id)
         this.flushPendingGoal(conversation.id)
+        this.flushPendingConversationMessages(platform.id, conversation.id)
         this.broadcastConversations()
       },
       onSynced: (scraped) => {
         this.options.store.upsertMany(scraped)
         this.broadcastConversations()
+      },
+      onUserMessage: (text, attachments) => {
+        this.captureConversationMessage(platform.id, 'user', text, null, attachments)
+      },
+      onAssistantMessage: (messageId, text) => {
+        this.captureConversationMessage(platform.id, 'assistant', text, messageId)
+      },
+      onAssistantHistoryMarkdown: (messageId, text) => {
+        const conversationId = record().conversationId
+        if (conversationId) this.options.store.refreshAssistantMessageMarkdown(conversationId, messageId, text)
       },
       onInterceptor: (status) => {
         this.captureGoal(status.lastSentText)
@@ -699,6 +721,46 @@ export class SessionRuntime {
     )
   }
 
+  private captureConversationMessage(
+    platformId: string,
+    role: 'user' | 'assistant',
+    text: string,
+    sourceMessageId: string | null,
+    attachments: ConversationImageAttachmentInput[] = []
+  ): void {
+    if (text.trim() === '' && attachments.length === 0) return
+    const conversationId = this.embeds.get(platformId)?.conversationId ?? null
+    if (conversationId) {
+      this.options.store.appendConversationMessage(
+        conversationId,
+        role,
+        text,
+        sourceMessageId,
+        Date.now(),
+        attachments
+      )
+      return
+    }
+    const pending = this.pendingConversationMessages.get(platformId) ?? []
+    pending.push({ role, text, sourceMessageId, attachments })
+    this.pendingConversationMessages.set(platformId, pending)
+  }
+
+  private flushPendingConversationMessages(platformId: string, conversationId: string): void {
+    const pending = this.pendingConversationMessages.get(platformId)
+    if (!pending || pending.length === 0) return
+    for (const message of pending) {
+      this.options.store.appendConversationMessage(
+        conversationId,
+        message.role,
+        message.text,
+        message.sourceMessageId,
+        Date.now(),
+        message.attachments
+      )
+    }
+    this.pendingConversationMessages.delete(platformId)
+  }
   /**
    * Remember what the user asked for.
    *
