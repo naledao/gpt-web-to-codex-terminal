@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, Willow } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
@@ -189,6 +189,7 @@ interface AppProps {
 
 function ConversationAttachmentImage({ attachment }: { attachment: ConversationAttachment }): JSX.Element | null {
   const [src, setSrc] = useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -200,14 +201,59 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
     }
   }, [attachment.id])
 
+  useEffect(() => {
+    if (!previewOpen) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPreviewOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [previewOpen])
+
   if (!src) return null
   return (
-    <img
-      className="conversation-message__attachment"
-      src={src}
-      alt={attachment.fileName || 'Image attachment'}
-      loading="lazy"
-    />
+    <>
+      <button
+        type="button"
+        className="conversation-message__attachment-trigger"
+        onClick={() => setPreviewOpen(true)}
+        aria-label="预览图片"
+        title="点击查看大图"
+      >
+        <img
+          className="conversation-message__attachment"
+          src={src}
+          alt={attachment.fileName || 'Image attachment'}
+          loading="lazy"
+        />
+      </button>
+      {previewOpen ? (
+        <div
+          className="conversation-attachment-preview"
+          role="dialog"
+          aria-modal="true"
+          aria-label="图片预览"
+          onClick={() => setPreviewOpen(false)}
+          onWheel={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="conversation-attachment-preview__close"
+            aria-label="关闭图片预览"
+            title="关闭"
+            onClick={() => setPreviewOpen(false)}
+          >
+            ×
+          </button>
+          <img
+            className="conversation-attachment-preview__image"
+            src={src}
+            alt={attachment.fileName || 'Image attachment'}
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      ) : null}
+    </>
   )
 }
 export default function App({ initialSshDialogOpen = false, platformId = '', globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
@@ -324,6 +370,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const conversationTranscriptRef = useRef<HTMLDivElement>(null)
   /** Whether the user has left the backup transcript pinned to its bottom edge. */
   const conversationStickToBottomRef = useRef(true)
+  /** Ignore scroll events caused by our own scroll-to-bottom writes. */
+  const conversationAutoScrollingRef = useRef(false)
+  const conversationAutoScrollReleaseRef = useRef<number | null>(null)
   const userAvatarInputRef = useRef<HTMLInputElement>(null)
   const userAvatarEditorRef = useRef<AvatarEditorRef>(null)
   /** The pane the toolbox menu mounts into, so it can never spill under the native web view. */
@@ -547,15 +596,18 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
   const trackConversationScroll = useCallback(() => {
     const element = conversationTranscriptRef.current
-    if (!element) return
+    if (!element || conversationAutoScrollingRef.current) return
     const distanceFromBottom = element.scrollHeight - element.clientHeight - element.scrollTop
     conversationStickToBottomRef.current = distanceFromBottom <= 24
   }, [])
 
-  // A fresh switch into the backup view starts at the newest message. Once the user scrolls
-  // away, later layout changes keep that choice instead of pulling the view back down.
-  useEffect(() => {
-    if (placeholderToggle) conversationStickToBottomRef.current = true
+  // Entering the backup view must start at the newest message before the first paint.
+  // The normal effect below then keeps it pinned while late layout (for example images) settles.
+  useLayoutEffect(() => {
+    if (!placeholderToggle) return
+    conversationStickToBottomRef.current = true
+    const element = conversationTranscriptRef.current
+    if (element) element.scrollTop = element.scrollHeight
   }, [placeholderToggle])
 
   // Keep the newest message visible while the transcript finishes rendering.
@@ -566,7 +618,18 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
     const scroll = (): void => {
       if (!conversationStickToBottomRef.current) return
+      conversationAutoScrollingRef.current = true
       element.scrollTop = element.scrollHeight
+      if (conversationAutoScrollReleaseRef.current !== null) {
+        window.cancelAnimationFrame(conversationAutoScrollReleaseRef.current)
+      }
+      conversationAutoScrollReleaseRef.current = window.requestAnimationFrame(() => {
+        element.scrollTop = element.scrollHeight
+        conversationAutoScrollReleaseRef.current = window.requestAnimationFrame(() => {
+          conversationAutoScrollingRef.current = false
+          conversationAutoScrollReleaseRef.current = null
+        })
+      })
     }
 
     const frame = window.requestAnimationFrame(() => {
@@ -580,6 +643,11 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
 
     return () => {
       window.cancelAnimationFrame(frame)
+      if (conversationAutoScrollReleaseRef.current !== null) {
+        window.cancelAnimationFrame(conversationAutoScrollReleaseRef.current)
+        conversationAutoScrollReleaseRef.current = null
+      }
+      conversationAutoScrollingRef.current = false
       observer.disconnect()
     }
   }, [placeholderToggle, conversationMessages.length])
@@ -1383,6 +1451,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
       setUserAvatarPositionXDraft(next.userAvatarPositionX)
       setUserAvatarPositionYDraft(next.userAvatarPositionY)
       setUserAvatarScaleDraft(next.userAvatarScale)
+      setAvatarEditorOpen(false)
       setSettingsOpen(false)
     } catch {
       /* leave the dialog open so the input is not lost */
@@ -2528,13 +2597,7 @@ ${record.command}`
               <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div>
             </div>
           </div>
-        ) : null}      {avatarEditorOpen && userAvatarSourceDraft ? (
-        <div className="modal modal--avatar-editor" role="dialog" aria-modal="true" aria-label="编辑头像">
-          <div className="modal__box avatar-editor-modal">
-            <div className="settings-modal__title">编辑头像</div>
-          </div>
-        </div>
-      ) : null}      {settingsOpen ? (
+        ) : null}      {settingsOpen ? (
         <div
           className="modal modal--settings"
           role="dialog"
@@ -2580,7 +2643,7 @@ ${record.command}`
                     <div className="settings-proxy-row__label">用户头像</div>
                   </div>
                   <div className="settings-avatar-control">
-                    {userAvatarDraft ? <img className="settings-avatar-preview-img" src={userAvatarDraft} alt="头像" /> : null}
+                    {userAvatarDraft ? <img className="settings-avatar-preview-img settings-avatar-preview-img--clickable" src={userAvatarDraft} alt="头像" onClick={() => userAvatarInputRef.current?.click()} /> : <span className="settings-avatar-preview-img settings-avatar-preview-img--empty" role="img" aria-label="未设置头像" onClick={() => userAvatarInputRef.current?.click()}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8.5" r="3.5" /><path d="M5.5 19.5c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /></svg><span className="settings-avatar-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4l10-10-4-4L4 16v4z" /><path d="M13.5 6.5l4 4" /></svg></span></span>}
                     <input
                       ref={userAvatarInputRef}
                       className="settings-avatar-input"
@@ -2604,9 +2667,11 @@ ${record.command}`
                         reader.readAsDataURL(file)
                       }}
                     />
-                    {userAvatarSourceDraft && avatarEditorOpen ? (
-                      <>
-                        <div
+
+                  </div>
+                </div>
+                {userAvatarSourceDraft && avatarEditorOpen ? (
+                  <div className="settings-avatar-position"><div
                           className="settings-avatar-editor"
                           onWheel={(event) => {
                             event.preventDefault()
@@ -2642,19 +2707,8 @@ ${record.command}`
                           />
                           <span>{Math.round(userAvatarScaleDraft * 100)}%</span>
                         </div>
-                        <div className="settings-avatar-hint">拖动图片调整位置，滚轮或滑块缩放；圆形框就是聊天头像的裁切范围。</div>
-                      </>
-                    ) : (
-                      <div className="settings-avatar-empty"></div>
-                    )}
-                    <div className="settings-avatar-actions">
-                      <button type="button" className="settings-avatar-button" onClick={() => userAvatarInputRef.current?.click()}>更换头像</button>
-                      {userAvatarSourceDraft && avatarEditorOpen ? (
-                        <button type="button" className="settings-avatar-button settings-avatar-button--secondary" onClick={() => { setUserAvatarDraft(''); setUserAvatarSourceDraft(''); setUserAvatarPositionXDraft(50); setUserAvatarPositionYDraft(50); setUserAvatarScaleDraft(1) }}>恢复默认</button>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
+                        <div className="settings-avatar-hint">拖动图片调整位置，滚轮或滑块缩放；圆形框就是聊天头像的裁切范围。</div></div>
+                ) : null}
               </section>
 
               <section className="settings-card">
@@ -2862,23 +2916,3 @@ ${record.command}`
     </div>
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
