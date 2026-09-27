@@ -274,6 +274,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   const [panelCollapsed, setPanelCollapsed] = useState(() => readStoredBool(STORAGE_PANEL_COLLAPSED, false))
   const [switchingPlatform, setSwitchingPlatform] = useState(false)
   const [placeholderToggle, setPlaceholderToggle] = useState(false)
+  const [placeholderClosing, setPlaceholderClosing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [userAvatarDraft, setUserAvatarDraft] = useState('')
@@ -373,6 +374,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   /** Ignore scroll events caused by our own scroll-to-bottom writes. */
   const conversationAutoScrollingRef = useRef(false)
   const conversationAutoScrollReleaseRef = useRef<number | null>(null)
+  const placeholderCloseTimerRef = useRef<number | null>(null)
   const userAvatarInputRef = useRef<HTMLInputElement>(null)
   const userAvatarEditorRef = useRef<AvatarEditorRef>(null)
   /** The pane the toolbox menu mounts into, so it can never spill under the native web view. */
@@ -1244,6 +1246,35 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
   }, [updateStatus?.phase])
 
 
+  const togglePlaceholderView = useCallback(() => {
+    if (!placeholderToggle) {
+      if (placeholderCloseTimerRef.current !== null) {
+        window.clearTimeout(placeholderCloseTimerRef.current)
+        placeholderCloseTimerRef.current = null
+      }
+      setPlaceholderClosing(false)
+      setPlaceholderToggle(true)
+      return
+    }
+
+    if (placeholderClosing) return
+    setPlaceholderClosing(true)
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    placeholderCloseTimerRef.current = window.setTimeout(() => {
+      setPlaceholderToggle(false)
+      setPlaceholderClosing(false)
+      placeholderCloseTimerRef.current = null
+    }, reducedMotion ? 0 : 150)
+  }, [placeholderClosing, placeholderToggle])
+
+  useEffect(() => {
+    return () => {
+      if (placeholderCloseTimerRef.current !== null) {
+        window.clearTimeout(placeholderCloseTimerRef.current)
+      }
+    }
+  }, [])
+
   /**
    * The embedded page is a NATIVE view: it always paints above the DOM, so an
    * overlay alone would be hidden behind it. Hide the view while a dialog is up.
@@ -1611,11 +1642,11 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
           <button
             type="button"
             role="switch"
-            aria-checked={placeholderToggle}
+            aria-checked={placeholderToggle && !placeholderClosing}
             aria-label="切换对话视图"
             title="切换对话视图"
-            className={placeholderToggle ? 'toolbar__toggle toolbar__toggle--on' : 'toolbar__toggle'}
-            onClick={() => setPlaceholderToggle((value) => !value)}
+            className={placeholderToggle && !placeholderClosing ? 'toolbar__toggle toolbar__toggle--on' : 'toolbar__toggle'}
+            onClick={togglePlaceholderView}
           >
             <svg className="toolbar__toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M7 10h14l-4-4m0 8H3l4 4" />
@@ -1641,7 +1672,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
         */}
         <div className="stage__slot" ref={slotRef}>
           {placeholderToggle ? (
-            <div className="stage__alternate-card" aria-label="对话视图">
+            <div className={placeholderClosing ? 'stage__alternate-card stage__alternate-card--leaving' : 'stage__alternate-card'} aria-label="对话视图">
               <div
                 className="conversation-transcript"
                 ref={conversationTranscriptRef}
