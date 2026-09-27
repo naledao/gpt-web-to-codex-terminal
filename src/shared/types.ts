@@ -330,7 +330,7 @@ export interface EmbedBounds {
 
 export type EmbedCommand = 'back' | 'forward' | 'reload' | 'stop' | 'home'
 
-export type ExternalAuthProvider = 'google' | 'apple'
+export type ExternalAuthProvider = 'apple'
 
 /** A third-party OAuth page was redirected out of the embedded session. */
 export interface ExternalAuthNotice {

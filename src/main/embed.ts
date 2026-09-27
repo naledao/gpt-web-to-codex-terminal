@@ -96,15 +96,20 @@ function isAllowedNavigation(platform: ChatPlatform, url: string): boolean {
   return platform.allowedOriginPattern.test(url)
 }
 
+function isGoogleAuthUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase() === 'accounts.google.com'
+  } catch {
+    return false
+  }
+}
+
 function externalAuthProvider(url: string): ExternalAuthProvider | null {
   try {
-    const hostname = new URL(url).hostname.toLowerCase()
-    if (hostname === 'accounts.google.com') return 'google'
-    if (hostname === 'appleid.apple.com') return 'apple'
+    return new URL(url).hostname.toLowerCase() === 'appleid.apple.com' ? 'apple' : null
   } catch {
-    // Invalid URLs are handled by the normal external-navigation path.
+    return null
   }
-  return null
 }
 
 /**
@@ -262,12 +267,16 @@ export class ChatGptEmbed {
 
     // Anything the page tries to open in a new window goes to the real browser.
     contents.setWindowOpenHandler(({ url }) => {
+      if (isGoogleAuthUrl(url)) {
+        void contents.loadURL(url)
+        return { action: 'deny' }
+      }
       openExternalUrl(url)
       return { action: 'deny' }
     })
 
     const openExternalNavigation = (event: Electron.Event, url: string): void => {
-      if (isAllowedNavigation(this.platform, url)) return
+      if (isAllowedNavigation(this.platform, url) || isGoogleAuthUrl(url)) return
 
       event.preventDefault()
       openExternalUrl(url)
@@ -284,9 +293,7 @@ export class ChatGptEmbed {
     contents.on('will-frame-navigate', (details) => {
       if (details.isMainFrame) {
         openExternalNavigation(details, details.url)
-      } else if (!isAllowedNavigation(this.platform, details.url)) {
-        // Do not let an embedded third-party frame start an OAuth flow. It has
-        // no usable route back to the app and Google will reject the webview.
+      } else if (!isAllowedNavigation(this.platform, details.url) && !isGoogleAuthUrl(details.url)) {
         details.preventDefault()
       }
     })

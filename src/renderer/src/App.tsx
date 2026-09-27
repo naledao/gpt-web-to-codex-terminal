@@ -789,7 +789,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', glo
     }
   }, [settingsOpen, sessionCookieName, sessionCookieValue])
 
-  const externalAuthProviderLabel = externalAuth?.provider === 'apple' ? 'Apple' : 'Google'
+  const externalAuthProviderLabel = 'Apple'
 
   const conversationFolders = useMemo(() => {
     const folders = new Map<
