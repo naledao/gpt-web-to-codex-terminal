@@ -2478,7 +2478,7 @@ ${record.command}`
             </div>
 
             <form className="terminal-pane__input" onSubmit={submitCommand}>
-              <span className="terminal-pane__prompt">{sshActive ? '$' : '>'}</span>
+              <span className="terminal-pane__prompt" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg></span>
               <input
                 className="address__input"
                 value={commandDraft}

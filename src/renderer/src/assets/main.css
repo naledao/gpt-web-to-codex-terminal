@@ -1144,7 +1144,10 @@ body {
 }
 
 .terminal-pane__prompt {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   color: var(--accent);
 }
 
