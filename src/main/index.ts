@@ -1,6 +1,6 @@
-﻿import { join, posix } from 'node:path'
+import { join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_LOGIN_URL,
@@ -115,6 +115,267 @@ const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
 let workspaceOpenSshDialog = false
 
+/*
+ * The startup splash.
+ *
+ * WHY A SEPARATE WINDOW RATHER THAN AN OVERLAY
+ * -------------------------------------------
+ * The chat page is a native `WebContentsView` layered ON TOP of the renderer, so a DOM
+ * overlay in the main window would be painted UNDER it - the animation would be invisible
+ * exactly while it is needed. A second BrowserWindow also runs in its own renderer process,
+ * which is what keeps the animation smooth while the main process is busy probing the
+ * machine, opening the database, and starting the first page load.
+ *
+ * It is a plain static HTML file with no script: all the motion is CSS, so there is nothing
+ * to fail at the moment it matters.
+ */
+let splashWindow: BrowserWindow | null = null
+let splashClosing = false
+let splashReady = false
+let splashShownAt: number | null = null
+let splashCloseRequested = false
+/** Fallback timer, cleared as soon as the splash closes for the normal reason. */
+let splashFallbackTimer: ReturnType<typeof setTimeout> | null = null
+let splashCloseTimer: ReturnType<typeof setTimeout> | null = null
+let managerReadyToShow = false
+
+const SPLASH_WIDTH = 380
+const SPLASH_HEIGHT = 264
+/** Keep the animation visible for at least three seconds, even when the page is cached. */
+const SPLASH_MIN_VISIBLE_MS = 3_000
+/**
+ * Hard ceiling on how long the splash may stay up.
+ *
+ * The normal exit is the first `did-stop-loading` of the visible chat view. That event never
+ * fires when the page cannot be reached at all, and without this the splash would sit on top
+ * of an otherwise working app forever. Deliberately generous: the splash is only wrong when
+ * it outlives the thing it is covering.
+ */
+const SPLASH_MAX_MS = 20_000
+
+function showManagerWhenReady(): void {
+  if (!managerReadyToShow || !managerWindow || managerWindow.isDestroyed()) return
+  /*
+   * The splash is still up, so the main window must stay hidden. Do NOT clear
+   * managerReadyToShow here: the flag is the record that the window is ready to be
+   * revealed, and it has to survive until the splash is actually gone.
+   */
+  if (splashWindow && !splashClosing) return
+  managerReadyToShow = false
+  /*
+   * Focus here rather than at every call site: the splash has just disappeared, and the
+   * user's next action is aimed at the window underneath it.
+   */
+  if (managerWindow.isMinimized()) managerWindow.restore()
+  managerWindow.show()
+  managerWindow.focus()
+}
+
+function createSplashWindow(): void {
+  if (splashWindow && !splashWindow.isDestroyed()) return
+
+  splashClosing = false
+  splashReady = false
+  splashShownAt = null
+  splashCloseRequested = false
+  if (splashCloseTimer) {
+    clearTimeout(splashCloseTimer)
+    splashCloseTimer = null
+  }
+
+  const workArea = screen.getPrimaryDisplay().workAreaSize
+  const window = new BrowserWindow({
+    width: SPLASH_WIDTH,
+    height: SPLASH_HEIGHT,
+    x: Math.round((workArea.width - SPLASH_WIDTH) / 2),
+    y: Math.round((workArea.height - SPLASH_HEIGHT) / 2),
+    frame: false,
+    title: '',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  })
+  splashWindow = window
+  window.setBounds({
+    x: Math.round((workArea.width - SPLASH_WIDTH) / 2),
+    y: Math.round((workArea.height - SPLASH_HEIGHT) / 2),
+    width: SPLASH_WIDTH,
+    height: SPLASH_HEIGHT
+  })
+  window.setResizable(false)
+  window.setMaximizable(false)
+
+  // `showInactive` so the splash never takes focus from the window that is still loading
+  // behind it: stealing focus would make the main window's first paint look like a flash.
+  // Some transparent Windows builds do not emit `ready-to-show`, so `did-finish-load` is
+  // also a valid reveal signal. The guard makes the two events harmless when both fire.
+  const revealSplash = (): void => {
+    if (splashWindow !== window || window.isDestroyed() || splashReady) return
+    splashReady = true
+    splashShownAt = Date.now()
+    window.showInactive()
+    if (splashCloseRequested) closeSplashWindow()
+  }
+  window.once('ready-to-show', revealSplash)
+  window.webContents.once('did-finish-load', revealSplash)
+  window.on('closed', () => {
+    if (splashWindow === window) splashWindow = null
+    showManagerWhenReady()
+  })
+
+  // Keep the splash independent from the renderer's main route. In dev mode the workspace
+  // still uses Vite/HMR, but the startup window always loads this standalone document.
+  const splashPath = isDev
+    ? join(app.getAppPath(), 'src/renderer/splash.html')
+    : join(__dirname, '../renderer/splash.html')
+  console.info(`[splash] opening separate ${SPLASH_WIDTH}x${SPLASH_HEIGHT} window`)
+  /*
+   * The palette has to be decided BEFORE the first paint, so the theme travels as a query
+   * parameter rather than as a message after load: a push would arrive one frame too late
+   * and the user would see the splash paint dark and then flip to light.
+   *
+   * settings is already populated from the database at this point (see the settings load
+   * above), so this is the same value the workspace itself is about to render with.
+   */
+  void window.loadFile(splashPath, { query: { theme: settings.theme } })
+
+  splashFallbackTimer = setTimeout(() => {
+    splashFallbackTimer = null
+    if (splashClosing) return
+    console.warn('[splash] the chat view never reported a finished load; closing on the fallback timer')
+    closeSplashWindow(true)
+  }, SPLASH_MAX_MS)
+}
+
+/**
+ * Fade the splash out and destroy it.
+ *
+ * Idempotent, and safe to call when no splash exists: the only cost of a spurious call is
+ * that a later `createSplashWindow` finds nothing to close.
+ */
+function closeSplashWindow(force = false): void {
+  if (splashClosing) return
+
+  const window = splashWindow
+  if (!window || window.isDestroyed()) {
+    splashWindow = null
+    return
+  }
+
+  // The embedded page can finish before the splash has painted its first frame. Keep the
+  // request pending until the splash is visible; otherwise fast dev-mode loads make the
+  // animation disappear completely.
+  if (!force) {
+    splashCloseRequested = true
+    if (!splashReady || splashShownAt === null) return
+
+    const remaining = SPLASH_MIN_VISIBLE_MS - (Date.now() - splashShownAt)
+    if (remaining > 0) {
+      if (!splashCloseTimer) {
+        splashCloseTimer = setTimeout(() => {
+          splashCloseTimer = null
+          closeSplashWindow(true)
+        }, remaining)
+      }
+      return
+    }
+  }
+
+  splashClosing = true
+  splashCloseRequested = false
+  if (splashFallbackTimer) {
+    clearTimeout(splashFallbackTimer)
+    splashFallbackTimer = null
+  }
+  if (splashCloseTimer) {
+    clearTimeout(splashCloseTimer)
+    splashCloseTimer = null
+  }
+  splashWindow = null
+
+  /*
+   * Fade, then destroy.
+   *
+   * `setOpacity` is a no-op on a transparent window under some Windows builds, which is why
+   * the fade is best-effort and the destroy below is unconditional - a splash that refuses
+   * to leave is worse than one that leaves abruptly.
+   */
+  const startedAt = Date.now()
+  const duration = 220
+  const startOpacity = (() => {
+    try {
+      return window.getOpacity()
+    } catch {
+      return 1
+    }
+  })()
+
+  const timer = setInterval(() => {
+    if (window.isDestroyed()) {
+      clearInterval(timer)
+      splashClosing = false
+      showManagerWhenReady()
+      return
+    }
+    const progress = Math.min(1, (Date.now() - startedAt) / duration)
+    try {
+      window.setOpacity(startOpacity * (1 - progress))
+    } catch {
+      /* opacity unsupported here; fall through to the destroy below */
+    }
+    if (progress >= 1) {
+      clearInterval(timer)
+      window.destroy()
+    }
+  }, 16)
+  window.once('closed', () => {
+    clearInterval(timer)
+    /*
+     * The splash is genuinely gone now, so the 'in transition' flag has to be cleared.
+     * Leaving it set would make every LATER reveal (a tray click, a macOS activate) look
+     * like a startup that is still animating, and the main window would never show again.
+     */
+    splashClosing = false
+    showManagerWhenReady()
+  })
+}
+
+/*
+ * The splash covers the app, so it must never outlive it.
+ *
+ * `destroy` rather than `close`: a close could be intercepted, and quitting is not the
+ * moment to negotiate.
+ */
+function destroySplashWindow(): void {
+  if (splashFallbackTimer) {
+    clearTimeout(splashFallbackTimer)
+    splashFallbackTimer = null
+  }
+  if (splashCloseTimer) {
+    clearTimeout(splashCloseTimer)
+    splashCloseTimer = null
+  }
+  splashClosing = true
+  splashCloseRequested = false
+  const window = splashWindow
+  splashWindow = null
+  if (window && !window.isDestroyed()) window.destroy()
+}
 const EMPTY_EMBED_STATE: EmbedState = {
   url: '',
   title: '',
@@ -228,9 +489,24 @@ function selectSession(id: string, openSshDialog = false): boolean {
   persistWorkspaceState()
   broadcastWorkspaceState()
   if (managerWindow && !managerWindow.isDestroyed()) {
-    if (managerWindow.isMinimized()) managerWindow.restore()
-    managerWindow.show()
-    managerWindow.focus()
+    /*
+     * Two different situations reach this line, and they need different handling.
+     *
+     * During startup the splash is still up, so a bare show() here would put the main
+     * window on screen mid-animation - the exact flash this whole mechanism exists to
+     * avoid. Defer to showManagerWhenReady, which reveals it once the splash is gone.
+     *
+     * After startup (the user picked a session from the tray, or switched sessions) there
+     * is no splash and this must stay an immediate show-and-focus, or the window would
+     * appear to ignore the click.
+     */
+    if (splashWindow) {
+      showManagerWhenReady()
+    } else {
+      if (managerWindow.isMinimized()) managerWindow.restore()
+      managerWindow.show()
+      managerWindow.focus()
+    }
   }
   return true
 }
@@ -285,7 +561,12 @@ function createSession(
       broadcastManagedSessions()
     },
     onTransfersChanged: broadcastSshTransfers,
-    onActivate: (id) => { selectSession(id) }
+    onActivate: (id) => { selectSession(id) },
+    /*
+     * Ends the startup splash. Only the session the user is actually shown reports here,
+     * so a restored-but-background session cannot end the animation early.
+     */
+    onEmbedReady: () => closeSplashWindow()
   })
   runtimes.set(runtime.id, runtime)
   persistManagedSession(runtime)
@@ -376,7 +657,15 @@ function createManagerWindow(): void {
     }
   })
   managerWindow = window
-  window.once('ready-to-show', () => window.show())
+  managerReadyToShow = false
+  window.once('ready-to-show', () => {
+    managerReadyToShow = true
+    // Keep the main window completely hidden while the separate, frameless splash
+    // window is visible. This prevents its native title bar from flashing first.
+    // Wait for the fade to finish, not merely for the window to be destroyed: the main
+    // window appearing under a half-faded splash is the same flash, just slower.
+    if (!splashWindow && !splashClosing) showManagerWhenReady()
+  })
   window.on('close', (event) => {
     if (quitting) return
     event.preventDefault()
@@ -387,6 +676,7 @@ function createManagerWindow(): void {
     runtimes.clear()
     currentSessionId = null
     workspaceOpenSshDialog = false
+    managerReadyToShow = false
     managerWindow = null
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -844,6 +1134,12 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpcHandlers()
     createTray()
+    /*
+     * Splash first, window second. Both are created without showing; the main window
+     * paints as soon as React's first render is ready, and the splash sits on top of it
+     * until the chat view reports its first finished load.
+     */
+    createSplashWindow()
     createManagerWindow()
     // First check fires immediately, then every 30 minutes (packaged builds only).
     startUpdateSchedule()
@@ -880,6 +1176,7 @@ app.on('before-quit', () => {
 })
 
 app.on('will-quit', () => {
+  destroySplashWindow()
   tray?.destroy()
   tray = null
   for (const runtime of runtimes.values()) runtime.dispose()

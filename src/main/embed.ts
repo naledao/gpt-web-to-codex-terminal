@@ -28,7 +28,7 @@ import type {
  * CSP `frame-ancestors`), so the page can only be embedded out-of-process.
  *
  * Why a dedicated partition: the embedded page gets its own cookie jar, so
- * third-party content can never touch the app's own session — and the two platforms get
+ * third-party content can never touch the app's own session â€” and the two platforms get
  * a jar each, so signing into one never signs into the other.
  *
  * IMPORTANT: a native view is not a DOM node. It always paints *above* the
@@ -41,8 +41,8 @@ const INTERCEPTOR_LOG_TAG = '[cmd-terminal] '
 /**
  * Conversation id of a URL, for whichever platform this view drives.
  *
- * A URL that will not parse is not an error worth reporting — the page navigates through
- * intermediate states constantly — so it answers "not a conversation", which is the safe
+ * A URL that will not parse is not an error worth reporting â€” the page navigates through
+ * intermediate states constantly â€” so it answers "not a conversation", which is the safe
  * reading: nothing gets written to the database.
  */
 function conversationIdOf(platform: ChatPlatform, url: string): string | null {
@@ -117,15 +117,15 @@ function externalAuthProvider(url: string): ExternalAuthProvider | null {
  *
  * Each sidebar entry is rendered as:
  *   <li class="list-none">
- *     <a data-sidebar-item="true" aria-label="歌曲名称介绍"
- *        href="/c/6ab11ffa-64b8-83e8-9247-c19ae00ad95e">…</a>
+ *     <a data-sidebar-item="true" aria-label="æ­Œæ›²åç§°ä»‹ç»"
+ *        href="/c/6ab11ffa-64b8-83e8-9247-c19ae00ad95e">â€¦</a>
  *   </li>
  *
  * The aria-label carries the conversation name; textContent is the fallback for
  * the unordered history list, which renders the label differently.
  *
  * The script itself now lives on the platform descriptor (`sidebarScript`), because the
- * link shape differs per site. Only the raw path segment is extracted there — validating
+ * link shape differs per site. Only the raw path segment is extracted there â€” validating
  * it is left to `isConversationId()` so that rule lives in exactly one place.
  */
 
@@ -156,6 +156,14 @@ export interface EmbedHandlers {
   /** An explicitly marked plain-text reply reports that the task is complete. */
   onTaskCompleted(): void
   /**
+   * This view finished loading its page for the first time since it was created.
+   *
+   * Fired ONCE per view, from the first did-stop-loading: the startup splash listens
+   * for it so the animation ends when the page is actually ready rather than after a
+   * guessed delay. A later reload does not re-fire it.
+   */
+  onReady?(): void
+  /**
    * A reply looked like it carried a command but could not be parsed.
    *
    * Surfaced on purpose: dropping it silently is indistinguishable from the app
@@ -171,6 +179,8 @@ export class ChatGptEmbed {
   /** Dedupe key of the last conversation handed to the store. */
   private lastCaptured = ''
   private lastSyncAt = 0
+  /** Whether onReady has already been reported for this view. See EmbedHandlers.onReady. */
+  private firstLoadDone = false
 
   /**
    * Terminal mode is ON by default: every outgoing message gets the system
@@ -307,8 +317,8 @@ export class ChatGptEmbed {
     /*
      * Name the failures.
      *
-     * Chromium prints `handshake failed … net_error -100` with NO host, which is not enough
-     * to act on — two platforms are embedded at once and either could be the one dying. These
+     * Chromium prints `handshake failed â€¦ net_error -100` with NO host, which is not enough
+     * to act on â€” two platforms are embedded at once and either could be the one dying. These
      * events carry the URL, so a log can answer "which request, to where".
      */
     contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
@@ -340,6 +350,15 @@ export class ChatGptEmbed {
       this.publishState()
       this.captureCurrentConversation()
       this.autoSync()
+      /*
+       * The first stop is what the startup splash is waiting for. Reported after the
+       * state push above so the UI behind the splash is already consistent when it goes
+       * away. Only the first one counts: a reload mid-session is not a startup.
+       */
+      if (!this.firstLoadDone) {
+        this.firstLoadDone = true
+        this.handlers.onReady?.()
+      }
     })
     contents.on('did-navigate', () => {
       this.publishState()
@@ -384,7 +403,7 @@ export class ChatGptEmbed {
    *
    * Needed after a session import: the cookie has to be in the jar before the page
    * asks who the user is, so the caller cannot simply fire `reload()` and check
-   * immediately — it would inspect the OLD document and report a signed-out page for
+   * immediately â€” it would inspect the OLD document and report a signed-out page for
    * a session that is actually valid.
    *
    * Resolves on timeout rather than rejecting: a page that never finishes loading
@@ -532,7 +551,7 @@ export class ChatGptEmbed {
    * Inject the send interceptor into the page and push the current config.
    *
    * `executeJavaScript` is not subject to the page's CSP nonce (it does not go
-   * through a script tag), and it runs in the main world — which is what the
+   * through a script tag), and it runs in the main world â€” which is what the
    * page's own React handlers use, so our capture-phase listeners see the same
    * events they do.
    */
@@ -547,7 +566,7 @@ export class ChatGptEmbed {
       // history, otherwise an old reply would look like a fresh command.
       armBaseline: this.armBaselineOnInstall,
       // Which site's DOM to work against. The injected script is source text, so the
-      // platform cannot be imported there — this is the only route it has.
+      // platform cannot be imported there â€” this is the only route it has.
       page: this.platform.page
     })
 
@@ -567,7 +586,7 @@ export class ChatGptEmbed {
    * the system prompt: the prompt is already established by the first message of
    * the conversation, and re-sending it every round would bloat the context.
    *
-   * `busy` means the user is typing — we must never clobber their draft.
+   * `busy` means the user is typing â€” we must never clobber their draft.
    * `stuck` means the text went in but ChatGPT never accepted the submit.
    */
   async sendRaw(
@@ -599,8 +618,8 @@ export class ChatGptEmbed {
   }
 
   /**
-   * Tell the page to treat everything currently rendered — and whatever renders
-   * next — as pre-existing.
+   * Tell the page to treat everything currently rendered â€” and whatever renders
+   * next â€” as pre-existing.
    *
    * Called whenever the app moves to another conversation while auto mode is on,
    * and when auto mode is switched on. Without it, opening an old conversation
@@ -649,8 +668,8 @@ export class ChatGptEmbed {
   /**
    * Read the page's own sidebar markup and return every conversation it lists.
    *
-   * `executeJavaScript` resolves in the page's main world. It is awaited — and
-   * its result validated — because the page can navigate away mid-call, in which
+   * `executeJavaScript` resolves in the page's main world. It is awaited â€” and
+   * its result validated â€” because the page can navigate away mid-call, in which
    * case the promise resolves against a destroyed context.
    */
   async scrapeConversations(): Promise<ScrapedConversation[]> {
@@ -796,7 +815,7 @@ export class ChatGptEmbed {
          * Log which prompt the PAGE actually holds, and compare it with what main thinks it
          * pushed. The two can diverge because the prefix lives per view: a view created before
          * the environment probe, or reconfigured while it had no live contents, keeps the
-         * generic fallback — and the only visible symptom is messages going out un-prefixed.
+         * generic fallback â€” and the only visible symptom is messages going out un-prefixed.
          */
         console.info(
           `[embed:${this.platform.id}] injected #${this.interceptor.injectedCount} ` +
@@ -886,7 +905,7 @@ export class ChatGptEmbed {
       /*
        * The scan notes: one line per (turn, reason) saying why a settled reply produced no
        * command. Without them, "the model answered with JSON and nothing happened" is
-       * undiagnosable — every path leading there returns silently.
+       * undiagnosable â€” every path leading there returns silently.
        */
       case 'scan':
         console.info(`[embed:${this.platform.id}] scan ${JSON.stringify(payload)}`)
@@ -898,14 +917,14 @@ export class ChatGptEmbed {
         /*
          * The DETAIL is the point, not the event name.
          *
-         * This used to print one word — `interceptor reported send-failed` — while the page
+         * This used to print one word â€” `interceptor reported send-failed` â€” while the page
          * held everything needed to explain it: whether a send button existed at all, whether
          * it was disabled, what was left in the composer, and what the composer's toolbar
          * actually contained. "The result is written into the box and never sent" is not
          * diagnosable from the word alone. The whole payload goes out now, and `DSH_APP_LOG=1`
          * mirrors it into `<userData>/logs/`.
          *
-         * `end-task` rides along for the same reason: whether 结束任务 can stop the model turns
+         * `end-task` rides along for the same reason: whether ç»“æŸä»»åŠ¡ can stop the model turns
          * entirely on `stopButtonSelectors`, and this is the only place that ever sees them at
          * the one moment they exist.
          */
@@ -938,7 +957,7 @@ export class ChatGptEmbed {
 
     /*
      * Every one of these sites uses its own product name as the generic document title
-     * ("ChatGPT", "DeepSeek") — that is the shell, not a conversation name. Storing the
+     * ("ChatGPT", "DeepSeek") â€” that is the shell, not a conversation name. Storing the
      * product name as the conversation's title would then outrank the real one from the
      * sidebar scrape, because a non-empty title is never overwritten.
      */

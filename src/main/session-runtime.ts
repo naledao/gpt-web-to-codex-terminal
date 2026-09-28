@@ -40,7 +40,7 @@ const SETTING_LOCAL_NOTES = 'localTerminalNotes'
  * One platform's embedded view plus the state that must survive being hidden.
  *
  * `conversationId` and `url` are per-platform because each site has its own notion of "where
- * this session is" — the same session id means a ChatGPT `/c/<uuid>` and a DeepSeek
+ * this session is" â€” the same session id means a ChatGPT `/c/<uuid>` and a DeepSeek
  * `/a/chat/s/<uuid>`, and neither is meaningful on the other site. Keeping one pair for the
  * session would make the two views overwrite each other's location on every switch.
  */
@@ -94,6 +94,15 @@ export interface SessionRuntimeOptions {
   onSummaryChanged: () => void
   onTransfersChanged: () => void
   onActivate: (id: string) => void
+  /**
+   * The ACTIVE platform's view loaded its page for the first time.
+   *
+   * Startup uses this to close the splash window: the splash must not go away on a
+   * timer, because a cold page on a slow network takes seconds and the user would
+   * then stare at a blank workspace instead of the animation. Background platforms
+   * deliberately do not report here - nobody is waiting on a page they cannot see.
+   */
+  onEmbedReady?: () => void
 }
 
 function encryptSecret(password: string): string {
@@ -134,7 +143,7 @@ export class SessionRuntime {
   environmentScope: Pick<TerminalNotes, 'scope' | 'hostId' | 'label'> = {
     scope: 'local',
     hostId: '',
-    label: '本机'
+    label: 'æœ¬æœº'
   }
 
   /**
@@ -143,14 +152,14 @@ export class SessionRuntime {
    * WHY NOT ONE VIEW THAT GETS REPLACED
    * -----------------------------------
    * The obvious design is to rebuild the session when the user switches models. That would
-   * call `dispose()`, which tears down `ssh` and the terminal — so switching models would
+   * call `dispose()`, which tears down `ssh` and the terminal â€” so switching models would
    * silently drop a live SSH connection, clear the terminal scrollback, and lose the
    * conversation on both sides. `SessionRuntime` owns the machine (terminal, SSH, environment
    * probe) as well as the chat, so the chat is the part that must be swappable in place.
    *
    * Keeping both views alive costs one extra WebContents and makes switching a visibility
    * change: each platform keeps its own conversation, its own scroll position, and its own
-   * in-flight reply. The same reasoning as "one terminal, not one per conversation" — the
+   * in-flight reply. The same reasoning as "one terminal, not one per conversation" â€” the
    * expensive shared thing (the machine) does not move when only the model changes.
    */
   private readonly embeds = new Map<string, PlatformEmbed>()
@@ -178,7 +187,7 @@ export class SessionRuntime {
    *
    * The first message of a new chat is sent while the SPA is still at `/`; the `/c/<id>`
    * URL appears only AFTER the send. So the goal is captured on send and associated
-   * here, and `onConversation` flushes it — the same ordering problem
+   * here, and `onConversation` flushes it â€” the same ordering problem
    * `deferredCommands` exists for.
    */
   private pendingGoal = ''
@@ -204,7 +213,7 @@ export class SessionRuntime {
     for (const platform of CHAT_PLATFORMS) {
       /*
        * Every platform gets a slot, but only the one being restored gets a live view. The
-       * other is created on first switch (`ensureEmbed`) and stays alive from then on — which
+       * other is created on first switch (`ensureEmbed`) and stays alive from then on â€” which
        * is what preserves its conversation and scroll position across later switches.
        *
        * Not created up front because a session sitting in the manager would otherwise load two
@@ -237,7 +246,7 @@ export class SessionRuntime {
       },
       onTaskCompleted: (description) => {
         void this.embed.endTask()
-        this.notifyTaskCompleted(description.trim() || '任务已完成')
+        this.notifyTaskCompleted(description.trim() || 'ä»»åŠ¡å·²å®Œæˆ')
       }
     }, options.initialLocalCwd ?? '')
 
@@ -297,7 +306,7 @@ export class SessionRuntime {
    * Handlers for ONE platform's view.
    *
    * `platform` is a parameter rather than read from `this`, because the closures are created
-   * during construction — before `this.activePlatformId` means anything — and because a
+   * during construction â€” before `this.activePlatformId` means anything â€” and because a
    * handler that guessed its own platform would attribute a background page's events to
    * whichever view happens to be in front.
    */
@@ -306,7 +315,7 @@ export class SessionRuntime {
     /*
      * A FUNCTION, not a captured boolean. The handlers outlive a platform switch and are how
      * the background view reports in, so "am I the visible one" has to be asked at event time
-     * — capture it and the view in front would keep the old answer forever.
+     * â€” capture it and the view in front would keep the old answer forever.
      */
     const isActive = (): boolean => platform.id === this.activePlatformId
 
@@ -338,6 +347,14 @@ export class SessionRuntime {
           }
         }
         this.options.onSummaryChanged()
+      },
+      onReady: () => {
+        /*
+         * Same rule as the state push above: only the visible view decides that startup
+         * is over. A background platform finishing its load says nothing about the page
+         * the user is looking at.
+         */
+        if (isActive()) this.options.onEmbedReady?.()
       },
       onExternalAuth: (notice) => {
         this.externalAuthNotice = notice
@@ -374,12 +391,12 @@ export class SessionRuntime {
         if (isActive()) this.send(IpcChannels.interceptorEvent, status)
       },
       onTaskCompleted: () => {
-        if (isActive()) this.notifyTaskCompleted('任务已完成')
+        if (isActive()) this.notifyTaskCompleted('ä»»åŠ¡å·²å®Œæˆ')
       },
       /*
        * ONLY the visible platform feeds the command loop.
        *
-       * Not an optimisation — two live views with automation on would mean two sources of
+       * Not an optimisation â€” two live views with automation on would mean two sources of
        * "the model asked for this", and `executions.message_id` is the idempotency key that
        * makes a command run once. A hidden DeepSeek tab replaying its history into the same
        * terminal as the ChatGPT tab in front would be untraceable. Commands are recorded
@@ -392,7 +409,7 @@ export class SessionRuntime {
          *
          * "The page reported a command" and "the app acted on one" are different facts, and
          * `isActive()` is what sits between them: with another platform in front, a command read
-         * from a background view is dropped here — deliberately, and until now invisibly. That is
+         * from a background view is dropped here â€” deliberately, and until now invisibly. That is
          * the combination that makes "the model answered with JSON and nothing ran" impossible to
          * diagnose from a log, which is exactly how this was found.
          */
@@ -434,7 +451,7 @@ export class SessionRuntime {
    * Create one platform's view if it does not exist yet, and keep it from then on.
    *
    * Idempotent, because it is called from every path that needs the view to exist (construction,
-   * attach, switch) and a second call must never create a second page for one platform — that
+   * attach, switch) and a second call must never create a second page for one platform â€” that
    * would put two views on the same partition and make `getState()` ambiguous.
    */
   private ensureEmbed(platformId: string): PlatformEmbed {
@@ -459,7 +476,7 @@ export class SessionRuntime {
      *
      * `ChatGptEmbed` holds the prefix per view, and every other call site pushes it to the
      * ACTIVE view (`this.embed.setPromptPrefix(...)`). A view created later therefore keeps the
-     * generic fallback — which does not describe this machine — and switching to it would
+     * generic fallback â€” which does not describe this machine â€” and switching to it would
      * inject the wrong prompt, or (when the fallback is identical to what the page already has)
      * look like nothing was injected at all.
      */
@@ -479,7 +496,7 @@ export class SessionRuntime {
     /*
      * Only the view already in use is attached here. The other platform's view is created when
      * it is first switched to (`ensureEmbed` attaches it then), so a session that is never
-     * switched loads exactly one site — attaching every platform here would put both sites on
+     * switched loads exactly one site â€” attaching every platform here would put both sites on
      * the wire for every session the app restores.
      */
     this.ensureEmbed(this.activePlatformId)
@@ -526,7 +543,7 @@ export class SessionRuntime {
      * the real probe result or the generic fallback.
      *
      * The prompt is stored per view, so "this view has the wrong prompt" has no symptom other
-     * than messages going out un-prefixed — which looks exactly like terminal mode being off.
+     * than messages going out un-prefixed â€” which looks exactly like terminal mode being off.
      * `detected` is what separates a probed machine from `FALLBACK_ENVIRONMENT`; the length
      * alone does not, because the two can coincide.
      */
@@ -601,7 +618,7 @@ export class SessionRuntime {
       title: this.customTitle,
       /*
        * The persisted url/conversationId/platformId are the ACTIVE platform's. One session
-       * stores one location, so restoring must reopen the view the user last had in front —
+       * stores one location, so restoring must reopen the view the user last had in front â€”
        * storing the starting platform instead would reopen ChatGPT every time even if the
        * user had switched to DeepSeek and left it there.
        */
@@ -635,9 +652,9 @@ export class SessionRuntime {
     const usingSsh = sshState.attached
     return {
       id: this.id,
-      title: this.customTitle || state.title || '当前会话',
+      title: this.customTitle || state.title || 'å½“å‰ä¼šè¯',
       kind: usingSsh ? 'ssh' : 'local',
-      target: usingSsh ? sshState.name || sshState.target || 'SSH' : '本机',
+      target: usingSsh ? sshState.name || sshState.target || 'SSH' : 'æœ¬æœº',
       conversationId: state.conversationId,
       platformId: this.activeEmbed().platform.id,
       taskRunning: this.taskRunning(),
@@ -649,7 +666,7 @@ export class SessionRuntime {
     /*
      * Only the view in front is told the bounds. A hidden platform that was never switched to
      * has no view yet; and once created, `ensureEmbed` gives it the slot rectangle the first
-     * time it is shown — so a stale rectangle cannot be applied to a view that is not there.
+     * time it is shown â€” so a stale rectangle cannot be applied to a view that is not there.
      */
     this.embed.setBounds(bounds)
     this.lastBounds = bounds
@@ -697,7 +714,7 @@ export class SessionRuntime {
     // persisted the new chat, rather than losing it permanently.
     this.deferredCommands.set(command.messageId, command)
     /*
-     * A deferred command is in limbo, and until now it was in limbo silently — if the
+     * A deferred command is in limbo, and until now it was in limbo silently â€” if the
      * conversation id never arrives, it is simply never heard from again.
      */
     console.info(
@@ -765,7 +782,7 @@ export class SessionRuntime {
    * Remember what the user asked for.
    *
    * Called on EVERY interceptor push, because that is the only place the page reports
-   * the user's own words — the main process never sees the composer. The comparison
+   * the user's own words â€” the main process never sees the composer. The comparison
    * against the previous value is what keeps it from being a write per event, and the
    * blank check matters because a `sent` report can legitimately carry nothing.
    */
@@ -872,8 +889,8 @@ export class SessionRuntime {
         ...EMPTY_SSH_STATE,
         status: 'error',
         attached: true,
-        message: '需要填写主机地址和用户名',
-        lines: [{ kind: 'error', text: '需要填写主机地址和用户名' }]
+        message: 'éœ€è¦å¡«å†™ä¸»æœºåœ°å€å’Œç”¨æˆ·å',
+        lines: [{ kind: 'error', text: 'éœ€è¦å¡«å†™ä¸»æœºåœ°å€å’Œç”¨æˆ·å' }]
       }
     }
 
@@ -892,8 +909,8 @@ export class SessionRuntime {
     const password = typed !== '' ? typed : decryptSecret(this.options.store.getSshSecret(id))
     if (password === '') {
       const message = safeStorage.isEncryptionAvailable()
-        ? '请输入密码（这台主机还没有保存过密码）'
-        : '请输入密码（当前系统不支持安全保存密码，每次连接都需要重新输入）'
+        ? 'è¯·è¾“å…¥å¯†ç ï¼ˆè¿™å°ä¸»æœºè¿˜æ²¡æœ‰ä¿å­˜è¿‡å¯†ç ï¼‰'
+        : 'è¯·è¾“å…¥å¯†ç ï¼ˆå½“å‰ç³»ç»Ÿä¸æ”¯æŒå®‰å…¨ä¿å­˜å¯†ç ï¼Œæ¯æ¬¡è¿žæŽ¥éƒ½éœ€è¦é‡æ–°è¾“å…¥ï¼‰'
       return {
         ...EMPTY_SSH_STATE,
         status: 'error',
@@ -929,9 +946,9 @@ export class SessionRuntime {
           ? {
               scope: 'ssh',
               hostId: sshState.hostId ?? '',
-              label: sshState.name || sshState.target || '远端主机'
+              label: sshState.name || sshState.target || 'è¿œç«¯ä¸»æœº'
             }
-          : { scope: 'local', hostId: '', label: '本机' }
+          : { scope: 'local', hostId: '', label: 'æœ¬æœº' }
 
       info.extraNotes = this.readNotes()
       this.environment = info

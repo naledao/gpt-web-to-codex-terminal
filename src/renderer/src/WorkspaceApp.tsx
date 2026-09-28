@@ -309,6 +309,7 @@ export default function WorkspaceApp(): ReactElement {
         {workspace.sessionId ? (
           <App
             key={workspace.sessionId}
+            theme={theme}
             onThemeChange={setTheme}
             initialSshDialogOpen={workspace.openSshDialog}
             globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen || updateNotice !== null}

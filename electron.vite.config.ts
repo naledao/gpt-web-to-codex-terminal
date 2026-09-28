@@ -21,7 +21,18 @@ export default defineConfig({
       // electron-vite leaves minification off by default for all three targets.
       // The renderer ships to users, so minify it; main/preload stay readable
       // (they are only a couple of kB and readable stack traces are worth more).
-      minify: 'esbuild'
+      minify: 'esbuild',
+      rollupOptions: {
+        // Two HTML entries: the workspace UI, and the standalone splash window
+        // that covers the gap between window creation and the embedded chat
+        // page finishing its first load. The splash has no script of its own
+        // (pure CSS animation), so it costs one extra static file.
+        input: {
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          // Lives in the renderer root so the dev server serves it at /splash.html too.
+          splash: resolve(__dirname, 'src/renderer/splash.html')
+        }
+      }
     }
   }
 })

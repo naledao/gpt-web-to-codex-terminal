@@ -2625,7 +2625,7 @@ body {
 }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-row:hover { background: #f8faff; }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-row::before {
-  content: '鏂囦欢澶?;
+  content: '文件夹';
   position: absolute;
   right: 58px;
   top: 50%;
@@ -2636,7 +2636,7 @@ body {
   pointer-events: none;
 }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-row::after {
-  content: '鈥⑩€⑩€?;
+  content: '···';
   position: absolute;
   right: 16px;
   top: 50%;
@@ -10125,4 +10125,1089 @@ body {
   .toolbar__toggle-icon {
     transition-duration: 1ms;
   }
+}
+
+/* ---------------- dark theme: remaining light-only surfaces ---------------- */
+
+/* Confirmation and session creation dialogs. */
+.workspace[data-theme='dark'] .confirm-dialog,
+.workspace[data-theme='dark'] .new-session-modal,
+.workspace[data-theme='dark'] .modal--notes,
+.workspace[data-theme='dark'] .modal--prompt,
+.workspace[data-theme='dark'] .ssh-connect-overlay,
+.workspace[data-theme='dark'] .modal--ssh-files,
+.workspace[data-theme='dark'] .transfer-modal {
+  background: rgba(3, 7, 12, .72) !important;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__box {
+  border-color: #334154;
+  background: #111923;
+  color: #e7edf7;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, .48);
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__close {
+  color: #9fb0c6;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__close:hover:not(:disabled) {
+  color: #f1f5ff;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__icon {
+  background: #1b2940;
+  color: #9db8ff;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__icon--danger {
+  background: #38232b;
+  color: #ff9ca5;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__title {
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__description,
+.workspace[data-theme='dark'] .confirm-dialog__item-label {
+  color: #c5d4e8;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__items {
+  border-color: #2d3a4d;
+  background: #151e2b;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__item {
+  border-bottom-color: #2d3a4d;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__item-icon {
+  color: #9fb0c6;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__badge--danger {
+  background: #38232b;
+  color: #ff9ca5;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__badge--success {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__badge--neutral {
+  background: #1d2a39;
+  color: #b9c9df;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__foot {
+  border-top-color: #2d3a4d;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__cancel {
+  border-color: #405675;
+  background: #182436;
+  color: #dce8fa;
+}
+
+.workspace[data-theme='dark'] .confirm-dialog__cancel:hover:not(:disabled) {
+  background: #223653;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__box {
+  border-color: #334154;
+  background: #111923;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .48);
+}
+
+.workspace[data-theme='dark'] .new-session-modal__header h2,
+.workspace[data-theme='dark'] .new-session-modal__title-row strong {
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__header p,
+.workspace[data-theme='dark'] .new-session-modal__content small,
+.workspace[data-theme='dark'] .new-session-modal__footer {
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__close {
+  color: #9fb0c6;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__close:hover {
+  background: #1e2c40;
+  color: #f1f5ff;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__option,
+.workspace[data-theme='dark'] .new-session-modal__option--local {
+  border-color: #405675;
+  background: #182436;
+  color: #e7edf7;
+  box-shadow: none;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__option:hover {
+  border-color: #6d95ff;
+  background: #223653;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__accent {
+  background: #6d95ff;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__icon {
+  background: #223452;
+  color: #a9c7ff;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__option--ssh .new-session-modal__icon {
+  background: #183b3d;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__badge {
+  background: #263449;
+  color: #b9c9df;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__badge--recommended {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__arrow {
+  color: #9fb0c6;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__footer {
+  border-top-color: #2d3a4d;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__info {
+  border-color: #667b99;
+  color: #a9b8ce;
+}
+
+/* Transfer task dialog and cards. */
+.workspace[data-theme='dark'] .transfer-modal__box {
+  border-color: #334154;
+  background: #111923;
+  color: #e7edf7;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, .48);
+}
+
+.workspace[data-theme='dark'] .transfer-modal__head {
+  border-bottom-color: #2d3a4d;
+}
+
+.workspace[data-theme='dark'] .transfer-modal__title,
+.workspace[data-theme='dark'] .transfer-card__name {
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .transfer-modal__active-count,
+.workspace[data-theme='dark'] .transfer-card__status,
+.workspace[data-theme='dark'] .transfer-card__status--completed {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .transfer-modal__close {
+  border-color: #405675;
+  background: #182436;
+  color: #c9d5e8;
+}
+
+.workspace[data-theme='dark'] .transfer-modal__close:hover {
+  background: #223653;
+}
+
+.workspace[data-theme='dark'] .transfer-card {
+  border-color: #2d3a4d;
+  background: #151e2b;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .2);
+}
+
+.workspace[data-theme='dark'] .transfer-card__direction--download {
+  background: #1b3154;
+  color: #9fc2ff;
+}
+
+.workspace[data-theme='dark'] .transfer-card__direction--upload {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .transfer-card__percent {
+  color: #a9c7ff;
+}
+
+.workspace[data-theme='dark'] .transfer-card__cancel {
+  border-left-color: #405675;
+  color: #ff9ca5;
+}
+
+.workspace[data-theme='dark'] .transfer-card__session,
+.workspace[data-theme='dark'] .transfer-card__meta,
+.workspace[data-theme='dark'] .transfer-modal__empty {
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .transfer-card__progress {
+  background: #263449;
+}
+
+.workspace[data-theme='dark'] .transfer-card--failed .transfer-card__progress > span,
+.workspace[data-theme='dark'] .transfer-card--cancelled .transfer-card__progress > span {
+  background: #445166;
+}
+
+.workspace[data-theme='dark'] .transfer-card__meta > i {
+  background: #405675;
+}
+
+.workspace[data-theme='dark'] .transfer-card__status--failed {
+  background: #38232b;
+  color: #ff9ca5;
+}
+
+.workspace[data-theme='dark'] .transfer-card__status--cancelled {
+  background: #263449;
+  color: #a9b8ce;
+}
+
+.workspace[data-theme='dark'] .transfer-card__error {
+  color: #ff9da7;
+}
+
+.workspace[data-theme='dark'] .transfer-modal__empty-icon {
+  background: #22264c;
+  color: #a9a5ff;
+}
+
+.workspace[data-theme='dark'] .transfer-modal__empty strong {
+  color: #cbd8ea;
+}
+
+/* SSH connection dialog. */
+.workspace[data-theme='dark'] .ssh-connect-modal {
+  border-color: #334154;
+  background: #111923;
+  color: #e7edf7;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, .48);
+}
+
+.workspace[data-theme='dark'] .ssh-connect__head,
+.workspace[data-theme='dark'] .ssh-connect__sidebar,
+.workspace[data-theme='dark'] .ssh-connect__form,
+.workspace[data-theme='dark'] .ssh-connect__foot {
+  background: #111923;
+  border-color: #2d3a4d;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__close {
+  border-color: #405675;
+  background: #182436;
+  color: #c9d5e8;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__close:hover {
+  background: #223653;
+  border-color: #6d95ff;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host--active {
+  background: linear-gradient(90deg, #1b2d4d 0%, #182436 100%);
+  box-shadow: inset 3px 0 0 #6d95ff;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-main:hover {
+  background: #1e2c40;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-copy strong,
+.workspace[data-theme='dark'] .ssh-connect__field > span,
+.workspace[data-theme='dark'] .ssh-connect__advanced-toggle {
+  color: #dce8f8;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-copy small,
+.workspace[data-theme='dark'] .ssh-connect__section-title {
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-icon {
+  background: #3d4d65;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host--active .ssh-connect__host-icon {
+  background: #b9852b;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__saved {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-remove {
+  background: #1a2534;
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-remove:hover {
+  background: #38232b;
+  color: #ff9ca5;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__new,
+.workspace[data-theme='dark'] .ssh-connect__cancel {
+  background: #182436;
+  border-color: #405675;
+  color: #dce8fa;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__new:hover,
+.workspace[data-theme='dark'] .ssh-connect__cancel:hover {
+  background: #223653;
+  border-color: #6d95ff;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-connect {
+  border-color: #40589e;
+  background: #1b2d4d;
+  color: #a9c7ff;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__host-connect:hover:not(:disabled) {
+  background: #223653;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__disconnect {
+  border-color: #6e3b49;
+  background: #38232b;
+  color: #ff9ca5;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__disconnect:hover {
+  background: #4a2935;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__advanced {
+  border-color: #344760;
+  background: #151e2b;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__input {
+  background: #0d141e !important;
+  border-color: #344258 !important;
+  color: #e7edf7 !important;
+  box-shadow: none;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__input::placeholder {
+  color: #71819a;
+}
+
+.workspace[data-theme='dark'] .ssh-connect__input:focus {
+  border-color: #6d95ff !important;
+  box-shadow: 0 0 0 3px rgba(109, 149, 255, .18) !important;
+}
+
+/* Markdown notes editor: the light reference skin used !important, so override
+   every editor layer explicitly in dark mode. */
+.workspace[data-theme='dark'] .notes-modal {
+  border-color: #334154;
+  background: #111923;
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .notes-modal__head,
+.workspace[data-theme='dark'] .notes-modal__editor-wrap,
+.workspace[data-theme='dark'] .notes-modal__foot {
+  background: #111923 !important;
+  border-color: #2d3a4d !important;
+}
+
+.workspace[data-theme='dark'] .notes-modal__title {
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .notes-modal__scope {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .notes-modal__saved,
+.workspace[data-theme='dark'] .notes-modal__subtitle {
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .notes-modal__saved span {
+  color: #71819a;
+}
+
+.workspace[data-theme='dark'] .notes-modal__saved--ok span {
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .notes-modal__close,
+.workspace[data-theme='dark'] .notes-modal__preview-toggle,
+.workspace[data-theme='dark'] .notes-modal__button {
+  color: #c9d5e8;
+}
+
+.workspace[data-theme='dark'] .notes-modal__close:hover,
+.workspace[data-theme='dark'] .notes-modal__preview-toggle:hover,
+.workspace[data-theme='dark'] .notes-modal__preview-toggle--on,
+.workspace[data-theme='dark'] .notes-modal__button:hover:not(:disabled) {
+  background: #1e2c40;
+  color: #f1f5ff;
+}
+
+.workspace[data-theme='dark'] .notes-modal__preview-toggle,
+.workspace[data-theme='dark'] .notes-modal__button {
+  border-color: #405675;
+  background: #182436;
+}
+
+.workspace[data-theme='dark'] .notes-modal .w-md-editor,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-toolbar,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-content,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-area,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-preview,
+.workspace[data-theme='dark'] .notes-modal .wmde-markdown {
+  border-color: #2d3a4d !important;
+  background: #0d141e !important;
+  color: #dce8f8 !important;
+}
+
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-toolbar li > button {
+  color: #b9c9df !important;
+}
+
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-toolbar li > button:hover {
+  background: #1e2c40 !important;
+}
+
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-text-pre > code,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-text-input {
+  color: #dce8f8 !important;
+  -webkit-text-fill-color: #dce8f8 !important;
+}
+
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-text-input::placeholder {
+  color: #71819a !important;
+  -webkit-text-fill-color: #71819a !important;
+}
+
+.workspace[data-theme='dark'] .notes-modal__button--primary {
+  border-color: #6d95ff;
+  background: linear-gradient(135deg, #6d95ff, #4d70dc);
+  color: #fff;
+}
+
+/* Prompt viewer and its Markdown content. */
+.workspace[data-theme='dark'] .prompt-modal {
+  border-color: #334154;
+  background: #111923 !important;
+  color: #e7edf7;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .5);
+}
+
+.workspace[data-theme='dark'] .prompt-modal__head,
+.workspace[data-theme='dark'] .prompt-modal__search {
+  border-color: #2d3a4d;
+  background: #111923 !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__title {
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__readonly {
+  background: #263449;
+  color: #b9c9df;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__action {
+  border-color: #405675;
+  background: #182436;
+  color: #c9d5e8;
+  box-shadow: none;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__action:hover,
+.workspace[data-theme='dark'] .prompt-modal__action--active {
+  border-color: #6d95ff;
+  background: #223653;
+  color: #dbe8ff;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__action--success {
+  border-color: #3c765f;
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__close {
+  color: #9fb0c6;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__close:hover {
+  color: #f1f5ff;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__search input {
+  color: #dce8f8 !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__search input::placeholder,
+.workspace[data-theme='dark'] .prompt-modal__search-hint {
+  color: #71819a;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__search > button {
+  color: #9fb0c6;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__body {
+  background: #0d141e !important;
+  scrollbar-color: #3b4a60 transparent;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown,
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown pre {
+  background: #0d141e !important;
+  color: #dce8f8 !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown h1,
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown h2,
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown h3 {
+  color: #e7edf7 !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown strong {
+  color: #f0f5ff !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown code:not(pre code) {
+  background: #22264c !important;
+  color: #b9c5ff !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown pre {
+  border-color: #344760 !important;
+  background: #151e2b !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown pre code {
+  background: transparent !important;
+  color: #c5d4e8 !important;
+}
+
+.workspace[data-theme='dark'] .prompt-modal__scroll-hint {
+  background: rgba(24, 36, 54, .92);
+  color: #98a6ba;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .24);
+}
+
+/* Remote file browser. Both the custom reference table and the hidden/underlying
+   SVAR file manager need a dark surface because the library owns its DOM. */
+.workspace[data-theme='dark'] .ssh-files-modal,
+.workspace[data-theme='dark'] .ssh-files-modal__head,
+.workspace[data-theme='dark'] .ssh-files,
+.workspace[data-theme='dark'] .ssh-files__browser,
+.workspace[data-theme='dark'] .ssh-files__browser > * {
+  border-color: #2d3a4d;
+  background: #111923 !important;
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .ssh-files-modal__title,
+.workspace[data-theme='dark'] .ssh-files__sidebar-title,
+.workspace[data-theme='dark'] .ssh-files__crumb-current,
+.workspace[data-theme='dark'] .ssh-files__table-file-name {
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .ssh-files-modal__path,
+.workspace[data-theme='dark'] .ssh-files__crumb-sep,
+.workspace[data-theme='dark'] .ssh-files__loading {
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .ssh-files-modal__close,
+.workspace[data-theme='dark'] .ssh-files__sidebar-action {
+  border-color: #405675;
+  background: #182436;
+  color: #c9d5e8;
+}
+
+.workspace[data-theme='dark'] .ssh-files-modal__close:hover,
+.workspace[data-theme='dark'] .ssh-files__sidebar-action:hover {
+  border-color: #6d95ff;
+  background: #223653;
+  color: #f1f5ff;
+}
+
+.workspace[data-theme='dark'] .ssh-files__crumbs,
+.workspace[data-theme='dark'] .ssh-files__view-modes,
+.workspace[data-theme='dark'] .ssh-files__reference-table,
+.workspace[data-theme='dark'] .ssh-files__table-head,
+.workspace[data-theme='dark'] .ssh-files__table-row {
+  border-color: #2d3a4d;
+  background: #151e2b;
+  color: #c5d4e8;
+}
+
+.workspace[data-theme='dark'] .ssh-files__crumb-home {
+  stroke: #a9c7ff;
+}
+
+.workspace[data-theme='dark'] .ssh-files__search input {
+  border-color: #344258;
+  background: #0d141e;
+  color: #e7edf7;
+}
+
+.workspace[data-theme='dark'] .ssh-files__search svg {
+  stroke: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .ssh-files__search input::placeholder {
+  color: #71819a;
+}
+
+.workspace[data-theme='dark'] .ssh-files__view-modes button {
+  border-right-color: #2d3a4d;
+  color: #9fb0c6;
+}
+
+.workspace[data-theme='dark'] .ssh-files__view-modes button:hover {
+  background: #1e2c40;
+}
+
+.workspace[data-theme='dark'] .ssh-files__view-modes button.is-active {
+  background: #5d7df5;
+  color: #fff;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-head {
+  background: #1b283a;
+  color: #c5d4e8;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-row {
+  border-bottom-color: #2d3a4d;
+  background: #151e2b;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-row:hover {
+  background: #1e2c40;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-check {
+  border-color: #667b99;
+  background: #0d141e;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-file-name svg path:first-child {
+  fill: #6d95ff;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-file-name svg path:last-child {
+  fill: #8fa6ff;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-more:hover {
+  background: #223653;
+}
+
+.workspace[data-theme='dark'] .ssh-files__directory-loading {
+  background: rgba(13, 20, 30, .88);
+  color: #b9c9df;
+}
+
+.workspace[data-theme='dark'] .ssh-files__directory-spinner {
+  border-color: #344760;
+  border-top-color: #6d95ff;
+}
+
+.workspace[data-theme='dark'] .ssh-files__browser .wx-willow-theme {
+  --wx-color-primary: #6d95ff;
+  --wx-background: #111923;
+  --wx-background-alt: #151e2b;
+  --wx-border: #2d3a4d;
+  --wx-font-color: #e7edf7;
+  --wx-font-color-secondary: #98a6ba;
+  --wx-fm-background: #111923;
+  --wx-fm-select-background: #223653;
+  --wx-fm-grid-border: 1px solid #2d3a4d;
+  --wx-fm-grid-header-color: #1b283a;
+  --wx-fm-button-font-color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .ssh-files__browser .wx-filemanager,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-toolbar,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-list,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-table,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-row {
+  background: #111923 !important;
+  color: #dce8f8 !important;
+  border-color: #2d3a4d !important;
+}
+
+/* Git changed-files view. The log had a dark skin already, but this sibling view
+   was still entirely the light reference palette. */
+.git-dialog.git-dialog--dark {
+  background: rgba(3, 7, 12, .72);
+}
+
+.git-dialog--dark .git-dialog__pill,
+.git-dialog--dark .gitfiles__chip,
+.git-dialog--dark .gitdiff__modes {
+  border-color: #344760;
+  background: #182436;
+  color: #b9c9df;
+}
+
+.git-dialog--dark .git-dialog__pill--branch,
+.git-dialog--dark .gitfiles__chip--on,
+.git-dialog--dark .gitdiff__mode--on {
+  border-color: #40589e;
+  background: #1b2d4d;
+  color: #a9c7ff;
+}
+
+.git-dialog--dark .git-dialog__pill--dirty {
+  border-color: #725d31;
+  background: #332b1d;
+  color: #f2cc60;
+}
+
+.git-dialog--dark .git-dialog__copy,
+.git-dialog--dark .git-dialog__path,
+.git-dialog--dark .gitfiles__search,
+.git-dialog--dark .gitfiles__caret,
+.git-dialog--dark .gitfiles__folder-icon,
+.git-dialog--dark .gitdiff__copy,
+.git-dialog--dark .gitdiff__mode {
+  color: #8fa1bb;
+}
+
+.git-dialog--dark .git-dialog__path:hover,
+.git-dialog--dark .git-dialog__path:hover .git-dialog__copy,
+.git-dialog--dark .gitfiles__chip:hover,
+.git-dialog--dark .gitdiff__copy:hover {
+  color: #b9d0ff;
+}
+
+.git-dialog--dark .gitdiff__copy:hover {
+  background: #223044;
+}
+
+.git-dialog--dark .gitdiff__mode:hover {
+  color: #dbe8ff;
+}
+
+.git-dialog--dark .git-dialog__close:hover,
+.git-dialog--dark .gitlog__more:hover {
+  background: #223044;
+}
+
+.git-dialog--dark .gitlog__dashed,
+.git-dialog--dark .gitlog__dashed-down {
+  border-color: #536783;
+}
+
+.git-dialog--dark .gitlog__chip--mod {
+  background: #332b1d;
+  color: #f2cc60;
+}
+
+.git-dialog--dark .gitlog__chip--add {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.git-dialog--dark .gitlog__more {
+  color: #8fa1bb;
+}
+
+.git-dialog--dark .gitlog__avatar {
+  background: #253247 !important;
+  color: #c9d8ff !important;
+}
+
+.git-dialog--dark .gitfiles__pane,
+.git-dialog--dark .gitdiff__head {
+  border-color: #2d3a4d;
+}
+
+.git-dialog--dark .gitfiles__title,
+.git-dialog--dark .gitdiff__path,
+.git-dialog--dark .gitfiles__name,
+.git-dialog--dark .gitfiles__row--folder .gitfiles__name,
+.git-dialog--dark .gitdiff__text {
+  color: #dce8f8;
+}
+
+.git-dialog--dark .gitfiles__count,
+.git-dialog--dark .gitfiles__folder-count {
+  background: #1b2d4d;
+  color: #a9c7ff;
+}
+
+.git-dialog--dark .gitfiles__search {
+  border-color: #344760;
+}
+
+.git-dialog--dark .gitfiles__search input {
+  color: #dce8f8;
+}
+
+.git-dialog--dark .gitfiles__search input::placeholder,
+.git-dialog--dark .gitfiles__none,
+.git-dialog--dark .gitfiles__folder-count,
+.git-dialog--dark .gitfiles__folder-path {
+  color: #8fa1bb;
+}
+
+.git-dialog--dark .gitfiles__row:hover,
+.git-dialog--dark .gitfiles__folder:hover,
+.git-dialog--dark .gitfiles__file:hover {
+  background: #1e2c40;
+}
+
+.git-dialog--dark .gitfiles__row--on,
+.git-dialog--dark .gitfiles__file--on {
+  background: #1b2d4d;
+}
+
+.git-dialog--dark .gitfiles__guide {
+  border-left-color: #405675;
+}
+
+.git-dialog--dark .gitfiles__ext--ts {
+  background: #1b3154;
+  color: #9fc2ff;
+}
+
+.git-dialog--dark .gitfiles__ext--tsx {
+  background: #183b3d;
+  color: #72ddb1;
+}
+
+.git-dialog--dark .gitfiles__ext--json {
+  background: #332b1d;
+  color: #f2cc60;
+}
+
+.git-dialog--dark .gitfiles__ext--doc {
+  background: #263449;
+  color: #b9c9df;
+}
+
+.git-dialog--dark .gitfiles__badge--mod {
+  background: #332b1d;
+  color: #f2cc60;
+}
+
+.git-dialog--dark .gitfiles__badge--add {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.git-dialog--dark .gitfiles__badge--del {
+  background: #38232b;
+  color: #ff9ca5;
+}
+
+.git-dialog--dark .gitfiles__badge--ren {
+  background: #22264c;
+  color: #b9c5ff;
+}
+
+.git-dialog--dark .gitfiles__zero {
+  color: #667b99;
+}
+
+.git-dialog--dark .gitdiff__body {
+  background: #0d141e;
+}
+
+.git-dialog--dark .gitfiles {
+  background: #0f141c;
+}
+
+.git-dialog--dark .gitdiff__line {
+  background: #0d141e;
+}
+
+.git-dialog--dark .gitdiff__empty {
+  color: #8fa1bb;
+}
+
+.git-dialog--dark .gitdiff__hunk-head {
+  background: #1b283a;
+  color: #a9b8ce;
+}
+
+.git-dialog--dark .gitdiff__line--add {
+  background: #17352f;
+}
+
+.git-dialog--dark .gitdiff__line--del {
+  background: #38232b;
+}
+
+.git-dialog--dark .gitdiff__num,
+.git-dialog--dark .gitdiff__sign {
+  color: #71819a;
+}
+
+.git-dialog--dark .gitdiff__line--add .gitdiff__sign {
+  color: #72ddb1;
+}
+
+.git-dialog--dark .gitdiff__line--del .gitdiff__sign {
+  color: #ff9ca5;
+}
+
+/* Session manager has its own dashboard skin; cover the remaining badges and
+   controls that were still using the light palette. */
+.workspace[data-theme='dark'] .manager-session-icon {
+  background: #22264c;
+  color: #a9a5ff;
+}
+
+.workspace[data-theme='dark'] .manager-session-icon--ssh {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .manager-session-platform,
+.workspace[data-theme='dark'] .manager-status,
+.workspace[data-theme='dark'] .manager-target,
+.workspace[data-theme='dark'] .manager-created {
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .manager-status--running {
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .manager-kind {
+  background: #263449;
+  color: #b9c9df;
+}
+
+.workspace[data-theme='dark'] .manager-kind--ssh {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .manager-action,
+.workspace[data-theme='dark'] .manager-rename__input,
+.workspace[data-theme='dark'] .manager-rename button {
+  border-color: #405675;
+  background: #182436;
+  color: #c9d5e8;
+}
+
+.workspace[data-theme='dark'] .manager-action:hover:not(:disabled),
+.workspace[data-theme='dark'] .manager-rename button:hover:not(:disabled) {
+  border-color: #6d95ff;
+  background: #223653;
+  color: #dbe8ff;
+}
+
+.workspace[data-theme='dark'] .manager-action--danger:hover:not(:disabled) {
+  border-color: #6e3b49;
+  background: #38232b;
+  color: #ff9ca5;
+}
+
+.workspace[data-theme='dark'] .manager-rename__input:focus {
+  box-shadow: 0 0 0 3px rgba(109, 149, 255, .18);
+}
+
+.workspace[data-theme='dark'] .manager-empty__icon {
+  background: #22264c;
+  color: #a9a5ff;
+}
+
+.workspace[data-theme='dark'] .manager-empty__title {
+  color: #cbd8ea;
+}
+
+/* Settings status and helper controls. */
+.workspace[data-theme='dark'] .settings-card__icon {
+  background: #22264c;
+  color: #a9a5ff;
+}
+
+.workspace[data-theme='dark'] .settings-help {
+  border-color: #536783;
+  color: #a9b8ce;
+}
+
+.workspace[data-theme='dark'] .settings-state,
+.workspace[data-theme='dark'] .settings-state--ok,
+.workspace[data-theme='dark'] .settings-import-message--warn {
+  color: #98a6ba;
+}
+
+.workspace[data-theme='dark'] .settings-update-check {
+  background: #17352f;
+  color: #72ddb1;
+}
+
+.workspace[data-theme='dark'] .settings-update-status--warn {
+  color: #f2cc60;
+}
+
+.workspace[data-theme='dark'] .settings-update-status--warn .settings-update-check {
+  background: #332b1d;
+  color: #f2cc60;
+}
+
+/* The file manager library exposes several view-specific wrappers. These
+   broad rules keep cards and panels dark even when its internal class hash
+   changes between releases. */
+.workspace[data-theme='dark'] .ssh-files__browser .wx-sidebar,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-wrapper,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-tree,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-content-wrapper,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-content-item,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-content-item-fit,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-list,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-table {
+  border-color: #2d3a4d !important;
+  background: #111923 !important;
+  color: #dce8f8 !important;
+}
+
+.workspace[data-theme='dark'] .ssh-files__browser .wx-folder,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-row,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-item,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-button {
+  color: #c5d4e8 !important;
+}
+
+.workspace[data-theme='dark'] .ssh-files__browser .wx-folder:hover,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-row:hover,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-button:hover {
+  background: #1e2c40 !important;
+}
+
+.workspace[data-theme='dark'] .ssh-files__browser .wx-selected,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-folder.wx-selected {
+  background: #223653 !important;
+  color: #dbe8ff !important;
 }

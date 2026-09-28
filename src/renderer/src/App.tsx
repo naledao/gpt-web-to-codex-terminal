@@ -181,6 +181,8 @@ interface AppProps {
   initialSshDialogOpen?: boolean
   /** Which chat platform this session is showing, from the main process's session list. */
   platformId?: string
+  /** Theme owned by the workspace shell, used by third-party markdown widgets too. */
+  theme: AppTheme
   /** True while a workspace-level modal must cover the native embedded view. */
   globalModalOpen?: boolean
   /** Called after settings are saved so the workspace shell changes immediately. */
@@ -256,7 +258,7 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
     </>
   )
 }
-export default function App({ initialSshDialogOpen = false, platformId = '', globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
+export default function App({ initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -2204,7 +2206,7 @@ ${conversation.url}`}
               if (event.target === event.currentTarget) setNotesOpen(false)
             }}
           >
-            <div className="notes-modal" data-color-mode="light">
+            <div className="notes-modal" data-color-mode={theme}>
               <div className="notes-modal__head">
                 <div className="notes-modal__heading">
                   <span className="notes-modal__title">发送给 GPT 的补充说明</span>
@@ -2566,7 +2568,7 @@ ${record.command}`
               if (event.target === event.currentTarget) setPromptOpen(false)
             }}
           >
-            <div className="prompt-modal" data-color-mode="light">
+            <div className="prompt-modal" data-color-mode={theme}>
               <div className="prompt-modal__head">
                 <span className="prompt-modal__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" width="20" height="20"><path d="M7 3.75h7.7L19 8.05v12.2H7z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><path d="M14.5 3.9v4.4h4.35M10 12h6M10 15.5h6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
@@ -2623,7 +2625,7 @@ ${record.command}`
               ) : null}
 
               <div ref={promptBodyRef} className="prompt-modal__body">
-                <MDEditor.Markdown source={interceptor?.prefix.trim() || '（暂无注入内容）'} wrapperElement={{ 'data-color-mode': 'light' }} />
+                <MDEditor.Markdown source={interceptor?.prefix.trim() || '（暂无注入内容）'} wrapperElement={{ 'data-color-mode': theme }} />
               </div>
               <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div>
             </div>
