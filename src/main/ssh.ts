@@ -125,10 +125,11 @@ const EMPTY: SshState = {
  *   - an interactive PTY shell, which is what the user sees and types into;
  *   - a plain `bash -s` exec channel, which is where the MODEL's commands run.
  *
- * They are separate because the PTY echoes every byte and prints a prompt between
- * commands, and untangling that from real output means guessing at prompt shapes.
- * The exec channel has neither, so framing it is exact. The cost — the two do not
- * share a working directory — is shown in the UI rather than hidden.
+ * They remain separate because the PTY echoes every byte and prints a prompt between
+ * commands, while the exec channel has neither and can therefore be framed exactly
+ * for the model. User input is sent to the PTY, so password prompts, `read`, Ctrl-C,
+ * and other interactive programs work there. The cost — the two do not share a
+ * working directory — is shown in the UI rather than hidden.
  *
  * Worth stating explicitly: SSH traffic does NOT go through the ChatGPT proxy
  * setting. `ssh2` opens its own socket through Node's `net`, and the proxy is
@@ -139,6 +140,8 @@ export class SshManager {
   private client: Client | null = null
   private stream: ClientChannel | null = null
   private buffer = ''
+  /** Index of a PTY line that has not received its newline yet (for password prompts). */
+  private partialLineIndex: number | null = null
   private lines: TerminalLine[] = []
   private state: SshState = { ...EMPTY }
 
@@ -181,6 +184,7 @@ export class SshManager {
 
   /** Mirror a line produced by the model's own shell into this transcript. */
   pushModelLine(line: TerminalLine): void {
+    this.finishPartialLine()
     this.lines.push({ kind: line.kind, text: line.text })
     if (this.lines.length > MAX_LINES) this.lines.splice(0, this.lines.length - MAX_LINES)
     this.scheduleMirrorPush()
@@ -190,8 +194,9 @@ export class SshManager {
   pushModelOutput(chunk: string): void {
     const text = chunk.replace(/\r/g, '')
     if (text === '') return
+    const hadPartial = this.finishPartialLine()
     const last = this.lines[this.lines.length - 1]
-    if (last && last.kind === 'output') last.text += text
+    if (!hadPartial && last && last.kind === 'output') last.text += text
     else this.lines.push({ kind: 'output', text })
     if (this.lines.length > MAX_LINES) this.lines.splice(0, this.lines.length - MAX_LINES)
     this.scheduleMirrorPush()
@@ -209,6 +214,7 @@ export class SshManager {
 
     this.lines = []
     this.buffer = ''
+    this.partialLineIndex = null
     this.execAttempts = 0
     this.state = {
       status: 'connecting',
@@ -625,31 +631,33 @@ export class SshManager {
   private emitUploads(): void {
     this.onUploadsChanged(this.getUploads())
   }
-  /** Send one line to the remote shell. */
+  /**
+   * Send user input to the interactive SSH PTY.
+   *
+   * This deliberately does not use the model's exec channel. That channel redirects
+   * stdin from `/dev/null` so a model command cannot swallow the protocol. The PTY
+   * is the user-facing terminal and is the only channel that can answer a sudo
+   * password prompt or drive another interactive program.
+   */
   async write(text: string): Promise<void> {
-    const line = text.replace(/[\r\n]+$/, '')
-    if (line === '') return
-
-    this.pushLine('command', line)
-    this.emit()
-
-    // Manual input runs on the model's exec channel, so a `cd` here moves the
-    // directory the model will actually work in. Writing to the interactive PTY
-    // would silently desync the two shells, which is the bug this closes.
-    const exec = this.exec
-    if (!exec) {
-      this.pushLine('error', '模型命令通道尚未就绪，稍后再试。')
+    const stream = this.stream
+    if (!stream || this.state.status !== 'connected') {
+      this.pushLine('error', '交互式终端尚未连接，稍后再试。')
       this.emit()
       return
     }
 
-    const result = await exec.run(line)
-    if (result.rejected) {
-      this.pushLine('error', result.output)
+    // The renderer currently submits one input line at a time. Keep the carriage
+    // return explicit so the remote PTY sees the same Enter key a real terminal
+    // would receive. Do not mirror the text into the transcript: it may be a sudo
+    // password, and a PTY will echo ordinary commands by itself.
+    const payload = text.replace(/[\r\n]+/g, '\r')
+    try {
+      stream.write(`${payload}\r`)
+    } catch (error) {
+      this.pushLine('error', `写入交互式终端失败：${(error as Error).message}`)
+      this.emit()
     }
-    // A bare `cd` emits no output line, so nothing else would signal the change;
-    // emit here so the UI re-reads modelCwd.
-    this.emit()
   }
 
   dispose(): void {
@@ -748,6 +756,8 @@ export class SshManager {
       this.mirrorTimer = null
     }
 
+    this.partialLineIndex = null
+
     // Disposed BEFORE the client goes away: `RemoteShell.dispose()` marks itself
     // disposed, so its close handler does not try to reopen a channel on a
     // connection that is being torn down.
@@ -782,7 +792,14 @@ export class SshManager {
 
   private pushLine(kind: TerminalLine['kind'], text: string): void {
     this.lines.push({ kind, text })
-    if (this.lines.length > MAX_LINES) this.lines.splice(0, this.lines.length - MAX_LINES)
+    if (this.lines.length > MAX_LINES) {
+      const removed = this.lines.length - MAX_LINES
+      this.lines.splice(0, removed)
+      if (this.partialLineIndex !== null) {
+        this.partialLineIndex -= removed
+        if (this.partialLineIndex < 0) this.partialLineIndex = null
+      }
+    }
   }
 
   /**
@@ -805,13 +822,51 @@ export class SshManager {
       this.pushVisible(line)
     }
 
+    // Prompts such as `[sudo] password for user:` do not end in a newline. Keep
+    // the partial line visible so the user knows when it is safe to type the
+    // password; the input itself is never copied into the transcript.
+    if (this.buffer !== '') this.pushPartial(this.buffer)
+
     this.emit()
   }
 
   private pushVisible(rawLine: string): void {
     const cleaned = (ANSI_RE.test(rawLine) ? rawLine.replace(ANSI_RE, '') : rawLine).replace(/\r/g, '')
+    if (this.partialLineIndex !== null) {
+      // A newline completes a prompt that was buffered without one. Preserve the
+      // prompt as a historical line, then let the next real output start a new line.
+      const index = this.partialLineIndex
+      this.partialLineIndex = null
+      if (cleaned.trim() === '') return
+      const partial = this.lines[index]
+      if (partial && partial.kind === 'output') {
+        partial.text = cleaned
+        return
+      }
+    }
     // Blank lines are mostly PTY filler; dropping them keeps the pane readable.
     if (cleaned.trim() === '') return
     this.pushLine('output', cleaned)
+  }
+
+  private pushPartial(rawLine: string): void {
+    const cleaned = (ANSI_RE.test(rawLine) ? rawLine.replace(ANSI_RE, '') : rawLine).replace(/\r/g, '')
+    if (cleaned === '') return
+
+    if (this.partialLineIndex === null) {
+      this.pushLine('output', cleaned)
+      this.partialLineIndex = this.lines.length - 1
+      return
+    }
+
+    const line = this.lines[this.partialLineIndex]
+    if (line && line.kind === 'output') line.text = cleaned
+  }
+
+  /** Stop treating the last PTY line as an in-progress prompt. */
+  private finishPartialLine(): boolean {
+    if (this.partialLineIndex === null) return false
+    this.partialLineIndex = null
+    return true
   }
 }
