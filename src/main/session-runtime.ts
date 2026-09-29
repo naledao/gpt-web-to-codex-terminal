@@ -8,6 +8,7 @@ import {
 import { CHAT_PLATFORMS } from '../shared/platforms'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
+  AppTheme,
   AutomationState,
   Conversation,
   ConversationImageAttachmentInput,
@@ -91,12 +92,14 @@ export interface SessionRuntimeOptions {
   localMachineId: string
   initialMode: ExecutionMode
   /**
-   * Only `sshProxy` is read from here — the embed proxies are applied by `index.ts` directly,
-   * per platform. `embedProxy` is typed as the map it now is rather than omitting it, so this
-   * dependency keeps mirroring `AppSettings` instead of becoming its own narrower shape that
-   * silently drifts.
+   * Only `sshProxy` and `theme` are read from here. The embed proxies are applied by
+   * `index.ts` directly, per platform, and the theme is pushed to every view as it changes —
+   * this callback is what a view created LATER reads, so it does not have to be told twice.
+   * `embedProxy` is typed as the map it now is rather than omitting it, so this dependency
+   * keeps mirroring `AppSettings` instead of becoming its own narrower shape that silently
+   * drifts.
    */
-  settings: () => { embedProxy: Record<string, string>; sshProxy: string }
+  settings: () => { embedProxy: Record<string, string>; sshProxy: string; theme: AppTheme }
   onSummaryChanged: () => void
   onTransfersChanged: () => void
   onActivate: (id: string) => void
@@ -488,6 +491,12 @@ export class SessionRuntime {
      * look like nothing was injected at all.
      */
     entry.embed.setPromptPrefix(buildTerminalPrefix(this.environment))
+    /*
+     * Same reasoning as the prompt above, one line down: the theme lives per VIEW, so a view
+     * created after the last theme change would otherwise come up wearing the old one — and
+     * the only way to notice would be to switch platform and look.
+     */
+    entry.embed.setTheme(this.options.settings().theme)
     return entry
   }
 
@@ -516,6 +525,18 @@ export class SessionRuntime {
   setActive(active: boolean): void {
     this.active = active
     this.applyVisibility()
+  }
+
+  /**
+   * Push an app-theme change into every view of this session.
+   *
+   * Every view, not just the visible one: the hidden platform's page is still rendered, and a
+   * view whose theme was never updated is a page that comes up in the wrong colours the next
+   * time it is switched to. Views that do not exist yet are covered by `ensureEmbed`, which
+   * reads the theme from settings.
+   */
+  setTheme(theme: AppTheme): void {
+    for (const entry of this.embeds.values()) entry.embed?.setTheme(theme)
   }
 
   /**

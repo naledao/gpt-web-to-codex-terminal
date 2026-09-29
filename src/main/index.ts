@@ -1,6 +1,6 @@
 import { join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_LOGIN_URL,
@@ -15,6 +15,7 @@ import type {
   AppInfo,
   AppSettings,
   AppSettingsPatch,
+  AppTheme,
   AutomationState,
   Conversation,
   ConversationMessage,
@@ -477,6 +478,36 @@ async function applyEmbedProxy(proxies: Record<string, string>): Promise<void> {
       console.warn(`[settings] failed to apply embed proxy to ${platform.id}:`, (error as Error).message)
     }
   }
+}
+
+/**
+ * Apply the app theme to Chromium itself, and to every embedded page.
+ *
+ * WHY `nativeTheme.themeSource` IS THE MAIN HALF OF THIS
+ * -----------------------------------------------------
+ * The app's own UI is themed with CSS variables and does not care. The EMBEDDED pages are
+ * third-party sites that decide their own colours from `prefers-color-scheme`, which until
+ * now reported the OPERATING SYSTEM — so switching this app to dark left every chat page
+ * light, and there was nothing to see in a log, because no request, no DOM read and no state
+ * anywhere in the app depends on it.
+ *
+ * `themeSource` is the one lever that reaches all of them at once. Electron's own docs are
+ * explicit that setting it makes "the `prefers-color-scheme` CSS query match" the chosen
+ * mode, and it is applied process-wide, so the four partitions cannot disagree.
+ *
+ * The second half is per page: a site whose appearance is PINNED to an explicit light/dark in
+ * its own account settings ignores the media query entirely. That is what the injected theme
+ * script is for — see `ChatGptEmbed.setTheme`.
+ */
+function applyAppTheme(theme: AppTheme): void {
+  nativeTheme.themeSource = theme
+
+  console.info(
+    `[theme] app theme is ${theme}; embedded pages now answer prefers-color-scheme: ${theme} ` +
+      `(shouldUseDarkColors=${nativeTheme.shouldUseDarkColors} views=${runtimes.size})`
+  )
+
+  for (const runtime of runtimes.values()) runtime.setTheme(theme)
 }
 
 function managedSessions(): ManagedSessionSummary[] {
@@ -1097,6 +1128,13 @@ function registerIpcHandlers(): void {
     if (patch?.theme === 'light' || patch?.theme === 'dark') {
       settings = { ...settings, theme: patch.theme }
       store.setSetting(SETTING_THEME, patch.theme)
+      /*
+       * Applied here rather than only at the next page load: the user just flipped a switch,
+       * and a chat page that keeps its old colours until something reloads it reads as a
+       * broken setting. This reaches the open views; a view created later reads the theme
+       * from `settings()` in `ensureEmbed`.
+       */
+      applyAppTheme(patch.theme)
     }
     if (patch?.embedProxy && typeof patch.embedProxy === 'object') {
       /*
@@ -1211,6 +1249,12 @@ if (!app.requestSingleInstanceLock()) {
       userAvatarPositionY: readAvatarPosition(conversationStore.getSetting(SETTING_USER_AVATAR_POSITION_Y)),
       userAvatarScale: readAvatarScale(conversationStore.getSetting(SETTING_USER_AVATAR_SCALE))
     }
+    /*
+     * Before any window or view exists, so the first paint of every embedded page already has
+     * the right `prefers-color-scheme` — including the splash, which takes the theme as a
+     * query parameter for exactly the same reason.
+     */
+    applyAppTheme(settings.theme)
     await applyEmbedProxy(settings.embedProxy)
     setUpdaterBroadcast((status) => {
       if (managerWindow && !managerWindow.isDestroyed()) {

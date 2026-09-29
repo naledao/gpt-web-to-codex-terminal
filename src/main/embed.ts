@@ -1,8 +1,10 @@
 import { BrowserWindow, WebContentsView, session, shell } from 'electron'
 import interceptorSource from './injected/send-interceptor.js?raw'
+import themeSource from './injected/theme.js?raw'
 import { FALLBACK_ENVIRONMENT, buildTerminalPrefix, isConversationId } from '../shared/types'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
+  AppTheme,
   ConversationImageAttachmentInput,
   EmbedBounds,
   EmbedCommand,
@@ -307,10 +309,52 @@ export class ChatGptEmbed {
   }
 
   /**
+   * The colour this view paints before its page has painted anything.
+   *
+   * Matches the renderer's `--bg-elevated` in each theme, so the native rectangle in the slot
+   * blends with the app instead of announcing itself — a dark rectangle in a light app while
+   * the page loads is the most visible form of "the embed is not part of this window".
+   */
+  private backgroundColor(): string {
+    return this.theme === 'dark' ? '#141922' : '#ffffff'
+  }
+
+  /**
+   * Push the app's theme into this page.
+   *
+   * Two mechanisms, deliberately, and neither covers the other's case:
+   *
+   *   1. `nativeTheme.themeSource`, set once in the main process (`applyAppTheme`). It makes
+   *      this renderer answer `prefers-color-scheme` with the app's theme, which is enough
+   *      for a site whose own appearance follows the system — the default on all four.
+   *   2. The injected script, for a site pinned to an explicit light or dark in its own
+   *      settings, where the media query is ignored and only the page's own DOM responds.
+   *
+   * Applied live, not at the next reload: the setting is a switch the user just flipped, and
+   * a page that only changes theme after a manual reload reads as broken.
+   */
+  setTheme(theme: AppTheme): void {
+    this.theme = theme
+    const view = this.view
+    if (view && !view.webContents.isDestroyed()) view.setBackgroundColor(this.backgroundColor())
+    if (this.liveContents()) void this.installTheme()
+  }
+
+  /**
    * When true, a page that (re)loads starts with its restored history suppressed.
    * Main keeps this in sync with the execution mode.
    */
   private armBaselineOnInstall = false
+
+  /**
+   * The app's theme, pushed into the page by `installTheme()`.
+   *
+   * Held per view rather than read from settings at use time: a view outlives a settings
+   * change and reloads on its own, and a page that reloads has to be told again. The value
+   * also decides the colour a loading view paints, so a cold load cannot flash the opposite
+   * theme into the slot.
+   */
+  private theme: AppTheme = 'light'
 
   /**
    * Which site this view drives.
@@ -348,7 +392,12 @@ export class ChatGptEmbed {
     })
 
     this.view = view
-    view.setBackgroundColor('#141922')
+    /*
+     * What the view paints before its page has painted anything. It has to follow the app
+     * theme, or every cold load and every switch back flashes the opposite one into the slot
+     * — the value is the renderer's own `--bg-elevated` in each theme.
+     */
+    view.setBackgroundColor(this.backgroundColor())
     parent.contentView.addChildView(view)
 
     const contents = view.webContents
@@ -440,6 +489,17 @@ export class ChatGptEmbed {
     // document-level listeners installed by the previous run.
     contents.on('did-finish-load', () => {
       void this.installInterceptor()
+      void this.installTheme()
+    })
+
+    /*
+     * The theme goes in at `dom-ready`, which is the EARLIEST moment there is a document to
+     * touch — the page's own styles are applied by then, and the theme script measures them.
+     * Waiting for `did-finish-load` would leave the page in its own theme for the whole of a
+     * long load, which on a cold start is the several seconds the splash is up.
+     */
+    contents.on('dom-ready', () => {
+      void this.installTheme()
     })
 
     // NOTE: `did-navigate-in-page` is the one that fires for ChatGPT's
@@ -677,6 +737,42 @@ export class ChatGptEmbed {
     } catch (error) {
       // A navigation during injection is normal; did-finish-load will retry.
       console.warn('[embed] interceptor injection failed:', (error as Error).message)
+    }
+  }
+
+  /**
+   * Inject the theme script and tell it which theme the app is in.
+   *
+   * Separate from `installInterceptor` rather than folded into it: the two answer different
+   * questions (how a message is sent, how the page is painted), they install on different
+   * events, and this one is also re-pushed on every theme change — merging them would mean
+   * re-pushing the whole command protocol, including the arm-the-baseline flag, on a purely
+   * cosmetic switch.
+   *
+   * The platform's theme rules travel with the config because the script is injected as
+   * SOURCE and cannot import anything; they may legitimately be empty lists, which means
+   * "report only, touch nothing" for a platform whose page has not been measured.
+   */
+  async installTheme(): Promise<void> {
+    const contents = this.liveContents()
+    if (!contents) return
+
+    const rules = this.platform.page.theme
+    const config = JSON.stringify({
+      theme: this.theme,
+      dark: rules?.dark ?? [],
+      light: rules?.light ?? [],
+      storage: rules?.storage ?? []
+    })
+
+    try {
+      await contents.executeJavaScript(
+        `${themeSource}\n;` +
+          `window.__cmdTerminalTheme && window.__cmdTerminalTheme.configure(${config});true`
+      )
+    } catch (error) {
+      // A navigation during injection is normal; dom-ready / did-finish-load will retry.
+      console.warn(`[embed:${this.platform.id}] theme injection failed:`, (error as Error).message)
     }
   }
 
@@ -1008,6 +1104,28 @@ export class ChatGptEmbed {
        */
       case 'scan':
         console.info(`[embed:${this.platform.id}] scan ${JSON.stringify(payload)}`)
+        break
+      /*
+       * The theme report — the only evidence this app will ever have that the page is painted
+       * the way the app asked for.
+       *
+       * Nothing else here reads a colour or a class, so a page that ignored the theme and a
+       * page that followed it are indistinguishable everywhere else: same URL, same title,
+       * same everything. It is logged in full (the hooks that were tried, what each measured,
+       * and the site's own theme-shaped storage keys) because a wrong verdict here is
+       * otherwise unfalsifiable.
+       *
+       * Level follows meaning: `none` and `contested` are the two states where the page is
+       * NOT following the app and something has to change, so they are warnings. The rest —
+       * including `unknown`, which is a page that has not finished painting yet and is
+       * retried on a timer — are information.
+       */
+      case 'theme':
+        if (payload.applied === 'none' || payload.applied === 'contested' || payload.applied === 'error') {
+          console.warn(`[embed:${this.platform.id}] theme ${JSON.stringify(payload)}`)
+        } else {
+          console.info(`[embed:${this.platform.id}] theme ${JSON.stringify(payload)}`)
+        }
         break
       case 'send-failed':
       case 'send-recovery':

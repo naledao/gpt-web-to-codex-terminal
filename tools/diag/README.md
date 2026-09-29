@@ -526,6 +526,91 @@ Log: `%TEMP%\gpt-login-diag\deepseek-<timestamp>.log`
 | `message containers:` | candidate thread containers with child tag/class and text length |
 | `sidebar links` | conversation links, for the "sync conversations" feature |
 
+## deepseek-theme-probe.js
+
+**The run that answers: what actually controls `chat.deepseek.com`'s light/dark appearance?**
+
+The app has one theme setting (`应用主题`); the page inside it is a third-party site with a
+theme of its own, and until now nothing connected the two — switching the app to dark left
+every chat page light. Two mechanisms could carry the setting across, and they are not
+interchangeable:
+
+| Mechanism | Where it lives | Covers |
+| --- | --- | --- |
+| `nativeTheme.themeSource` | the main process | a site whose own appearance is "follow the system" — it changes what `prefers-color-scheme` answers |
+| a DOM hook (`html.dark`, `body[theme-mode=dark]`, …) | the page | a site whose appearance is PINNED to an explicit light/dark in its own account settings |
+
+**Which one DeepSeek needs is a fact about DeepSeek, and it is not knowable from here.** A
+hook that matches nothing changes nothing, silently — the page simply stays as it was, which
+looks exactly like the feature never having been built. So it gets measured.
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\deepseek-theme-probe.js
+```
+
+Optional proxy: `$env:PROBE_PROXY='http://127.0.0.1:7897'`
+Uses the app's real **`persist:deepseek`** partition, so it opens whatever session the app has.
+
+### What the user does
+
+1. **Wait ~45 seconds and touch nothing.** The window changes theme, reloads, changes theme
+   again, then has its DOM replayed — all of it automatic, and interrupting it wastes the run.
+2. **Then switch DeepSeek's OWN theme once** (its settings → 外观/主题). The probe prints a
+   `CHANGE` block naming exactly what moved.
+3. Leave it ~10 seconds, then close the window. The verdict is written at that moment.
+
+The probe **never clicks and never types in the page, and never writes storage** — the site's
+own preference is recorded in the log and left alone. It **does** write the DOM during the
+replay phase (the three `<body>` changes in `DESCRIPTOR`, dark then light, ending where the
+page already was): that phase exists to test the shipped rules against the live page rather
+than trust them. It also changes its own process's theme preference, on a timer, on purpose.
+
+### Reading the log
+
+| Line | Meaning |
+| --- | --- |
+| `BASELINE` / `AFTER-PHASE-*` / `AFTER-BOOT-*` / `REPLAY-*` / `FINAL` | forced snapshots; `TICK`s log **only when something changed** |
+| `CHANGE <field>: before -> after` | **the answer.** Which attribute, class or storage entry moved — printed as a diff, so a theme switch does not have to be spotted across twenty identical dumps |
+| `scheme=` + `prefers-color-scheme=` + `(evidence)` | what the page is painted, what the page *believes* the OS wants, and the computed colour that decided it |
+| `html attrs=` / `html classes=` / `body attrs=` / `body classes=` | the hooks, in full — not a candidate list, the actual document |
+| `localStorage=` / `sessionStorage=` | theme-shaped entries only (`theme`, `appearance`, `scheme`, `color-mode`, or an exact `dark`/`light`/`system` value) |
+| `CSS MAP` | **the site's own contract.** Selector prefixes from DeepSeek's stylesheets that mention dark/light/theme, with a count each |
+| `FOLLOWS LIVE` | did the page react to a preference flip on an **already-open** page. `false` on DeepSeek — it reads the query at boot only |
+| `FOLLOWS AT BOOT` | did it react when the preference was set and the page **reloaded**, which is what the app does. `true` means a fresh load needs no DOM work at all |
+| `DESCRIPTOR REPLAY` + `WORKS` / `FAILED` | **the shipped rules, tested.** `DEEPSEEK_THEME` is duplicated in this probe and replayed against the live page in both directions; `FAILED` means the descriptor and the page have drifted apart |
+| `cross-origin sheets skipped` | sheets whose `.cssRules` threw; their rules are not in the map and their absence is not evidence of anything |
+| `layers=` | computed `bg` / `fg` / `colorScheme` for html, body, `#root`, `#app`, `main` |
+
+### Rules
+
+- **Nothing in the page is clicked, typed into, or written outside the replay phase**, and
+  storage is never written: a key this probe has not seen control the theme is a key it has no
+  business setting — and even the one it *has* seen is only reported, because it is the site's
+  own preference and would follow the user into their real browser.
+- **`FOLLOWS AT BOOT` is only meaningful next to the site's own preference**, which the
+  `localStorage` line carries. Measured: while DeepSeek is pinned to `light` or `dark` in its
+  own settings, the media query reaches the page (`prefers-color-scheme` flips correctly) and
+  the page ignores it — at boot as well as live. That pinned case is exactly what the DOM
+  replay exists for. With the site set to 跟随系统 the answer can differ, and the log says which
+  case the run was.
+- **The descriptor is duplicated inside the probe on purpose.** A probe that read
+  `src/shared/platforms.ts` would pass whatever that file says, including a value mistyped into
+  it. **Keep the two in sync**, the same way the ChatGPT probe duplicates its selector list.
+- **The log is the deliverable.** The adapter values are written from it, not before it.
+- The verdict is captured on the window's `close`, not its `closed`: `closed` fires after the
+  webContents is gone and every capture inside it fails with `Object has been destroyed` — the
+  first run of this probe lost its `FINAL` snapshot that way.
+- The page scripts are template literals, so the two traps in `chatgpt-dom-probe.js` apply
+  here too: **one backtick inside ends the string**, and **a backslash escape is consumed by
+  the literal before the page sees it** (`\s` arrives as `s`). Both are avoided — string
+  concatenation instead of interpolation, `[ ]` instead of `\s`.
+- **`node --check` does not check the page scripts** — they are strings inside the file. They
+  were verified by slicing each literal **by line range** and parsing the result, which is
+  also the only way to catch the backtick problem: "the first backtick after the opener" finds
+  an inner one and reports a clean bill of health for a broken file.
+
+Log: `%TEMP%\gpt-login-diag\deepseek-theme-<timestamp>.log`
+
 ## analyse-net-log.mjs
 
 **The question this answers:** Chromium keeps printing

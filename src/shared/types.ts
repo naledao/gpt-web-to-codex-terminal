@@ -846,6 +846,8 @@ export interface InterceptorPageEvent {
     | 'scan'
     | 'sent-raw'
     | 'raw-busy'
+    /** Reported by the injected theme script; see src/main/injected/theme.js. */
+    | 'theme'
   count?: number
   text?: string
   /** Token for a page-side batch of user image attachments, on user-message. */
@@ -941,6 +943,39 @@ export interface InterceptorPageEvent {
   /** Present on `end-task`: the page-side flags at the moment the task was stopped. */
   awaitingReply?: boolean
   taskActive?: boolean
+
+  /*
+   * Present on `theme`: what the app asked the page for, what the page actually looks like,
+   * and what was done about it.
+   *
+   * A page that ignores the app's theme and a page that has been themed correctly are
+   * IDENTICAL in every other signal this app has — nothing else reads a colour or a class,
+   * so "the theme sync silently did nothing" has no symptom. These fields are the symptom:
+   * `page` is measured from the page's computed colours, `lever` names the hook that
+   * provably moved it, and `tried` lists the hooks that did not, with what they measured.
+   * `hints` is the discovery half — the site's own theme-shaped localStorage entries, which
+   * is where a durable storage rule comes from.
+   */
+  want?: string
+  page?: string
+  applied?: string
+  /**
+   * The declared DOM mutation the page was put into, as `body/class:dark=true`.
+   *
+   * `mutations` lists the whole applied set: DeepSeek's dark mode is three coordinated
+   * changes, and a report naming only the first would read as if one class were the whole
+   * mechanism.
+   */
+  mutation?: string | null
+  mutations?: string[]
+  tried?: string[]
+  declared?: number
+  evidence?: string
+  hints?: string[]
+  storageKeys?: string[]
+  retry?: number
+  /** What the page believes the OS preference is; on `theme`, not `scan`. */
+  query?: string
 }
 
 /* ------------------------------------------------------------------ *

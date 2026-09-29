@@ -38,6 +38,61 @@ import type { EnvironmentKind } from './types'
 export type ComposerKind = 'contenteditable' | 'textarea'
 
 /**
+ * One DOM change that a site's OWN theme switch performs.
+ *
+ * Data rather than code because the injected script is SOURCE TEXT: it cannot import a
+ * helper, so these travel to it inside the config object.
+ *
+ * Modelled as "put the document into this state", not as "try this hook and see". The
+ * difference is not cosmetic — DeepSeek's dark mode is a SET of coordinated changes (body
+ * gains `dark`, loses `light`, gains `data-ds-dark-theme=dark`), and a mechanism that
+ * applied them one at a time and stopped at the first that appeared to work would leave the
+ * page in a state the site never produces.
+ */
+export type ThemeMutation =
+  | { target: 'html' | 'body'; kind: 'class'; name: string; present: boolean }
+  /** `value: ''` removes the attribute, which is how the site's own light mode leaves it. */
+  | { target: 'html' | 'body'; kind: 'attr'; name: string; value: string }
+
+/**
+ * How one site's page is told which theme to render.
+ *
+ * This is only HALF of the theme sync. The other half is `nativeTheme.themeSource` in the
+ * main process, which makes the page's `prefers-color-scheme` match the app — measured on
+ * DeepSeek to reach the page correctly, and enough on its own for a site that evaluates that
+ * query when it boots. What lives here covers the case it cannot: a page that is already
+ * open when the app's theme changes, and a site whose appearance is PINNED to an explicit
+ * value instead of "follow the system".
+ *
+ * EVERY VALUE HERE IS READ OFF A LIVE PAGE. `tools/diag/deepseek-theme-probe.js` prints a
+ * diff of the whole document while the user switches the site's own theme, so what goes in
+ * below is the site's own behaviour replayed — never a convention that was assumed. A hook
+ * that matches nothing changes nothing, silently, which is indistinguishable from the
+ * feature not existing.
+ */
+export interface PageThemeRules {
+  /**
+   * The document state the site's own DARK mode puts it in, exactly as measured.
+   *
+   * EMPTY MEANS "DO NOT TOUCH THE PAGE", and that is the state of every platform that has
+   * not been measured yet. It is a real state rather than a placeholder: the injected script
+   * then only reports what the page looks like against what the app asked for, and that
+   * report is what says whether a platform needs this at all.
+   */
+  dark: ThemeMutation[]
+  /** …and its light mode. Applied as one unit, like `dark`. */
+  light: ThemeMutation[]
+  /**
+   * `localStorage` entries the site persists its OWN appearance under.
+   *
+   * Declared, never guessed — and deliberately EMPTY for DeepSeek even though its key is
+   * measured, because writing it would change the user's setting for that site EVERYWHERE,
+   * not just inside this app. See the note on `DEEPSEEK_THEME`.
+   */
+  storage: { key: string; dark: string; light: string }[]
+}
+
+/**
  * Selectors and DOM behaviour for one chat site's page.
  *
  * Selectors are LISTS. A site that renames a test id should degrade to the next entry
@@ -80,6 +135,77 @@ export interface PageAdapter {
    * on this site", which is a real limitation to surface rather than paper over.
    */
   messageIdAttr: string
+  /** How this site's page is told which theme to render. See `PageThemeRules`. */
+  theme: PageThemeRules
+}
+
+/**
+ * The theme rules of a platform whose page has not been measured yet.
+ *
+ * Both lists empty, so the injected script only REPORTS what the page looks like against
+ * what the app asked for. That is worth having on its own — `applied=agrees` says the media
+ * query was enough, `applied=none` says the site pins its appearance and this platform still
+ * needs its own mutation list — and it is the opposite of guessing, which is invisible when
+ * wrong.
+ */
+const THEME_UNMEASURED: PageThemeRules = { dark: [], light: [], storage: [] }
+
+/**
+ * DeepSeek's theme — MEASURED, 2026-09-29, with `tools/diag/deepseek-theme-probe.js`.
+ *
+ * Everything below is a diff the probe printed while the user switched DeepSeek's own theme,
+ * copied verbatim. Nothing was assumed and nothing was tried on the live page to find out.
+ *
+ * WHAT THE SITE DOES (one switch, light -> dark, from the probe log):
+ *
+ *   body class        "zh_CN light"  ->  "zh_CN dark"          (gains dark, LOSES light)
+ *   body attribute    (absent)       ->  data-ds-dark-theme=dark
+ *   body background   rgb(255,255,255) -> rgb(21, 21, 23)
+ *   body colorScheme  normal         ->  dark
+ *   localStorage      __appKit_@deepseek/chat_themePreference  system -> dark
+ *
+ * THREE THINGS WORTH STATING, because each one changes what the app should do:
+ *
+ *  1. `<html>` CARRIES NOTHING. Its entire attribute set through the switch was
+ *     `class=notranslate, lang=zh-CN, translate=no`. The obvious hook — `<html class="dark">`,
+ *     Tailwind's convention and the first thing anyone would try — does not exist here, which
+ *     is exactly why this was measured instead of guessed.
+ *
+ *  2. IT IS A SET, NOT A HOOK. Dark mode gains `dark` AND loses `light` AND gains the
+ *     attribute; light mode does the same in reverse. All three go in together, which is why
+ *     `dark`/`light` are lists applied as a unit rather than candidates tried in turn.
+ *
+ *  3. THE MEDIA QUERY REACHES THE PAGE BUT IS NOT RE-EVALUATED LIVE. The probe drove
+ *     `prefers-color-scheme` light -> dark and the page's own report changed accordingly,
+ *     while the body stayed white and the class stayed `light`. DeepSeek resolves "system"
+ *     when it BOOTS — which is why the app's `nativeTheme.themeSource` half is enough for a
+ *     fresh load, and why this DOM replay exists for a page that is already open.
+ *
+ * WHY `storage` IS EMPTY ON PURPOSE
+ * ---------------------------------
+ * The site's own key is measured and it is the durable fix:
+ *
+ *   __appKit_@deepseek/chat_themePreference = {"value":"dark","__version":"0"}
+ *
+ * Writing it was rejected deliberately. That key is DeepSeek's own preference, not this
+ * app's: on the measured run it held `system`, and overwriting it with `dark` would change
+ * how the site behaves in the user's REAL browser too, permanently, from inside a terminal
+ * app. The DOM replay has no such reach — it lasts until the page is reloaded — so that is
+ * what ships. If a reload flash ever turns out to matter more than that boundary, the values
+ * above are the ones to write.
+ */
+const DEEPSEEK_THEME: PageThemeRules = {
+  dark: [
+    { target: 'body', kind: 'class', name: 'light', present: false },
+    { target: 'body', kind: 'class', name: 'dark', present: true },
+    { target: 'body', kind: 'attr', name: 'data-ds-dark-theme', value: 'dark' }
+  ],
+  light: [
+    { target: 'body', kind: 'class', name: 'light', present: true },
+    { target: 'body', kind: 'class', name: 'dark', present: false },
+    { target: 'body', kind: 'attr', name: 'data-ds-dark-theme', value: '' }
+  ],
+  storage: []
 }
 
 /** Everything the main process needs to embed and drive one chat site. */
@@ -353,7 +479,9 @@ export const CHATGPT_PAGE: PageAdapter = {
    * `assistantSelectors`: nothing keys identity off this list.
    */
   messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
-  messageIdAttr: 'data-chatgpt-selection-message-id'
+  messageIdAttr: 'data-chatgpt-selection-message-id',
+  // Not measured yet; DeepSeek is the platform the theme probe runs against first.
+  theme: THEME_UNMEASURED
 }
 
 export const CHATGPT_PLATFORM: ChatPlatform = {
@@ -451,7 +579,12 @@ export const DEEPSEEK_PAGE: PageAdapter = {
    * suppress the second; leaving it empty routes both sides through the content hash, which
    * is exactly what `turnKeyOf` and `executionKeyOf` were built for.
    */
-  messageIdAttr: ''
+  messageIdAttr: '',
+  /*
+   * MEASURED — the only platform whose theme rules are filled in, and the source of the
+   * method used for the rest. See `DEEPSEEK_THEME` for the diff this was copied from.
+   */
+  theme: DEEPSEEK_THEME
 }
 
 export const DEEPSEEK_PLATFORM: ChatPlatform = {
@@ -563,7 +696,9 @@ export const CLAUDE_PAGE: PageAdapter = {
    * identity, so both sides fall through to the content hash in `turnKeyOf` — which is what that
    * function exists for.
    */
-  messageIdAttr: ''
+  messageIdAttr: '',
+  // Not measured yet; DeepSeek is the platform the theme probe runs against first.
+  theme: THEME_UNMEASURED
 }
 
 export const CLAUDE_PLATFORM: ChatPlatform = {
@@ -690,7 +825,9 @@ export const GEMINI_PAGE: PageAdapter = {
    * the cost is that the MutationObserver's attribute filter now watches `id`, which changes more
    * often elsewhere on an Angular page and so re-arms the settle timer more than it needs to.
    */
-  messageIdAttr: 'id'
+  messageIdAttr: 'id',
+  // Not measured yet; DeepSeek is the platform the theme probe runs against first.
+  theme: THEME_UNMEASURED
 }
 
 export const GEMINI_PLATFORM: ChatPlatform = {
