@@ -372,6 +372,19 @@ export interface EmbedState {
   canGoForward: boolean
   /** Set when the current URL is a conversation (`/c/<id>`). */
   conversationId: string | null
+  /**
+   * Set while the view is parked on a bot-check interstitial rather than the site itself.
+   *
+   * WHY THE UI HAS TO KNOW. Such a page is a NORMAL first-visit state, not a failure: measured on
+   * claude.ai from an empty partition, Cloudflare's challenge took ~24 seconds to clear on its
+   * own and then navigated to the real page. But an interstitial looks exactly like the site
+   * having failed to load — no content, no error — so without this the only honest reading a user
+   * (or an agent reading the log) can reach is "it is broken". That misreading already cost
+   * several rounds here.
+   *
+   * Epoch milliseconds when the check was first seen, or null when there is none.
+   */
+  botCheckSince: number | null
 }
 
 /** The machine + working-directory project a conversation belongs to. */

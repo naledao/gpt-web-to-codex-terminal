@@ -392,7 +392,8 @@ const EMPTY_EMBED_STATE: EmbedState = {
   isLoading: false,
   canGoBack: false,
   canGoForward: false,
-  conversationId: null
+  conversationId: null,
+  botCheckSince: null
 }
 
 const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {

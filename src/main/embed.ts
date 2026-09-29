@@ -41,6 +41,15 @@ import type {
 const INTERCEPTOR_LOG_TAG = '[cmd-terminal] '
 
 /**
+ * How often to ask whether a bot check has cleared.
+ *
+ * Two seconds because the measured wait is ~24 seconds: fine-grained enough that the UI stops
+ * saying "passing a security check" promptly after it does, coarse enough that a page whose
+ * challenge takes a minute does not get hammered with `executeJavaScript` calls.
+ */
+const BOT_CHECK_POLL_MS = 2000
+
+/**
  * Conversation id of a URL, for whichever platform this view drives.
  *
  * A URL that will not parse is not an error worth reporting — the page navigates through
@@ -275,6 +284,17 @@ export class ChatGptEmbed {
   private visible = true
   /** Dedupe key of the last conversation handed to the store. */
   private lastCaptured = ''
+  /** Dedupe key of the last `reportLanding` line, so a re-titling page cannot flood the log. */
+  private lastLanding = ''
+  /**
+   * When the current bot check started, or null when there is none.
+   *
+   * Non-null is what `EmbedState.botCheckSince` reports, which is how the UI knows to say
+   * "passing a security check" instead of showing a page that looks broken.
+   */
+  private botCheckSince: number | null = null
+  /** Poll watching a bot check resolve itself; see `beginBotCheckWait`. */
+  private botCheckTimer: NodeJS.Timeout | null = null
   private lastSyncAt = 0
   /** Whether onReady has already been reported for this view. See EmbedHandlers.onReady. */
   private firstLoadDone = false
@@ -530,6 +550,9 @@ export class ChatGptEmbed {
     contents.on('page-title-updated', () => {
       this.publishState()
       this.captureCurrentConversation()
+      // The challenge page often finishes loading BEFORE it swaps its title in, so this is the
+      // event that catches it. See `reportLanding`.
+      void this.reportLanding()
     })
     contents.on('render-process-gone', () => this.publishState())
 
@@ -540,6 +563,121 @@ export class ChatGptEmbed {
   setBounds(bounds: EmbedBounds): void {
     this.bounds = bounds
     this.applyBounds()
+  }
+
+  /**
+   * Say where the view actually LANDED, and recognise a bot-check interstitial by name.
+   *
+   * WHY THIS EXISTS. `did-navigate` and `page-title-updated` only republish state, so a view
+   * parked on a Cloudflare challenge produced a completely silent log: the session was created,
+   * `configure` reported the prompt as MATCH, and nothing anywhere said "you are looking at a
+   * security check rather than the site". That silence cost a full debugging round on claude.ai
+   * — and the same class of page has already been mistaken for a login failure on chatgpt.com
+   * and for a rate-limit page on auth.openai.com.
+   *
+   * Recognised the way the probes do it: by title, with the body text as a second signal, since
+   * a challenge page carries almost no other markup. Reported only when it CHANGES, so a page
+   * that keeps re-titling itself cannot flood the log.
+   */
+  private async reportLanding(): Promise<void> {
+    const contents = this.liveContents()
+    if (!contents) return
+
+    const url = contents.getURL()
+    const title = contents.getTitle()
+    let body = ''
+    try {
+      body = String(
+        await contents.executeJavaScript(
+          'document.body ? document.body.innerText.slice(0, 300) : ""'
+        )
+      )
+    } catch {
+      /* a navigation during the read is normal */
+    }
+
+    const challenged = this.looksLikeBotCheck(title, body)
+    const line = `${url}|${title}|${challenged ? 'CHALLENGE' : 'ok'}`
+    if (line === this.lastLanding) return
+    this.lastLanding = line
+
+    if (challenged) {
+      console.warn(
+        `[embed:${this.platform.id}] BOT CHECK, not the site: ${url} | title=${JSON.stringify(title)} ` +
+          `| ${JSON.stringify(body.slice(0, 120))}`
+      )
+      this.beginBotCheckWait(contents)
+    } else {
+      console.info(`[embed:${this.platform.id}] landed ${url} | title=${JSON.stringify(title)}`)
+      this.endBotCheckWait()
+    }
+  }
+
+  /** Whether this document is a bot-check interstitial rather than the site. */
+  private looksLikeBotCheck(title: string, body: string): boolean {
+    return /just a moment|verify you are human|checking your browser|正在进行安全验证|验证您是否是真人|安全服务防护/i.test(
+      `${title}\n${body}`
+    )
+  }
+
+  /**
+   * Wait for a bot check to clear, and say so while it does.
+   *
+   * WHY WAITING IS THE WHOLE FIX. Measured on claude.ai from an empty partition: Cloudflare's
+   * challenge resolved itself ~24 seconds after the first navigation and then went on to the real
+   * page. Nothing was needed from the client — no cookie, no second navigation. The app was
+   * failing only because it had no notion that this state is transient, so it stopped calling the
+   * page loaded-but-empty and left the user staring at it.
+   *
+   * DELIBERATELY NOT RELOADING. A challenge is completed by JavaScript that is already running in
+   * the page; navigating away restarts it from the beginning. The earlier instinct to "reload
+   * until it passes" would therefore make it slower, not faster. This only watches.
+   *
+   * The poll is what makes it self-correcting: the interstitial's finish can arrive as a title
+   * change, an in-page navigation or a full one, and `page-title-updated` alone is not dependable
+   * on a page this minimal.
+   */
+  private beginBotCheckWait(contents: Electron.WebContents): void {
+    if (this.botCheckSince === null) {
+      this.botCheckSince = Date.now()
+      // Push immediately so the UI can say what is happening instead of showing a dead page.
+      this.publishState()
+    }
+    if (this.botCheckTimer !== null) return
+
+    this.botCheckTimer = setInterval(() => {
+      if (this.liveContents() !== contents || contents.isDestroyed()) {
+        this.endBotCheckWait()
+        return
+      }
+      const title = contents.getTitle()
+      void contents
+        .executeJavaScript('document.body ? document.body.innerText.slice(0, 300) : ""')
+        .then((raw: unknown) => {
+          const body = String(raw ?? '')
+          if (!this.looksLikeBotCheck(title, body)) {
+            const waited =
+              this.botCheckSince === null ? 0 : Math.round((Date.now() - this.botCheckSince) / 1000)
+            console.info(`[embed:${this.platform.id}] bot check cleared after ${waited}s`)
+            this.endBotCheckWait()
+          }
+        })
+        .catch(() => {
+          /* a navigation during the read is normal; the next tick retries */
+        })
+    }, BOT_CHECK_POLL_MS)
+  }
+
+  private endBotCheckWait(): void {
+    if (this.botCheckTimer !== null) {
+      clearInterval(this.botCheckTimer)
+      this.botCheckTimer = null
+    }
+    if (this.botCheckSince !== null) {
+      this.botCheckSince = null
+      this.lastLanding = ''
+      this.publishState()
+    }
   }
 
   setVisible(visible: boolean): void {
@@ -912,7 +1050,8 @@ export class ChatGptEmbed {
         isLoading: false,
         canGoBack: false,
         canGoForward: false,
-        conversationId: null
+        conversationId: null,
+        botCheckSince: null
       }
     }
 
@@ -923,12 +1062,17 @@ export class ChatGptEmbed {
       isLoading: contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
-      conversationId: conversationIdOf(this.platform, url)
+      conversationId: conversationIdOf(this.platform, url),
+      botCheckSince: this.botCheckSince
     }
   }
 
   /** Remove the view from the window and release its web contents. */
   destroy(parent: BrowserWindow): void {
+    // Stop watching for a bot check before the page goes away: the timer holds the contents, and
+    // a tick after teardown would read a destroyed webContents.
+    this.endBotCheckWait()
+
     const view = this.view
     if (!view) return
 

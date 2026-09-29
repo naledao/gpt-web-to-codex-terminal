@@ -1869,6 +1869,23 @@ body {
   animation: pulse 1.1s ease-in-out infinite;
 }
 
+/*
+ * "Passing a security check" — a bot-check interstitial is transient, not a failure, but it looks
+ * exactly like one. Amber rather than red: nothing is broken and no action is required.
+ */
+.bot-check {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(210, 153, 34, 0.45);
+  background: rgba(210, 153, 34, 0.14);
+  color: #e3b341;
+  white-space: nowrap;
+}
+
 @keyframes pulse {
   0%,
   100% {

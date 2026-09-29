@@ -40,7 +40,8 @@ const INITIAL_EMBED_STATE: EmbedState = {
   isLoading: true,
   canGoBack: false,
   canGoForward: false,
-  conversationId: null
+  conversationId: null,
+  botCheckSince: null
 }
 
 const TERMINAL_MIN_WIDTH = 220
@@ -469,6 +470,21 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     const timer = window.setInterval(() => setDurationNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [interceptor?.taskStartedAt, interceptor?.taskFinishedAt])
+
+  /*
+   * Its own ticker, not the task one above: a bot check happens before any task exists, on a
+   * page that has not sent anything yet. Reusing that timer would leave the elapsed counter
+   * frozen at 0 for exactly the case it is there to explain.
+   */
+  const botCheckElapsed =
+    embed.botCheckSince === null ? 0 : Math.max(0, Math.round((durationNow - embed.botCheckSince) / 1000))
+
+  useEffect(() => {
+    if (embed.botCheckSince === null) return
+    setDurationNow(Date.now())
+    const timer = window.setInterval(() => setDurationNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [embed.botCheckSince])
 
   // Third-party OAuth must run in the system browser. Pull the last notice once
   // as well as subscribing so a redirect that happened before React mounted is
@@ -2578,6 +2594,19 @@ ${record.command}`
               ×
             </button>
           </div>
+        ) : null}
+        {embed.botCheckSince !== null ? (
+          /*
+            A bot-check interstitial is transient — measured at ~24s on claude.ai from a cold
+            partition — but it renders as an empty page with a spinner, which is indistinguishable
+            from the app having failed. The native view covers the stage slot, so this has to live
+            in the status bar to be visible at all.
+          */
+          <span className="bot-check" role="status">
+            <span className="dot dot--busy" />
+            正在通过安全校验（Cloudflare），页面加载后会自动继续
+            {botCheckElapsed > 0 ? ` · 已等待 ${botCheckElapsed}s` : ''}
+          </span>
         ) : null}
         <span className={embed.isLoading ? 'dot dot--busy' : 'dot'} />
         <span className="statusbar__title" title={embed.url}>
