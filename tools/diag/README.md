@@ -121,6 +121,45 @@ logs the app in. Log: `%TEMP%\gpt-login-diag\email-login-<timestamp>.log`
 The allowlist is duplicated in the probe on purpose, so it can judge hops the way the
 real app would. **Keep it in sync** when `ALLOWED_NAVIGATION` changes.
 
+## clear-cloudflare-state.mjs
+
+**The question this answers: "it works now — how do I get the challenge back?"**
+
+When a Cloudflare challenge is solved, Cloudflare plants `cf_clearance` in the jar and stops
+challenging that client for a while. That is why a failure caused by a bot check becomes
+**unreproducible the moment anything waits the check out** — the app or a probe, either one. The
+bug is not fixed; the condition that exposed it is simply gone. This deletes the clearance cookie
+and puts the partition back to "first visit".
+
+**Run (from the repo root, with the app CLOSED — it holds the jar open):**
+
+```powershell
+node --experimental-sqlite tools\diag\clear-cloudflare-state.mjs claude
+```
+
+```
+[cf] partition : claude
+[cf] mode      : cloudflare state only (login kept)
+[cf] removing 3 cookie(s):
+       .claude.ai             __cf_bm                            198 bytes
+       .claude.ai             cf_clearance                       533 bytes
+       .hcaptcha.com          __cf_bm                            198 bytes
+```
+
+- The argument is a bare partition name; the script lists the partitions that exist when it cannot
+  find the one you asked for.
+- **The login is kept**, because a challenge can be reproduced while still signed in and signing
+  out costs a real login. Add `--login` only when you actually want the partition signed out.
+- Backs the jar up first and leaves the backup in place. It never prints cookie values —
+  `cf_clearance` is a bearer token, and anyone holding it can present as this client.
+
+Then start the app and load that platform: it should be challenged again, which is the state the
+bot-check handling exists for.
+
+> Related, and deliberately the opposite: `clear-embed-cookies.mjs` **keeps** `cf_clearance` on
+> purpose, because dropping bot-management state only makes the next load solve a challenge again.
+> This script exists precisely because that is sometimes the thing you want.
+
 ## clear-embed-cookies.mjs
 
 Signs the embedded view out by removing the ChatGPT/OpenAI **login** cookies from the
