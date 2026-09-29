@@ -1,3 +1,4 @@
+import { isConversationId } from './types'
 import type { EnvironmentKind } from './types'
 
 /**
@@ -83,7 +84,7 @@ export interface PageAdapter {
 
 /** Everything the main process needs to embed and drive one chat site. */
 export interface ChatPlatform {
-  id: 'chatgpt' | 'deepseek'
+  id: 'chatgpt' | 'deepseek' | 'claude' | 'gemini'
   /** Shown in the UI. */
   label: string
   /** Loaded when the view has no conversation to restore. */
@@ -158,16 +159,16 @@ export interface ChatPlatform {
 }
 
 /**
- * A conversation id, as both sites use it: `/c/<uuid>` on ChatGPT,
- * `/a/chat/s/<uuid>` on DeepSeek.
+ * The id-shape rule lives in `types.ts`, and this re-exports it rather than keeping a second
+ * copy.
  *
- * Validated by SHAPE rather than "whatever is in the path" — both sites serve placeholder
- * routes that look like conversations and are not, and those must never reach the
- * database.
+ * There WERE two definitions, identical, in two files. That is the kind of duplication that
+ * survives right up until one of them is changed — and this one had to change: Gemini's ids are
+ * 16 hex characters, not UUIDs, and the copy that mattered was the OTHER one, because
+ * `purgeInvalidIds` imports from `types.ts`. Widening only this copy would have looked correct
+ * and deleted every Gemini conversation at the next launch.
  */
-export function isConversationId(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
-}
+export { isConversationId } from './types'
 
 /**
  * Sidebar scrapers for both sites, kept here so the descriptor can stay data.
@@ -479,7 +480,257 @@ export const DEEPSEEK_PLATFORM: ChatPlatform = {
   page: DEEPSEEK_PAGE
 }
 
-export const CHAT_PLATFORMS: ChatPlatform[] = [CHATGPT_PLATFORM, DEEPSEEK_PLATFORM]
+/**
+ * The injected-page descriptor for Claude — measured 2026-09-29 with
+ * `tools/diag/claude-dom-probe.js`.
+ *
+ * Every value below came back as a direct HIT in that run, which is worth stating because it is
+ * unusual: Claude marks its chat up with `data-testid`, so the probe's `data-testid VALUES` table
+ * named the role markers outright rather than requiring them to be inferred from shape.
+ *
+ * THE DESKTOP UI IS IN ENGLISH. `Send message`, `Stop response`, `Write your prompt to Claude`.
+ * The conversation titles are whatever the user wrote, but the CONTROLS are not localised — so
+ * nothing here keys off Chinese text, and the two selectors that matter most are test ids.
+ *
+ * WHAT THE PAGE LOOKS LIKE:
+ *
+ *   div[data-testid="chat-input"]        contenteditable, class "tiptap ProseMirror"
+ *                                        role=textbox, data-doc-empty while empty
+ *   └ (toolbar, walked up to)
+ *     button[data-testid="chat-input-send"]    aria-label="Send message"
+ *     button[aria-label="Stop response"]       only while a reply is streaming
+ *     button[data-testid="chat-input-attach"]  aria-label="Add files, connectors, and more"
+ *     button[aria-label="Dictate"] / "Use voice mode" / "Microphone"
+ *
+ *   [data-testid="transcript-list"]      the thread
+ *   ├ [data-testid="user-message"]       one per user turn
+ *   ├ [data-testid="assistant-message"]  one per assistant turn, carries data-is-streaming
+ *   └ [data-testid="last-message-sentinel"]   a zero-height marker at the end
+ *   [data-autoscroll-container="true"]   the scroll container, as an explicit hook
+ *
+ * TWO TRAPS THIS SITE SETS, both measured:
+ *
+ *  1. The assistant turn's `innerText` starts with `"Claude responded: "`, from a
+ *     `<span class="sr-only" role="status" aria-live="polite">` inside it. Tailwind's `sr-only`
+ *     uses `clip`, not `display:none`, so `innerText` INCLUDES screen-reader text. The answer is
+ *     therefore read from the narrower `font-claude-response` container — the same narrowing
+ *     DeepSeek needs, for the same class of reason.
+ *
+ *  2. The composer's toolbar reports MORE controls than it has while a reply streams: the run
+ *     caught counts of 5, 6 and 8, with `Dictate`/`Microphone`/`Use voice mode` appearing twice.
+ *     So the toolbar container spans more than one composer-ish row, and anything that counts
+ *     controls there must tolerate duplicates rather than assume one of each.
+ */
+export const CLAUDE_PAGE: PageAdapter = {
+  composerKind: 'contenteditable',
+  /*
+   * The test id first, then the two structural restatements of the same element. It is TipTap
+   * (a ProseMirror wrapper), so the contenteditable write path is the same one ChatGPT needs —
+   * `execCommand('insertText')`, not an HTML assignment.
+   */
+  composerSelectors: [
+    'div[contenteditable="true"][data-testid="chat-input"]',
+    'div.ProseMirror[contenteditable="true"]',
+    'div[contenteditable="true"]'
+  ],
+  /*
+   * The test id is preferred over the label on purpose: `Send message` is a translation, the id
+   * is not. Both were HITs; the label is kept as the fallback for a build that drops the id.
+   */
+  sendButtonSelectors: ['button[data-testid="chat-input-send"]', 'button[aria-label="Send message"]'],
+  /*
+   * MEASURED IN BOTH STATES, which is the only reason this list is trustworthy: `count=1` on the
+   * tick where a reply was streaming, and every entry a MISS on ticks where nothing was. So it
+   * is present only while generating, exactly like ChatGPT's — which means it can be used both to
+   * stop generation and to answer "is this reply finished yet?", the question DeepSeek cannot
+   * answer at all.
+   *
+   * It carries no test id, so the aria label is the only handle there is.
+   */
+  stopButtonSelectors: ['button[aria-label="Stop response"]'],
+  assistantSelectors: ['[data-testid="assistant-message"]'],
+  /*
+   * Not the turn itself. See trap 1 above: the turn's text carries a screen-reader prefix, and
+   * `font-claude-response` is where the answer actually lives.
+   */
+  assistantReplySelectors: ['[class*="font-claude-response"]'],
+  messageSelectors: ['[data-testid="user-message"]', '[data-testid="assistant-message"]'],
+  /*
+   * EMPTY, and this is a finding rather than an omission — the same conclusion DeepSeek's entry
+   * records, reached the same way. The only id-ish attributes on a page full of turns were
+   * `data-row-key` (the sidebar's rows), plus `data-rs-index` and `data-index`, which are
+   * POSITIONS in a virtualised list and change meaning as rows are recycled. An index is not an
+   * identity, so both sides fall through to the content hash in `turnKeyOf` — which is what that
+   * function exists for.
+   */
+  messageIdAttr: ''
+}
+
+export const CLAUDE_PLATFORM: ChatPlatform = {
+  id: 'claude',
+  label: 'Claude',
+  homeUrl: 'https://claude.ai/new',
+  partition: 'persist:claude',
+  /*
+   * anthropic.com is included for the same reason openai.com is on ChatGPT's: the session's
+   * own supporting hosts (static assets, auth endpoints) live there, and handing them to the
+   * system browser would break the page.
+   */
+  allowedOriginPattern: /^https:\/\/([a-z0-9-]+\.)*(claude\.ai|anthropic\.com)(\/|$)/i,
+  cookieDomainSuffixes: ['claude.ai', 'anthropic.com'],
+  /*
+   * `/chat/<uuid>`, measured from the navigation log: the probe walked
+   * `/new` → Cloudflare → `/logout?involuntary=1` → `/login` → `/chat/fa4e73a6-92b9-4b7b-832c-2de7b09e48bd`.
+   * Validated by shape like the other two, so a placeholder route can never reach the database.
+   */
+  conversationIdFromPath: (pathname) => {
+    const match = /^\/chat\/([^/?#]+)/.exec(pathname)
+    if (!match) return null
+    const id = decodeURIComponent(match[1])
+    return isConversationId(id) ? id : null
+  },
+  conversationUrl: (id) => `https://claude.ai/chat/${id}`,
+  /*
+   * Same shape as the other two sites, and the probe confirmed the links carry the title as
+   * their text (8 of them, each `/chat/<uuid>` with the conversation's name).
+   */
+  sidebarScript: SIDEBAR_SCRIPT_BY_DEFAULT('a[href^="/chat/"]', '/chat/'),
+  // Nothing measured as unreachable. Claude's Cloudflare is a different problem — see the
+  // identity patch in src/main/embed.ts, which is what gets the page loaded at all.
+  unresolvableHosts: [],
+  page: CLAUDE_PAGE
+}
+
+/**
+ * The injected-page descriptor for Gemini — measured 2026-09-29 with
+ * `tools/diag/gemini-dom-probe.js`.
+ *
+ * Every value below came back as a direct HIT, and the two transient ones were caught by
+ * shortening the probe's tick to 5s after a 15s tick stepped straight over the whole reply.
+ *
+ * THE THING TO KNOW FIRST: **Gemini cannot be signed into from inside the embed.** Google answers
+ * 无法登录 / "此浏览器或应用可能不安全" to a first-party sign-in in an embedded view — the third
+ * time this wall has come up here, after third-party OAuth and Apple. And unlike ChatGPT, the
+ * sign-in CANNOT be handed to the system browser either, because the site itself is a Google
+ * host. The session has to be imported from a real browser; `tools/diag/gemini-cookie-probe.js`
+ * proves that works, including the part that is easy to get wrong (cookies must be written with
+ * an expiry, or Chromium never persists them).
+ *
+ * WHAT THE PAGE LOOKS LIKE:
+ *
+ *   div.ql-editor[contenteditable="true"]     the composer. **Quill, not ProseMirror** —
+ *                                             class "ql-editor textarea new-input-ui"
+ *   └ (toolbar, walked up to)
+ *     button[aria-label="上传和工具"]
+ *     button[data-testid="bard-mode-menu-button"]      the model picker ("Flash")
+ *     button[aria-label="语音输入 (^⇧D)"]
+ *     button[aria-label="发送"]                        ONLY while the composer holds text
+ *     button[aria-label="停止回答"]                    ONLY while a reply is generating
+ *
+ *   message-content        one per assistant turn, and it carries the id
+ *   user-query             one per user turn
+ *   model-response         the outer per-turn wrapper, both roles
+ *   thinking-overlay       the reasoning panel — OUTSIDE message-content, which is why the
+ *                          answer can be read without also reading the model's thinking
+ *
+ * TWO THINGS WORTH STATING PLAINLY:
+ *
+ *  1. The three toolbar states were each observed on several ticks, which is the only reason the
+ *     buttons can be told apart: an empty composer shows THREE controls ending in 语音输入, a
+ *     composer with text shows FOUR ending in 发送, and a generating reply shows FOUR ending in
+ *     停止回答. A send button that is simply absent is not the same as one that failed to match —
+ *     and the app's send confirmation depends on that difference.
+ *
+ *  2. **Neither the send nor the stop button has a test id** — the `data-testid` is empty on both.
+ *     The aria labels are localised, so `发送` becomes `Send message` in an English UI. ChatGPT
+ *     ends up in the same position for its stop button, and the structural `toolbar-last`
+ *     recovery in submitWithRetry is what covers it.
+ */
+export const GEMINI_PAGE: PageAdapter = {
+  composerKind: 'contenteditable',
+  composerSelectors: [
+    'div.ql-editor[contenteditable="true"]',
+    'rich-textarea div[contenteditable="true"]',
+    'div[contenteditable="true"]'
+  ],
+  /*
+   * The Chinese label first because that is the UI this was measured in, with the English one as
+   * the fallback. A bare `button[aria-label="发送"]` search is document-wide, which is why the
+   * structural last-control fallback exists rather than being relied on alone.
+   */
+  sendButtonSelectors: ['button[aria-label="发送"]', 'button[aria-label="Send message"]'],
+  /*
+   * Present only while generating — confirmed on four separate ticks. That matters beyond being
+   * able to stop a reply: it is the signal that says "this reply is not finished yet", which
+   * DeepSeek cannot answer at all and has to guess at with a settle timer.
+   */
+  stopButtonSelectors: ['button[aria-label="停止回答"]', 'button[aria-label="Stop response"]'],
+  assistantSelectors: ['message-content'],
+  /*
+   * EMPTY, and measured rather than assumed: the thinking panel is a SIBLING overlay
+   * (`thinking-overlay`), not a descendant, so a turn's own text IS the answer. Narrowing here
+   * would be cargo-culting DeepSeek's rule onto a site that does not need it.
+   *
+   * Recorded as a caveat: inline citations ARE inside the turn — `sources-carousel-inline`,
+   * `source-inline-chip`, `source-footnote`. They are small chips and footnote markers rather
+   * than prose, so they have not been seen to interfere with extracting the JSON block, but a
+   * reply that quotes a URL containing braces is the case to watch.
+   */
+  assistantReplySelectors: [],
+  /*
+   * Both roles, for locating the scroll container and for the newest-turn scan. `message-content`
+   * is listed too: it is the element the id sits on, and `queryAll` de-duplicates by element, so
+   * the three entries do not double-count a turn.
+   */
+  messageSelectors: ['model-response', 'user-query', 'message-content'],
+  /*
+   * `id`, because the assistant turn's own id attribute looks like
+   * `message-content-id-r_4d72620b39f3e23f` — a real per-message identity, verified on two turns.
+   * It is an HTML `id` rather than a `data-` attribute, which `messageIdOf` reads the same way;
+   * the cost is that the MutationObserver's attribute filter now watches `id`, which changes more
+   * often elsewhere on an Angular page and so re-arms the settle timer more than it needs to.
+   */
+  messageIdAttr: 'id'
+}
+
+export const GEMINI_PLATFORM: ChatPlatform = {
+  id: 'gemini',
+  label: 'Gemini',
+  homeUrl: 'https://gemini.google.com/app',
+  partition: 'persist:gemini',
+  /*
+   * Google hosts, and that is a deliberate departure from how the other platforms treat Google.
+   * For ChatGPT, excluding accounts.google.com is what sends third-party OAuth to the system
+   * browser; here the site IS a Google host, so there is nothing to hand off — and the probe
+   * confirmed the sign-in hop stays inside the embed and is then refused. The allowlist only has
+   * to keep the page's own assets loading.
+   */
+  allowedOriginPattern:
+    /^https:\/\/([a-z0-9-]+\.)*(gemini\.google\.com|google\.com|googleusercontent\.com|gstatic\.com)(\/|$)/i,
+  cookieDomainSuffixes: ['google.com'],
+  /*
+   * `/app/<16 hex>` — measured, ten samples, never a UUID. `isConversationId` accepts both
+   * shapes; see the rule in `types.ts` for why widening it was not optional.
+   */
+  conversationIdFromPath: (pathname) => {
+    const match = /^\/app\/([^/?#]+)/.exec(pathname)
+    if (!match) return null
+    const id = decodeURIComponent(match[1])
+    return isConversationId(id) ? id : null
+  },
+  conversationUrl: (id) => `https://gemini.google.com/app/${id}`,
+  sidebarScript: SIDEBAR_SCRIPT_BY_DEFAULT('a[href^="/app/"]', '/app/'),
+  // Nothing measured as unreachable.
+  unresolvableHosts: [],
+  page: GEMINI_PAGE
+}
+
+export const CHAT_PLATFORMS: ChatPlatform[] = [
+  CHATGPT_PLATFORM,
+  DEEPSEEK_PLATFORM,
+  CLAUDE_PLATFORM,
+  GEMINI_PLATFORM
+]
 
 /**
  * The platform a new session starts on.

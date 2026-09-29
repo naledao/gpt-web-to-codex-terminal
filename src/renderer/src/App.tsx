@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, Willow } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
@@ -261,6 +261,20 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
 export default function App({ initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
+  /*
+   * The site this session is actually showing.
+   *
+   * Derived once here because several pieces of chrome named ChatGPT outright — the home
+   * button's tooltip, the address placeholder, the loading hint, the 结束任务 tooltip. With one
+   * platform that was merely redundant; with three it is wrong on screen, and the loading hint
+   * is the worst of them because it names the wrong site at exactly the moment the user is
+   * wondering why nothing has appeared.
+   */
+  const activePlatform = CHAT_PLATFORMS.find((platform) => platform.id === platformId) ?? null
+  const activePlatformLabel = activePlatform?.label ?? ''
+  const activePlatformHost = activePlatform
+    ? activePlatform.homeUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '')
+    : ''
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [interceptor, setInterceptor] = useState<InterceptorStatus | null>(null)
   const [automation, setAutomation] = useState<AutomationState | null>(null)
@@ -285,7 +299,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const [userAvatarPositionYDraft, setUserAvatarPositionYDraft] = useState(50)
   const [userAvatarScaleDraft, setUserAvatarScaleDraft] = useState(1)
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
-  const [proxyDraft, setProxyDraft] = useState('')
+  const [proxyDrafts, setProxyDrafts] = useState<Record<string, string>>({})
   const [themeDraft, setThemeDraft] = useState<AppTheme>('light')
   const [savingSettings, setSavingSettings] = useState(false)
   /**
@@ -302,6 +316,16 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
    */
   const [sessionImportPhase, setSessionImportPhase] = useState<'preview' | 'result'>('preview')
   const [importingSession, setImportingSession] = useState(false)
+  /**
+   * The cookie-SET route, for sites whose session is a set of cookies rather than one token.
+   *
+   * Kept separate from the token route above because the INPUT is a different shape, not a
+   * different value: Gemini's session is a dozen cookies on `.google.com` with no chunking and
+   * no single name that decides anything, so a "Cookie 名称" field would be meaningless.
+   */
+  const [cookieSetDraft, setCookieSetDraft] = useState('')
+  const [cookieSetResult, setCookieSetResult] = useState<SessionImportResult | null>(null)
+  const [importingCookieSet, setImportingCookieSet] = useState(false)
   const [commandDraft, setCommandDraft] = useState('')
   /** Non-null while the working directory is being edited inline. */
   const [cwdDraft, setCwdDraft] = useState<string | null>(null)
@@ -738,7 +762,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     // import's own result off the screen the moment it arrives.
     setSessionImportPhase('result')
     try {
-      const result = await window.api.importSession({
+      const result = await window.api.importSession('chatgpt', {
         name: sessionCookieName,
         value: sessionCookieValue
       })
@@ -790,6 +814,30 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
       clearTimeout(timer)
     }
   }, [settingsOpen, sessionCookieName, sessionCookieValue])
+
+  /**
+   * Import a pasted cookie set into the ACTIVE session's platform.
+   *
+   * No preview step, deliberately. The token route above previews because "which cookie did it
+   * recognise" is a real question when the input is one name among many; here every pair in the
+   * paste is written, so there is nothing to decide — and the outcome that matters (is the page
+   * signed in?) can only be answered by writing them and reloading.
+   */
+  const submitCookieSetImport = useCallback(async (): Promise<void> => {
+    if (cookieSetDraft.trim() === '') return
+    setImportingCookieSet(true)
+    try {
+      const result = await window.api.importCookieSet('gemini', cookieSetDraft)
+      setCookieSetResult(result)
+      // Cleared on success only: a rejected paste is usually a wrong copy, and keeping it lets
+      // the user see what was tried instead of hunting for it again.
+      if (result.signedIn) setCookieSetDraft('')
+    } catch {
+      setCookieSetResult({ ok: false, message: '导入调用失败，请看应用日志。', signedIn: false })
+    } finally {
+      setImportingCookieSet(false)
+    }
+  }, [cookieSetDraft])
 
   const externalAuthProviderLabel = 'Apple'
 
@@ -1195,7 +1243,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
       .then((value) => {
         if (cancelled) return
         setSettings(value)
-        setProxyDraft(value.embedProxy)
+        setProxyDrafts(value.embedProxy ?? {})
         setThemeDraft(value.theme)
         setSshProxyDraft(value.sshProxy)
         setUpdateProxyDraft(value.updateProxy)
@@ -1464,7 +1512,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
       // into a URL, and the user should see that rather than be surprised later.
       const next = await window.api.updateSettings({
         theme: themeDraft,
-        embedProxy: proxyDraft,
+        embedProxy: proxyDrafts,
         sshProxy: sshProxyDraft,
         updateProxy: updateProxyDraft,
         userAvatarDataUrl: avatarDataUrl,
@@ -1476,7 +1524,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
       setSettings(next)
       onThemeChange(next.theme)
       setThemeDraft(next.theme)
-      setProxyDraft(next.embedProxy)
+      setProxyDrafts(next.embedProxy ?? {})
       setSshProxyDraft(next.sshProxy)
       setUpdateProxyDraft(next.updateProxy)
       setUserAvatarDraft(next.userAvatarDataUrl)
@@ -1491,7 +1539,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     } finally {
       setSavingSettings(false)
     }
-  }, [onThemeChange, proxyDraft, sshProxyDraft, themeDraft, updateProxyDraft, userAvatarDraft, userAvatarSourceDraft, userAvatarPositionXDraft, userAvatarPositionYDraft, userAvatarScaleDraft])
+  }, [onThemeChange, proxyDrafts, sshProxyDraft, themeDraft, updateProxyDraft, userAvatarDraft, userAvatarSourceDraft, userAvatarPositionXDraft, userAvatarPositionYDraft, userAvatarScaleDraft])
 
   /** Drag the terminal's right edge to resize the column. */
   const startResize = useCallback(
@@ -1595,7 +1643,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
           >
             {embed.isLoading ? '✕' : '⟳'}
           </button>
-          <button type="button" title="回到 ChatGPT 首页" disabled={taskRunning} onClick={() => window.api.sendEmbedCommand('home')}>
+          <button type="button" title={activePlatformLabel ? `回到 ${activePlatformLabel} 首页` : '回到首页'} disabled={taskRunning} onClick={() => window.api.sendEmbedCommand('home')}>
             ⌂
           </button>
 
@@ -1605,7 +1653,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               value={address}
               spellCheck={false}
               readOnly
-              placeholder="https://chatgpt.com/"
+              placeholder={activePlatform ? activePlatform.homeUrl : 'https://'}
               aria-label="地址"
               onChange={(event) => setAddress(event.target.value)}
               onFocus={() => setEditing(true)}
@@ -1658,7 +1706,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
             type="button"
             title="设置"
             aria-label="设置"
-            className={settings?.embedProxy ? 'toolbar__settings toolbar__settings--on' : 'toolbar__settings'}
+            className={Object.values(settings?.embedProxy ?? {}).some((value) => value.trim() !== '') ? 'toolbar__settings toolbar__settings--on' : 'toolbar__settings'}
             onClick={() => setSettingsOpen((value) => !value)}
           >
             ⚙
@@ -1728,9 +1776,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
             </div>
           ) : (
             <div className="stage__hint">
-              <p className="stage__hint-title">正在加载 chatgpt.com …</p>
+              <p className="stage__hint-title">正在加载 {activePlatformHost || '站点'} …</p>
               <p className="stage__hint-sub">
-                若长时间空白，通常是 Cloudflare 人机校验或该网络无法访问 chatgpt.com。
+                若长时间空白，通常是 Cloudflare 人机校验或该网络无法访问 {activePlatformHost || '该站点'}。
               </p>
             </div>
           )}
@@ -1764,6 +1812,15 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
           <div className="terminal__row">
             <span className="terminal__label">终端模式</span>
             <span className={interceptor?.installed ? 'terminal__dot' : 'terminal__dot terminal__dot--wait'} />
+            <span className="terminal__hint terminal__hint--inline">
+              {interceptor === null
+                ? '正在读取状态…'
+                : interceptor.enabled
+                  ? interceptor.installed
+                    ? null
+                    : '已开启，等待页面加载后生效'
+                  : '进入普通对话模式'}
+            </span>
             <span className="terminal__spacer" />
             <button
               type="button"
@@ -1777,16 +1834,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               <span className="switch__knob" />
             </button>
           </div>
-
-          <p className="terminal__hint">
-            {interceptor === null
-              ? '正在读取状态…'
-              : interceptor.enabled
-                ? interceptor.installed
-                  ? null
-                  : '已开启，等待页面加载后生效'
-                : '已关闭：消息按原样发送'}
-          </p>
 
           <div className="mode" role="radiogroup" aria-label="执行模式">
             <button
@@ -1832,7 +1879,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               type="button"
               className="btn btn--danger"
               disabled={!taskRunning}
-              title="停止 ChatGPT 生成、终端命令和后续自动执行，并允许切换对话"
+              title={`停止 ${activePlatformLabel || '模型'} 生成、终端命令和后续自动执行，并允许切换对话`}
               onClick={() => void endTask()}
             >
               结束任务
@@ -2209,7 +2256,7 @@ ${conversation.url}`}
             <div className="notes-modal" data-color-mode={theme}>
               <div className="notes-modal__head">
                 <div className="notes-modal__heading">
-                  <span className="notes-modal__title">发送给 GPT 的补充说明</span>
+                  <span className="notes-modal__title">发送给 AI 的补充说明</span>
                   <span className="notes-modal__scope" title={notes?.label}>
                     {notes?.scope === 'ssh' ? `SSH · ${notes.label}` : '本机'}
                   </span>
@@ -2750,12 +2797,42 @@ ${record.command}`
                   <span>网络代理</span>
                 </div>
 
-                <div className="settings-proxy-row">
-                  <label className="settings-proxy-row__label">ChatGPT 网页 <span className="settings-help">?</span></label>
-                  <input className="address__input settings-input" value={proxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setProxyDraft(event.target.value)} />
-                  <span className={`settings-state ${proxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{proxyDraft.trim() ? '已配置' : '未配置'}</span>
-                  <button type="button" className="settings-copy" aria-label="复制 ChatGPT 网页代理" disabled={!proxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(proxyDraft)}>⧉</button>
-                </div>
+                {/*
+                  One row per platform, generated from the descriptor list rather than written
+                  out three times — a fourth site then needs no change here at all.
+                */}
+                {CHAT_PLATFORMS.map((platform) => {
+                  const value = proxyDrafts[platform.id] ?? ''
+                  const setValue = (next: string): void =>
+                    setProxyDrafts((current) => ({ ...current, [platform.id]: next }))
+                  return (
+                    <div className="settings-proxy-row" key={platform.id}>
+                      <label className="settings-proxy-row__label">
+                        {platform.label} 代理 <span className="settings-help">?</span>
+                      </label>
+                      <input
+                        className="address__input settings-input"
+                        value={value}
+                        spellCheck={false}
+                        placeholder="http://127.0.0.1:7897"
+                        onChange={(event) => setValue(event.target.value)}
+                      />
+                      <span className={`settings-state ${value.trim() ? 'settings-state--ok' : ''}`}>
+                        <i />
+                        {value.trim() ? '已配置' : '未配置'}
+                      </span>
+                      <button
+                        type="button"
+                        className="settings-copy"
+                        aria-label={`复制 ${platform.label} 代理`}
+                        disabled={!value.trim()}
+                        onClick={() => void navigator.clipboard.writeText(value)}
+                      >
+                        ⧉
+                      </button>
+                    </div>
+                  )
+                })}
 
                 <div className="settings-proxy-row settings-proxy-row--with-hint">
                   <label className="settings-proxy-row__label">SSH 代理 <span className="settings-help">?</span><small>留空 = 直连</small></label>
@@ -2793,24 +2870,74 @@ ${record.command}`
               <section className="settings-card settings-session-card">
                 <div className="settings-card__heading">
                   <span className="settings-card__icon">▣</span>
-                  <span>ChatGPT 浏览器登录态</span>
+                  <span>浏览器登录态</span>
                 </div>
-                <div className="settings-session-row">
-                  <label>Cookie 名称</label>
-                  <input className="address__input settings-input" value={sessionCookieName} spellCheck={false} onChange={(event) => setSessionCookieName(event.target.value)} />
+
+                {/*
+                  One card, two named sections — and each section imports into ITS OWN platform,
+                  by id.
+                  
+                  NOT by "the current session", which is what this used to do and what a first
+                  draft of this comment wrongly justified with a disabled state. A partition
+                  belongs to a PLATFORM and every session of that platform shares it, so a login
+                  state is global: it has nothing to do with which session is in front. Routing by
+                  active session made the destination depend on the visible tab, and then needed a
+                  gate that told the user to switch sessions for a reason that was not true.
+                */}
+                <div className="settings-session-group">
+                  <div className="settings-session-group__title">
+                    ChatGPT
+                  </div>
+                  <div className="settings-session-row">
+                    <label>Cookie 名称</label>
+                    <input className="address__input settings-input" value={sessionCookieName} spellCheck={false} disabled={false} onChange={(event) => setSessionCookieName(event.target.value)} />
+                  </div>
+                  <div className="settings-session-row settings-session-row--value">
+                    <label>Cookie 值 / 整行 cookie</label>
+                    <textarea className="address__input session-import__value settings-input" value={sessionCookieValue} spellCheck={false} autoComplete="off" rows={3} disabled={false} placeholder="粘贴整行 cookie，或只粘 Value 一列的内容" onChange={(event) => setSessionCookieValue(event.target.value)} />
+                    <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
+                  </div>
+                  {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
                 </div>
-                <div className="settings-session-row settings-session-row--value">
-                  <label>Cookie 值 / 整行 cookie</label>
-                  <textarea className="address__input session-import__value settings-input" value={sessionCookieValue} spellCheck={false} autoComplete="off" rows={3} placeholder="粘贴整行 cookie，或只粘 Value 一列的内容" onChange={(event) => setSessionCookieValue(event.target.value)} />
-                  <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
+
+                <div className="settings-session-group">
+                  <div className="settings-session-group__title">
+                    Gemini
+                  </div>
+
+                  <div className="settings-session-row settings-session-row--value">
+                    <label>整行 cookie</label>
+                    <textarea
+                      className="address__input session-import__value settings-input"
+                      value={cookieSetDraft}
+                      spellCheck={false}
+                      autoComplete="off"
+                      rows={3}
+                      disabled={false}
+                      placeholder="DevTools → Network → 点任意一个 google.com 请求 → Headers → 复制整行 cookie:（「Copy as cURL」也可以）"
+                      onChange={(event) => setCookieSetDraft(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="settings-outline-btn settings-import-btn"
+                      disabled={importingCookieSet || cookieSetDraft.trim() === ''}
+                      onClick={() => void submitCookieSetImport()}
+                    >
+                      {importingCookieSet ? '导入中…' : '导入全部 cookie'}
+                    </button>
+                  </div>
+                  {cookieSetResult ? (
+                    <p className={cookieSetResult.signedIn ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>
+                      {cookieSetResult.message}
+                    </p>
+                  ) : null}
                 </div>
-                {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
               </section>
             </div>
 
             <div className="modal__foot settings-modal__foot">
               <span className="panel__spacer" />
-              <button type="button" className="settings-cancel-btn" onClick={() => { setProxyDraft(settings?.embedProxy ?? ''); setSshProxyDraft(settings?.sshProxy ?? ''); setUpdateProxyDraft(settings?.updateProxy ?? ''); setThemeDraft(settings?.theme ?? 'light'); setSettingsOpen(false) }}>取消</button>
+              <button type="button" className="settings-cancel-btn" onClick={() => { setProxyDrafts(settings?.embedProxy ?? {}); setSshProxyDraft(settings?.sshProxy ?? ''); setUpdateProxyDraft(settings?.updateProxy ?? ''); setThemeDraft(settings?.theme ?? 'light'); setSettingsOpen(false) }}>取消</button>
               <button type="button" className="settings-save-btn" disabled={savingSettings || settings === null} onClick={() => void saveSettings()}>{savingSettings ? '保存中…' : '保存并重新加载'}</button>
             </div>
           </div>

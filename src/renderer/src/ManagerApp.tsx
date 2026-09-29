@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { ManagedSessionSummary } from '../../shared/types'
+import { platformById } from '../../shared/platforms'
 import ConfirmDialog from './components/ConfirmDialog'
 
 function formatCreatedAt(value: number): string {
@@ -154,7 +155,7 @@ export default function ManagerApp(): ReactElement {
                           {item.title || '会话'}
                         </button>
                         <div className="manager-session-platform">
-                          {item.platformId === 'deepseek' ? 'DeepSeek' : 'ChatGPT'}
+                          {platformById(item.platformId)?.label ?? item.platformId}
                           {item.conversationId ? <span> · {item.conversationId}</span> : null}
                         </div>
                       </>

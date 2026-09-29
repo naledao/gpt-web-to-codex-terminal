@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Types shared between the Electron main process, the preload bridge and the
  * React renderer. Keep this module free of runtime dependencies on `electron`
  * so it can be imported from every process.
@@ -16,6 +16,14 @@ export const IpcChannels = {
   embedExternalAuth: 'embed:external-auth',
   embedLoginWithEmail: 'embed:login-with-email',
   embedImportSession: 'embed:import-session',
+  /**
+   * Import a whole browser cookie SET rather than one token — the Google/Gemini route.
+   *
+   * A separate channel because the input is a different SHAPE, not a different value: the token
+   * route takes one cookie, reassembled from NextAuth chunks, while a Google session is a set of
+   * cookies with no chunking and no single name that decides anything.
+   */
+  embedImportCookieSet: 'embed:import-cookie-set',
   embedPreviewSession: 'embed:preview-session',
   embedGetAuthState: 'embed:get-auth-state',
   openChatgptExternal: 'app:open-chatgpt-external',
@@ -131,7 +139,7 @@ export interface ManagedSessionSummary {
   target: string
   conversationId: string | null
   /**
-   * Which chat site this session drives (`'chatgpt'` / `'deepseek'`).
+   * Which chat site this session drives (`'chatgpt'` / `'deepseek'` / `'claude'`).
    *
    * Persisted, not inferred: a session restored after a restart must reopen the site its
    * conversation actually lives on, and the id is also what the manager UI labels the
@@ -216,15 +224,29 @@ export const CHATGPT_ORIGIN = 'https://chatgpt.com'
 export const EMBED_PARTITION = 'persist:chatgpt'
 
 /**
- * A real ChatGPT conversation URL looks like:
- *   https://chatgpt.com/c/6ab156eb-1b00-83e8-b973-a6a59295a353
+ * A real conversation id, by SHAPE — never "whatever slug is in the path".
  *
- * The `/c/` route also serves non-conversation placeholders such as
- * `https://chatgpt.com/c/WEB`, so the id is validated by SHAPE rather than
- * accepted as "whatever slug is in the path". Only UUIDs are real conversations
- * and only those are persisted.
+ * Two shapes, because two sites use them and BOTH are real:
+ *
+ *   UUID      `6ab156eb-1b00-83e8-b973-a6a59295a353`   ChatGPT `/c/<uuid>`, DeepSeek likewise
+ *   16 hex    `d536e21cb916e6a8`                        Gemini `/app/<16 hex>`
+ *
+ * The Gemini shape was measured, not assumed: ten ids came back from one probe run — eight from
+ * the sidebar, two from the address bar — and every one matched `^[0-9a-f]{16}$`
+ * (tools/diag/gemini-dom-probe.js, 2026-09-29).
+ *
+ * WHY WIDENING THIS IS NOT COSMETIC. It is not only `conversationIdFromPath` that consults it:
+ * `purgeInvalidIds(isConversationId)` runs at startup and DELETES rows that fail it, and the
+ * sidebar scrape filters with it. A Gemini id rejected here would therefore have its stored
+ * conversations removed on the next launch, and every scraped one silently dropped — which looks
+ * like a broken sync rather than a validation rule.
+ *
+ * `google.com`-style routes also serve placeholders, so the check stays anchored and exact; the
+ * path prefix in each platform's `conversationIdFromPath` is what keeps a bare 16-hex string
+ * from matching somewhere it should not.
  */
-const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const CONVERSATION_ID_RE =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16})$/i
 
 /** True when `value` is a genuine conversation id (a UUID), not a placeholder. */
 export function isConversationId(value: string): boolean {
@@ -274,15 +296,18 @@ export interface AppSettings {
   /** Overall appearance of the application chrome. */
   theme: AppTheme
   /**
-   * HTTP proxy for the EMBEDDED chatgpt.com view only.
+   * HTTP proxy for the EMBEDDED chat views, PER PLATFORM, keyed by `ChatPlatform['id']`.
    *
-   * Deliberately scoped to the embed's session rather than the whole app: the
-   * proxy exists to reach chatgpt.com, and routing everything through it would
-   * also drag the app's own traffic along with it.
+   * One value per site rather than one shared value. They are different destinations reached
+   * through different routes — a proxy that gets to chatgpt.com is not automatically the right
+   * way to reach claude.ai, and the single shared setting this replaces made that impossible to
+   * express. A missing key means direct, which is also what the empty string means, so a
+   * platform added later starts with no proxy rather than silently inheriting someone else's.
    *
-   * Empty string means direct.
+   * Still scoped to the embed's sessions rather than the whole app: routing everything through
+   * it would drag the app's own traffic along with it.
    */
-  embedProxy: string
+  embedProxy: Record<string, string>
   /**
    * Default proxy for SSH connections.
    *
@@ -530,37 +555,29 @@ export const FALLBACK_ENVIRONMENT: EnvironmentInfo = {
  */
 const OUTPUT_FORMAT_SECTION = [
   '【工作协议】',
-  '你处在“目标 → 执行一条命令 → 读取真实结果 → 决定下一步”的循环中。',
-  '每一轮只推进一个可验证的步骤；执行后等待用户回传结果，再继续。不要猜测尚未返回的结果，也不要重复已经成功的命令。',
+  '按“目标→一条命令→真实结果→下一步”循环；每轮只推进一个可验证步骤，等结果再继续，不猜结果、不重复成功命令。',
   '',
   '【需要执行时】',
-  '只输出一个 ```json 代码块，代码块之外不要输出任何文字：',
+  '只输出一个 ```json 代码块，外面不要有文字：',
   '```json',
   '{"command":"...","description":"...","timeout_seconds":120}',
   '```',
-  '- 先在内部完成判断；需要执行时，最终可见答复只保留这个代码块，不输出分析过程、搜索过程或额外 Markdown。',
-  '- command：一条可直接粘贴到当前 shell 的命令；需要多个有依赖的动作时，可在这一条命令内使用当前 shell 支持的连接符。',
-  '- description：用中文一句话说明这一步的目的和预期；不要只复制 command。',
-  '- timeout_seconds：command 非空时必须是 1–1800 的有限整数，按实际工作量估算；读取检查通常较短，构建、测试、网络操作和大范围搜索要留出余量。',
-  '- JSON 必须合法：使用双引号并正确转义反斜杠、换行和引号。命令中的 `_`、`$`、`*` 等字符必须原样留在代码块里。',
+  'command 是当前 shell 可直接执行的一条命令；有依赖的动作在其中用 shell 连接符。description 用中文一句话说明目的，不要只复制命令；timeout_seconds 为按工作量估算的 1–1800 整数。',
+  'JSON 必须合法：双引号、反斜杠、换行正确转义；命令中的 _、$、* 原样保留。',
   '',
   '【读取结果】',
-  '把用户回传的命令、输出、目录和结果状态视为当前真实状态。退出码为 0 时继续尚未完成的目标；非 0、超时、中断或会话丢失时，先定位原因，再给出最小修正步骤。输出为空也要结合退出码判断，不要把“无输出”当成失败。',
+  '以用户回传的命令、输出、目录、退出码为真实状态；0 继续，非 0/超时/中断/断线先诊断并给最小修正。空输出不等于失败。',
   '',
   '【任务完成】',
-  '只有在目标已满足并完成必要验证后才结束。结束时不要输出 JSON，第一行必须是【任务完成】，随后用中文简要说明完成内容、验证结果和仍需用户注意的事项。'
+  '目标满足且完成必要验证后结束；不输出 JSON，第一行写【任务完成】，随后用中文简述完成内容、验证结果和注意事项。'
 ].join('\n')
 
 /** Keep terminal mode from turning every kind of request into a shell command. */
 const TASK_ROUTING_SECTION = [
   '【任务路由】',
-  '终端只是处理本机或远程执行的一种工具，不是所有问题的默认工具。先判断任务类型，再选择处理方式：',
-  '1. 需要查看或修改当前机器、项目文件、终端会话、进程、依赖、构建、测试、Git、SSH，或确实要运行本地/远程命令时，使用本终端循环。',
-  '2. 搜索互联网、查询时效信息、知识问答、解释概念、翻译、写作、总结、规划或分析时，优先使用模型自身可用的网页搜索、内置工具和技能；不要为了完成这些任务启动 PowerShell、bash、grep、curl、Invoke-WebRequest 或其他终端搜索。',
-  '3. “搜索一下”没有指明本机文件或项目内容时，按资料/互联网搜索处理；明确搜索项目文件、当前目录或本机内容时，才使用终端。',
-  '4. 需要先查资料再修改本机时，先用网页搜索或相关技能获取资料，再用终端执行实际文件操作；两类动作分别判断。',
-  '5. 用户明确要求“在终端执行”“查看本机”“操作文件”或“运行命令”时，以用户的明确要求为准；当前平台没有可用的网页搜索或工具时，说明限制，不要擅自把互联网搜索改成终端搜索。',
-  '6. 选择非终端路线时，不要输出 command JSON；直接使用相应工具，或用普通中文回答用户。'
+  '终端只处理本机/远程机器、项目文件、进程、依赖、构建、测试、Git、SSH，或用户明确要求执行的命令。',
+  '互联网/时效查询、问答、解释、翻译、写作、总结、规划、分析：优先网页搜索、内置工具或技能，不启动 PowerShell、bash、grep、curl、Invoke-WebRequest 等终端搜索。',
+  '“搜索一下”未指明本机内容时按资料搜索；明确本机/项目才用终端。需查资料后改本机时先查资料再操作；无对应工具就说明限制。非终端路线直接调用工具或用中文回答，不输出 command JSON。'
 ].join('\n')
 
 /**
@@ -586,10 +603,9 @@ const TASK_ROUTING_SECTION = [
  */
 const ASK_USER_SECTION = [
   '【判断与确认】',
-  '1. 目标明确且动作可逆时直接推进；先用只读检查确认文件、路径、版本和当前状态，减少猜测。',
-  '2. 目标模糊、存在会改变结果的多种方案、缺少只有用户知道的信息，或所需工具未安装时，先停下来问用户；不要擅自安装工具，也不要用明显更差的替代方案。',
-  '3. 删除、覆盖、格式化、改权限、发布到外部服务、发送消息、付费或其他不可逆动作，在范围或对象不明确时先确认；常规代码修改、构建和测试在目标明确时可直接执行。',
-  '4. 需要询问时用普通中文回复（不输出 JSON），说明已知事实、具体不确定点、可选方案和你的建议，然后等待用户回答；得到答复后恢复 JSON 输出。'
+  '目标明确且可逆时直接推进；先只读核实路径、文件、版本和状态。',
+  '目标含糊、缺少用户信息、方案会改变结果或工具未安装时，先用中文说明事实/不确定点/方案/建议并提问；不擅自安装或选差方案。',
+  '删除、覆盖、格式化、改权限、发布、发消息、付费等不可逆动作，范围不明先确认；目标明确的代码修改、构建、测试可直接做。提问不输出 JSON，答复后恢复。'
 ].join('\n')
 
 /** The parts of the prompt only true of a Windows PowerShell session. */
@@ -599,7 +615,8 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
     .filter((part) => part !== '')
     .join('，')
 
-  const shell = [env.powerShellExe.trim() || 'powershell.exe', env.powerShellVersion.trim()]
+  const executable = env.powerShellExe.trim() || 'powershell.exe'
+  const shell = [executable, env.powerShellVersion.trim()]
     .filter((part) => part !== '')
     .join(' ')
 
@@ -611,15 +628,32 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
   // machine that has pwsh installed.
   const major = Number.parseInt(env.powerShellVersion.split('.')[0] ?? '', 10)
   const knownVersion = Number.isFinite(major)
-  const supportsChaining = knownVersion ? major >= 7 : /^pwsh/i.test(env.powerShellExe.trim())
+  const supportsChaining = knownVersion ? major >= 7 : /^pwsh/i.test(executable)
+  const isWindowsPowerShell51 =
+    major === 5 ||
+    env.powerShellEdition.trim().toLowerCase() === 'desktop' ||
+    (!knownVersion && !/^pwsh/i.test(executable))
 
   const chainingRule = supportsChaining
-    ? '2. 可以用 && 和 || 做链式执行，也可以用 ; 顺序执行。'
-    : '2. 这是 PowerShell 5.1，**不支持 && 和 ||**（写了直接语法错误）：顺序执行用 ; ，需要"上一步成功才继续"用 if ($?)。'
+    ? '支持 &&、|| 和 ;。'
+    : 'PowerShell 5.1 不支持 &&/||；顺序用 ;，按成功继续用 if ($?)。'
+
+  const fileIoIntro = isWindowsPowerShell51
+    ? '【文件读写】PowerShell 5.1 的 Get-Content/Set-Content/Out-File 默认是系统代码页（GBK），会把无 BOM UTF-8 静默读写成乱码。'
+    : `【文件读写】${shell} 也必须显式使用 UTF-8（无 BOM）。`
+  const fileIoWholeFileRule = isWindowsPowerShell51
+    ? '不要用 Get-Content ... | Set-Content/Out-File 改整文件，也不要用 -Encoding utf8（会加 BOM 和额外行尾）。'
+    : '不要用 Get-Content ... | Set-Content/Out-File 改整文件，以免改变换行、编码或 BOM。'
+  const fileIoSection = [
+    fileIoIntro,
+    '读：$s = [IO.File]::ReadAllText($p, [Text.UTF8Encoding]::new($false))；写：$s = $s.Replace($old, $new); [IO.File]::WriteAllText($p, $s, [Text.UTF8Encoding]::new($false))。',
+    fileIoWholeFileRule,
+    "新文件用 [IO.File]::WriteAllText；多行内容用 $src = @' ... '@，引号、$、反引号原样保留。"
+  ]
 
   return [
     '【角色】',
-    '你是一个 PowerShell 终端助手，负责执行需要终端的任务；只有选择终端路线时，每次只输出一条命令来推进它。',
+    '你是 PowerShell 终端助手；仅终端路线每轮输出一条命令。',
     '',
     TASK_ROUTING_SECTION,
     '',
@@ -629,30 +663,22 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
     '',
     '【执行环境】',
     `- 操作系统：${osName}${osDetail === '' ? '' : `（${osDetail}）`}`,
-    `- Shell：${shell}，而且是一个**持久会话**（同一个会话一直活着）。`,
+    `- Shell：${shell}；持久会话。`,
     ...(env.workingDirectory.trim() === '' ? [] : [`- 起始目录：${env.workingDirectory.trim()}`]),
-    '- 变量、函数、导入的模块、pushd、当前目录**都保留到下一条命令**。',
-    '  可以像在真终端里一样逐步积累状态：先 $x = ...，下一条命令直接用 $x；先定义函数，后面直接调用。',
-    '  不要为了"跨命令记住"而把中间结果写进文件 —— 用变量即可。',
-    '- 不要使用 exit：它会结束会话，丢掉全部状态。',
-    '- 命令的标准输入是空的，不要使用需要交互输入的命令。',
+    '- 变量、函数、模块、pushd、当前目录跨命令保留；用变量传递中间结果，不要落盘。',
+    '- 不要用 exit（会结束会话）；stdin 为空，勿用交互命令。',
     '',
     '【命令规范】',
-    '1. 直接写 PowerShell 命令本身，不要再包一层 powershell -Command。',
+    '直接写 PowerShell，不要包 powershell -Command。',
     chainingRule,
-    '3. 语法符号必须用半角 ASCII：引号、分号、管道 | 、重定向 > >> 都不要用全角。',
-    '4. 需要中文内容时中文照常写（例如 Set-Content a.md "你好" -Encoding utf8），但不要用全角标点充当语法符号。',
-    '5. **管道末尾不要接 Format-Table / Format-List / Format-Wide** —— 它们要收齐**全部**输入才吐第一行，',
-    '   一个几万文件的搜索会沉默好几分钟，而超时是按「多久没有输出」判定的，看起来和卡死完全一样。',
-    '   要表格让对象直接输出即可（或先 Select-Object 挑列）。**全仓搜索先排除 node_modules / .git / out**，',
-    '   否则又慢又吵。',
+    '语法符号用半角 ASCII；中文可写但不能用全角标点。',
+    '管道末尾不要 Format-Table/List/Wide（会等完整输入而触发无输出超时）；让对象直接输出或 Select-Object。全仓搜索排除 node_modules/.git/out。',
+    '反斜杠加双引号 (\\") 不是转义；用反引号、单引号或 here-string，不要用 [char]39 拼接。字面匹配前把 CRLF 归一化为 LF。',
     '',
-    '【编码】',
-    '写文件固定用 UTF-8：Out-File -Encoding utf8 或 Set-Content -Encoding utf8。',
+    ...fileIoSection,
     '',
     '【优先使用】',
-    '- 系统与硬件信息用 Get-CimInstance（wmic 已废弃，不要再用）。',
-    '- 结构化数据用 ConvertTo-Json / ConvertFrom-Json，比手工拼文本可靠。',
+    '- 系统/硬件用 Get-CimInstance，不用 wmic；结构化数据用 ConvertTo-Json/ConvertFrom-Json。',
     ...notesSection(env.extraNotes)
   ].join('\n')
 }
@@ -679,7 +705,7 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
 
   return [
     '【角色】',
-    '你是一个 Linux 终端助手，负责执行需要终端的任务；只有选择终端路线时，每次只输出一条命令来推进它。',
+    '你是 Linux 终端助手；仅终端路线每轮输出一条命令。',
     '',
     TASK_ROUTING_SECTION,
     '',
@@ -703,34 +729,22 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
      * "Linux + bash + this directory" answers that completely.
      */
     `- 操作系统：${osName}${osDetail === '' ? '' : `（${osDetail}）`}`,
-    `- Shell：${shell}，而且是一个**持久会话**（同一个会话一直活着）。`,
+    `- Shell：${shell}；持久会话。`,
     ...(env.workingDirectory.trim() === '' ? [] : [`- 起始目录：${env.workingDirectory.trim()}`]),
     `- 当前用户：${isRoot ? 'root（有完整权限，但仍要谨慎）' : '普通用户'}`,
-    '- 变量、函数、当前目录**都保留到下一条命令**。',
-    '  可以像在真终端里一样逐步积累状态：先 x=...，下一条命令直接用 $x；先定义函数，后面直接调用。',
-    '  不要为了"跨命令记住"而把中间结果写进文件 —— 用变量即可。',
-    '- 不要使用 exit：它会结束会话，丢掉全部状态。',
-    '- 命令的标准输入是空的，不要使用需要交互输入的命令。',
-    '  sudo 需要密码时会一直等下去：请改用不需要密码的写法，或者干脆停下来让用户手动执行。',
+    '- 变量、函数、当前目录跨命令保留；用变量传递中间结果，不要落盘。',
+    '- 不要用 exit（会结束会话）；stdin 为空，勿用交互命令。sudo 要密码时停下让用户手动执行。',
     '',
     '【命令规范】',
-    '1. 直接写命令本身，不要再包一层 bash -c 或 sh -c。',
-    '2. 可以用 && 和 || 做链式执行，也可以用 ; 顺序执行。',
-    '3. 语法符号必须用半角 ASCII：引号、分号、管道 | 、重定向 > >> 都不要用全角。',
-    '4. 需要中文内容时中文照常写（例如 printf 或 heredoc），但不要用全角标点充当语法符号。',
-    '5. 路径用正斜杠，注意大小写敏感；带空格的路径要加引号。',
-    '6. 不要写「收齐输入才输出」的管道（sort、uniq、column -t、tac 都是）—— 大范围搜索会沉默很久，',
-    '   而超时是按「多久没有输出」判定的，看起来和卡死完全一样。',
-    '   **全仓搜索先排除 node_modules / .git / out**，否则又慢又吵。',
+    '直接写命令，不要包 bash -c/sh -c；可用 &&、||、;。语法符号半角，中文不能代替语法标点。',
+    '路径用正斜杠且区分大小写，空格路径加引号。避免 sort/uniq/column -t/tac 等收齐输入的管道；全仓搜索排除 node_modules/.git/out。',
     '',
     '【编码】',
-    '文件内容一律按 UTF-8 处理，不要依赖远端 terminal 的 locale。',
+    '文件一律按 UTF-8 处理，不依赖 terminal locale。',
     '',
     '【优先使用】',
-    '- **这是 Linux，不要使用 PowerShell 或 cmd 的语法**：Get-ChildItem、Get-CimInstance、',
-    '  $env:、dir /s、Remove-Item 在这里都不存在。用 ls / cat / grep / find / sed / awk。',
-    '- 包管理按发行版来：Debian/Ubuntu 用 apt-get，RHEL 系用 dnf 或 yum，Alpine 用 apk。',
-    '- 结构化数据优先交给 jq 或 python3 处理，比手工截文本可靠。',
+    '- 这是 Linux，禁用 PowerShell/cmd 语法（Get-ChildItem、Get-CimInstance、$env:、dir /s、Remove-Item）；用 ls/cat/grep/find/sed/awk。',
+    '- 包管理按发行版用 apt-get、dnf/yum 或 apk；结构化数据用 jq 或 python3。',
     ...notesSection(env.extraNotes)
   ].join('\n')
 }
@@ -769,7 +783,7 @@ function notesSection(notes: string): string[] {
   return [
     '',
     '【用户补充】',
-    '以下是用户针对这台机器补充的说明。**它与上面的通用约定冲突时，以这里为准**：',
+    '与通用约定冲突时，以这台机器的补充说明为准：',
     text
   ]
 }
@@ -1274,7 +1288,7 @@ export interface AppApi {
    * sign-in — so the only credential that can be moved into this app is the
    * session token the browser already holds.
    */
-  importSession(draft: SessionImportDraft): Promise<SessionImportResult>
+  importSession(platformId: string, draft: SessionImportDraft): Promise<SessionImportResult>
   /**
    * Report what a paste WOULD import, without writing anything.
    *
@@ -1282,6 +1296,21 @@ export interface AppApi {
    * Side-effect free, so the dialog can call it as they type.
    */
   previewSessionImport(draft: SessionImportDraft): Promise<SessionImportResult>
+  /**
+   * Import a whole pasted cookie set into ONE PLATFORM's partition.
+   *
+   * `platformId`, not "the current session", because the login state is global: a partition is
+   * per PLATFORM and every session of that platform shares it. Routing this through the active
+   * session made the target depend on which tab happened to be in front, which is not a fact
+   * about the login at all.
+   *
+   * `raw` is whatever came out of DevTools — a bare `name=value; …` line, a whole `cookie:`
+   * header line, or "Copy as cURL". The parser accepts all three, because asking the user to
+   * reformat is asking for a failed import.
+   *
+   * The value is held in memory for the length of one call and never logged or echoed back.
+   */
+  importCookieSet(platformId: string, raw: string): Promise<SessionImportResult>
   /** Whether the embedded page is signed in (cookie names only, never values). */
   getEmbedAuthState(): Promise<EmbedAuthState>
   /** Open ChatGPT in the user's normal browser. */

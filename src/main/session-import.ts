@@ -569,3 +569,118 @@ export async function importSessionToken(
     signedIn
   }
 }
+
+/**
+ * Cookie names that are HttpOnly in a real Google session.
+ *
+ * The import deliberately does NOT mark everything HttpOnly. Most of what a `cookie:` header
+ * carries (`_ga`, `NID`, `AEC`, `SEARCH_SAMESITE`) is readable by page scripts, and hiding them
+ * changes what the page sees — small, but there is no reason to introduce a difference that was
+ * never asked for. These are the ones the browser itself hides.
+ */
+const GOOGLE_HTTP_ONLY = /^(SID|HSID|SSID|APISID|SAPISID|LSID|ACCOUNT_CHOOSER|__Secure-|__Host-)/
+
+/** The ones a Google session cannot work without, reported by name so a gap is visible. */
+const GOOGLE_CRITICAL_COOKIES = ['SID', '__Secure-1PSID', '__Secure-3PSID']
+
+/**
+ * Import a whole browser cookie SET — the Google/Gemini route.
+ *
+ * WHY THIS IS A SEPARATE FUNCTION rather than a flag on `importSessionToken` above. That one
+ * reassembles ONE bearer token from NextAuth's `.0`/`.1` chunks, which is what ChatGPT needs. A
+ * Google session is neither: it is a SET of cookies, and the whole set is the credential. There
+ * is no chunking to undo and no single name that decides anything.
+ *
+ * WHY IT IS THE ONLY ROUTE FOR GEMINI. Google refuses a first-party sign-in inside an embedded
+ * view (无法登录 / "此浏览器或应用可能不安全"), which is the third time this wall has appeared in
+ * this project. Unlike ChatGPT, the flow cannot be handed to the system browser either, because
+ * the site itself IS a Google host. Measured with `tools/diag/gemini-cookie-probe.js`: copied
+ * cookies do produce a real session — first try, real conversation list, every composer present.
+ *
+ * THE ONE THING THAT IS EASY TO GET WRONG, and did cost a full probe run: `expirationDate`.
+ * Without it Electron writes a SESSION cookie, Chromium keeps it in memory only, the import looks
+ * perfect in the process that performed it, and the next launch finds nothing. The probe reported
+ * `wrote 25/25` and a signed-in page, and left an empty jar behind.
+ */
+export async function importCookieSet(
+  platform: ChatPlatform,
+  raw: string,
+  contents: Electron.WebContents | null,
+  reloadAndWait: () => Promise<void>
+): Promise<SessionImportResult> {
+  const pairs = parseCookiePairs(raw)
+  if (pairs.length === 0) {
+    return {
+      ok: false,
+      message:
+        '没有从粘贴内容里解析出任何 cookie。请在浏览器里打开 DevTools → Network → 点任意一个 ' +
+        'google.com 请求 → Headers → Request Headers，复制整行 cookie: 再粘贴到这里。',
+      signedIn: false
+    }
+  }
+
+  const ses = session.fromPartition(platform.partition)
+  const cookieHost = platform.homeUrl
+  const suffix = platform.cookieDomainSuffixes[0] ?? ''
+  const cookieDomain = suffix === '' ? '' : `.${suffix.replace(/^\./, '')}`
+
+  /*
+   * Thirty days, and it is a stand-in rather than a fact: a raw `cookie:` header carries no
+   * attributes, so the real expiry is unknowable from the input this feature accepts. The server
+   * validates the VALUE, not the client's expiry, and Google rotates what it cares about itself.
+   * Leaving it unset is the one option that is definitely wrong.
+   */
+  const expirationDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60
+
+  let written = 0
+  for (const pair of pairs) {
+    try {
+      await ses.cookies.set({
+        url: cookieHost,
+        name: pair.name,
+        value: pair.value,
+        path: '/',
+        secure: true,
+        httpOnly: GOOGLE_HTTP_ONLY.test(pair.name),
+        expirationDate,
+        ...(pair.name.startsWith('__Host-') || cookieDomain === '' ? {} : { domain: cookieDomain })
+      })
+      written += 1
+    } catch (error) {
+      console.warn(`[session] cookie set: could not write ${pair.name}: ${(error as Error).message}`)
+    }
+  }
+
+  const present = new Set(pairs.map((pair) => pair.name))
+  const missing = GOOGLE_CRITICAL_COOKIES.filter((name) => !present.has(name))
+
+  await reloadAndWait()
+  const signedIn = await isEmbedSignedIn(contents, 25000)
+
+  /*
+   * Verified after writing, not assumed.
+   *
+   * A cookie can be accepted by the partition and still be expired or revoked server-side, so
+   * reloading and looking is the only signal that means "you are in" — the same reason the other
+   * import path does it.
+   */
+  if (signedIn) {
+    return {
+      ok: true,
+      message:
+        `已导入 ${written} 条 cookie 到 ${cookieDomain || cookieHost}，页面已进入登录状态。` +
+        (missing.length > 0 ? `（注意：缺少 ${missing.join('、')}）` : ''),
+      signedIn
+    }
+  }
+
+  return {
+    ok: written > 0,
+    message:
+      `已写入 ${written}/${pairs.length} 条 cookie，但页面看起来仍未登录。` +
+      (missing.length > 0
+        ? `粘贴内容里缺少 ${missing.join('、')} —— 多半是 cookie 那一行不是从已登录的 google.com 请求上复制的。`
+        : '常见原因：cookie 已被轮换（Google 会在别处登录后让旧的失效），或者复制的那一行来自登出状态的页面。'),
+    signedIn
+  }
+}

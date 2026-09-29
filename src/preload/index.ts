@@ -133,11 +133,14 @@ const api: AppApi = {
     ipcRenderer.send(IpcChannels.embedLoginWithEmail)
   },
 
-  importSession: (draft: SessionImportDraft): Promise<SessionImportResult> =>
-    ipcRenderer.invoke(IpcChannels.embedImportSession, draft),
+  importSession: (platformId: string, draft: SessionImportDraft): Promise<SessionImportResult> =>
+    ipcRenderer.invoke(IpcChannels.embedImportSession, platformId, draft),
 
   previewSessionImport: (draft: SessionImportDraft): Promise<SessionImportResult> =>
     ipcRenderer.invoke(IpcChannels.embedPreviewSession, draft),
+
+  importCookieSet: (platformId: string, raw: string): Promise<SessionImportResult> =>
+    ipcRenderer.invoke(IpcChannels.embedImportCookieSet, platformId, raw),
 
   getEmbedAuthState: (): Promise<EmbedAuthState> =>
     ipcRenderer.invoke(IpcChannels.embedGetAuthState),

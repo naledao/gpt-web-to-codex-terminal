@@ -280,6 +280,219 @@ else entirely.
 - Text is replaced with `«text»` in the dumped markup and long attribute values are
   truncated — the goal is the shape, not the user's conversation.
 
+## claude-dom-probe.js
+
+**The run that answers: what does `claude.ai` actually look like, from scratch?**
+
+Unlike `chatgpt-dom-probe.js`, there is no list of shipped selectors to test — Claude is a NEW
+platform, so this probe's job is **discovery**. It does try a handful of plausible selectors,
+but only because a lucky hit saves a round of descriptor-writing: a `MISS` here means nothing
+at all, and nothing in the log should be read as "broken". The real deliverable is the
+structure:
+
+| Section | Fills in |
+| --- | --- |
+| `data-testid VALUES` (sorted by count) | **the role markers** — Claude marks up its chat with test ids, so this table usually names both turn selectors outright. The `data-*` histogram cannot, because it counts attribute *names* only |
+| `id-ish data-* attributes` | `messageIdAttr` — or proof that the site has none, which is a real finding |
+| `composer chain` | `composerSelectors`, and whether it is `contenteditable` or a `textarea` |
+| `composer toolbar` | `sendButtonSelectors` (the primary action is the LAST control) and `stopButtonSelectors` |
+| `turn ancestors` | `assistantSelectors` / `messageSelectors` |
+| `path=` + `NAVIGATE` lines | `conversationIdFromPath` / `conversationUrl` |
+| `sidebar links` | how conversations are linked, for the sidebar sync |
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\claude-dom-probe.js
+```
+
+If `claude.ai` is not reachable from this machine, hand it the same proxy the app would use:
+
+```powershell
+$env:PROBE_PROXY='http://127.0.0.1:7897'
+```
+
+It uses the app's **`persist:claude`** partition, so a login done in the probe window is a login
+the app inherits — and equally, an existing app login means no sign-in step at all.
+
+1. Log in, if a sign-in page appears.
+2. **Open a conversation that already has a few turns.**
+3. **Type a few characters, then STOP — do not send.** Wait ~15s for a tick.
+4. Send it and **leave the reply streaming** ~15s, so a tick catches the stop control.
+5. Let it finish, wait ~15s more, then close the window.
+
+Steps 3 and 4 are not optional, for the reason recorded above: Claude renders no send control
+while the composer is empty and no stop control while nothing is generating, so a run that skips
+them produces `MISS`es that mean nothing. The probe prints a qualifier under any such group.
+
+Log: `%TEMP%\gpt-login-diag\claude-dom-<timestamp>.log`
+Markup: the matching `claude-dom-<timestamp>.markup.html` beside it.
+
+### Cloudflare, and the identity patch this probe needs
+
+The first run never left **"正在验证您是否是真人"**. The cause is the tell this repo already
+recorded for Google: Electron's `Sec-CH-UA` advertises `["Not?A_Brand","Chromium"]` with no
+`"Google Chrome"`, so every request says *same User-Agent as Chrome, different browser* — which
+is precisely what a browser pretending to be Chrome looks like. `setUserAgent` cannot fix it;
+the brand list is browser metadata, and Electron 44 has no `setUserAgentMetadata`.
+
+The probe therefore rewrites `sec-ch-ua*` **and** the UA in a single `onBeforeSendHeaders`
+handler, applied to the **whole partition** (`google-login-probe.js` scopes the same rewrite to
+google.com only).
+
+**The app does not do this yet.** `src/main/embed.ts` patches the User-Agent string and nothing
+else, so unless this is ported into the embed, a Claude view will sit on that challenge page
+forever — the descriptor work is not the whole job of adding this platform.
+
+| Line | Meaning |
+| --- | --- |
+| `identity patch on the wire for …` | the rewrite reached a claude.ai/anthropic.com request, with the before-value |
+| `TICK identity: webdriver=… brands=… challenge=…` | what the page's **JS** sees. Headers cannot change `navigator.userAgentData`, so if the challenge sticks while this still reads `Not?A_Brand`, the JS-visible identity is the remaining tell |
+| `^ STILL ON THE CHALLENGE PAGE` | repeated on every tick means the patch did not satisfy it |
+
+### Checking an edit to the page script
+
+`node --check` never looks inside the template literal, so verify it separately — and verify it
+**by line range**, not by "the first backtick after the opener". That second approach finds a
+stray backtick *inside* the literal, mistakes it for the closing delimiter, truncates the range,
+and reports a clean bill of health for the broken file. Both halves of that were done while
+writing this probe, twice, which is why the note is here rather than in a commit message.
+
+### Overrides (environment variables)
+
+| Variable | Effect |
+| --- | --- |
+| `PROBE_PROXY` | proxy for this partition, applied for the life of the probe only |
+| `PROBE_START_URL` | load something other than `https://claude.ai/new` |
+| `PROBE_PARTITION` | different session partition |
+| `PROBE_LOG_DIR` | different log directory |
+| `PROBE_USER_DATA` | different userData dir (different partition jar) |
+
+## gemini-dom-probe.js
+
+**Two questions, and the FIRST one is not about the DOM.**
+
+`gemini.google.com` is a Google property and needs a Google account. This repo has already
+measured that third-party OAuth cannot complete inside an embedded view — `accounts.google.com`
+answers `/v3/signin/rejected` even with a patched UA and a corrected `Sec-CH-UA` brand list
+(recorded beside `EMBED_LOGIN_URL` in `src/shared/types.ts`). A DOM descriptor is worthless if the
+page never gets past a sign-in screen, so this probe answers both in one run instead of producing
+a beautiful dump of a login form.
+
+**Why it is still worth running.** The same notes record that Google *renders the sign-in form
+fine* in the embedded view, and that the refusal lands one step LATER, when the flow is handed to
+OAuth. **Gemini's sign-in is a direct Google sign-in, not a third-party OAuth hand-off** — a path
+nothing here has measured.
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\gemini-dom-probe.js
+```
+
+Optional proxy if Google is unreachable: `$env:PROBE_PROXY='http://127.0.0.1:7897'`
+
+It uses `persist:gemini`, so a login that succeeds here is one the app inherits.
+
+1. **If a sign-in form appears, try it.** That IS question 1, and its answer is worth more than
+   the DOM dump. The probe only watches.
+2. If Gemini loads: open a conversation that already has a few turns.
+3. Type a few characters, **do not send**, wait ~15s for a tick.
+4. Send it, leave the reply **streaming** ~15s so a tick catches the stop control.
+5. Let it finish, wait ~15s more, close the window.
+
+### Reading the log
+
+| Line | Meaning |
+| --- | --- |
+| `NAVIGATE/IN-PAGE GEMINI\|GOOGLE-AUTH\|OTHER-GOOGLE\|EXTERNAL APP-ALLOWS\|APP-WOULD-BLOCK` | **the line that decides the feature.** The app hands anything outside a platform's allowlist to the system browser; `APP-WOULD-BLOCK` on a `GOOGLE-AUTH` hop means the embed cannot log itself in |
+| `pageKind=` | `gemini` / `google-signin` / `google-identifier` / `google-account` / `unknown`, decided from the DOM, not the URL — the URL says `gemini.google.com` even while a sign-in form is what is rendered |
+| `^ NOT A GEMINI PAGE` | nothing below it is evidence about the descriptor |
+| `custom elements` | **the Angular component tags** (`rich-textarea`, `model-response`, `user-query`) — on this site they are far more stable than the generated class names beside them |
+| `data-test-id VALUES` | both `data-test-id` and `data-testid`, by value — where role markers live |
+| `=== VERDICT ===` | which of the two questions the run answered, and what is still open |
+
+**Check the id SHAPE before writing `conversationIdFromPath`.** `isConversationId()` in
+`src/shared/platforms.ts` requires a UUID; a site using some other shape needs that check widened
+deliberately, not assumed — the `path=` and `segments=` lines are what say which case this is.
+
+Log: `%TEMP%\gpt-login-diag\gemini-dom-<timestamp>.log`
+Markup: the matching `gemini-dom-<timestamp>.markup.html` beside it.
+
+## gemini-cookie-probe.js
+
+**The run that decides whether the Gemini import route is worth building at all.**
+
+`gemini-dom-probe.js` answered the login question the expensive way — Google replied 无法登录 /
+"此浏览器或应用可能不安全" to a direct sign-in inside the embedded view. That is the third time
+this wall has come up (third-party OAuth, then Apple, now a first-party Google sign-in), so the
+session has to arrive from outside.
+
+`src/main/session-import.ts` already does that for ChatGPT, but its scheme does not fit: it
+imports **one** cookie — a NextAuth bearer token, reassembled from `.0`/`.1` chunks — onto the
+platform's own domain. A Google session is a **set** of cookies on `.google.com`, with no chunks
+and no single bearer token.
+
+**So before any of that is written, this answers the only question that matters:** do copied
+Google cookies actually produce a signed-in session here, or does Google reject them the way it
+rejects the embedded sign-in? If they are rejected, the feature is dead and nothing should be
+built.
+
+### Run it
+
+You need a text file holding your Google cookies. Easiest source — DevTools:
+
+> Network tab → click any `gemini.google.com` request → Headers → Request Headers → copy the
+> whole `cookie:` line.
+
+```powershell
+$env:PROBE_COOKIE_FILE='C:\path\to\google-cookies.txt'
+node_modules\electron\dist\electron.exe tools\diag\gemini-cookie-probe.js
+```
+
+**"Copy as cURL" works too**, and so does a bare `name=value; name=value` string — the parser
+finds the cookie header inside all three, because asking the user to reformat is asking for a
+failed run.
+
+Optional proxy: `$env:PROBE_PROXY='http://127.0.0.1:7897'`
+
+**Cookie values are never logged.** Only names and lengths are written — that is the rule for
+every probe here, and this log is a file that gets pasted around. A Google session cookie is a
+full account credential.
+
+### Reading the log
+
+| Line | Meaning |
+| --- | --- |
+| `cookie names present (value lengths in brackets)` | what was parsed — names and lengths only |
+| `present` / `MISSING` against the Google auth list | `SID` / `__Secure-1PSID` / `__Secure-3PSID` missing means Google will almost certainly ignore the rest |
+| `wrote N/M cookie(s) onto .google.com` | `.google.com` on purpose: the session must cover whatever `accounts.google.com` hop the page makes, and a cookie scoped to `gemini.google.com` would be absent on exactly the request that matters |
+| `jar now holds …` + `<-- SESSION COOKIE` | **read this line.** A session cookie is present in this process and gone in the next one |
+| `WARNING: N of them are SESSION cookies` | the run will look like it worked and the app will find nothing |
+| `hasComposer=` / `looksLikeWall=` | the verdict, decided from the DOM, not the URL: Google serves the wall **on** `gemini.google.com`, so the hostname says nothing |
+| `=== VERDICT ===` | `IMPORTED COOKIES WORK` / `REJECTED` / `INCONCLUSIVE`, and what each means for the import feature |
+
+### `expirationDate` is not optional — it cost a whole run
+
+The first version of this probe wrote 25 cookies, reported `wrote 25/25` and `jar now holds 25`,
+and loaded Gemini **fully signed in**. The next process found an empty jar and a signed-out page.
+
+Cause: without `expirationDate`, Electron creates a **session cookie**, and Chromium never writes
+session cookies to disk. So the write succeeded, the session was real, and nothing was persisted.
+Measured afterwards in the on-disk store (`Partitions/gemini/Network/Cookies`): all nine
+`SID`/`__Secure-*` cookies absent, while every cookie **Google had re-set during the page load**
+was there with `has_expires=1, is_persistent=1`.
+
+Two lessons worth keeping:
+
+- A raw `cookie:` header carries no attributes, so the real expiry is unknowable from the input
+  this probe accepts. Thirty days is a deliberate stand-in — the server validates the VALUE, not
+  the client's expiry.
+- **"The write succeeded" and "the write persisted" are different facts.** The read-back now
+  names session cookies explicitly, because this failure is invisible from inside one process.
+
+Reading the on-disk store needs the app closed: Chromium holds `Network/Cookies` with a lock that
+blocks even a file copy (`EBUSY`). Once it is closed, copy the file somewhere writable and open
+the copy — a read-only open fails, because SQLite still needs to touch the WAL.
+
+Log: `%TEMP%\gpt-login-diag\gemini-cookie-<timestamp>.log`
+
 ## deepseek-probe.js
 
 Records what the embed needs to know about `chat.deepseek.com` before an adapter can be

@@ -90,7 +90,13 @@ export interface SessionRuntimeOptions {
   store: ConversationStore
   localMachineId: string
   initialMode: ExecutionMode
-  settings: () => { embedProxy: string; sshProxy: string }
+  /**
+   * Only `sshProxy` is read from here — the embed proxies are applied by `index.ts` directly,
+   * per platform. `embedProxy` is typed as the map it now is rather than omitting it, so this
+   * dependency keeps mirroring `AppSettings` instead of becoming its own narrower shape that
+   * silently drifts.
+   */
+  settings: () => { embedProxy: Record<string, string>; sshProxy: string }
   onSummaryChanged: () => void
   onTransfersChanged: () => void
   onActivate: (id: string) => void
@@ -143,7 +149,7 @@ export class SessionRuntime {
   environmentScope: Pick<TerminalNotes, 'scope' | 'hostId' | 'label'> = {
     scope: 'local',
     hostId: '',
-    label: 'æœ¬æœº'
+    label: '本机'
   }
 
   /**
@@ -233,6 +239,7 @@ export class SessionRuntime {
       store: options.store,
       currentConversationId: () => this.embed.getState().conversationId,
       sendRawToPage: (text) => this.embed.sendRaw(text),
+      terminalModeEnabled: () => this.embed.getInterceptorStatus().enabled,
       remoteShell: () => this.remoteShell,
       onRemoteLine: (line) => this.ssh.pushModelLine(line),
       onRemoteOutput: (chunk) => this.ssh.pushModelOutput(chunk),
@@ -246,7 +253,7 @@ export class SessionRuntime {
       },
       onTaskCompleted: (description) => {
         void this.embed.endTask()
-        this.notifyTaskCompleted(description.trim() || 'ä»»åŠ¡å·²å®Œæˆ')
+        this.notifyTaskCompleted(description.trim() || '任务已完成')
       }
     }, options.initialLocalCwd ?? '')
 
@@ -391,7 +398,7 @@ export class SessionRuntime {
         if (isActive()) this.send(IpcChannels.interceptorEvent, status)
       },
       onTaskCompleted: () => {
-        if (isActive()) this.notifyTaskCompleted('ä»»åŠ¡å·²å®Œæˆ')
+        if (isActive()) this.notifyTaskCompleted('任务已完成')
       },
       /*
        * ONLY the visible platform feeds the command loop.
@@ -652,9 +659,9 @@ export class SessionRuntime {
     const usingSsh = sshState.attached
     return {
       id: this.id,
-      title: this.customTitle || state.title || 'å½“å‰ä¼šè¯',
+      title: this.customTitle || state.title || '当前会话',
       kind: usingSsh ? 'ssh' : 'local',
-      target: usingSsh ? sshState.name || sshState.target || 'SSH' : 'æœ¬æœº',
+      target: usingSsh ? sshState.name || sshState.target || 'SSH' : '本机',
       conversationId: state.conversationId,
       platformId: this.activeEmbed().platform.id,
       taskRunning: this.taskRunning(),
@@ -889,8 +896,8 @@ export class SessionRuntime {
         ...EMPTY_SSH_STATE,
         status: 'error',
         attached: true,
-        message: 'éœ€è¦å¡«å†™ä¸»æœºåœ°å€å’Œç”¨æˆ·å',
-        lines: [{ kind: 'error', text: 'éœ€è¦å¡«å†™ä¸»æœºåœ°å€å’Œç”¨æˆ·å' }]
+        message: '需要填写主机地址和用户名',
+        lines: [{ kind: 'error', text: '需要填写主机地址和用户名' }]
       }
     }
 
@@ -909,8 +916,8 @@ export class SessionRuntime {
     const password = typed !== '' ? typed : decryptSecret(this.options.store.getSshSecret(id))
     if (password === '') {
       const message = safeStorage.isEncryptionAvailable()
-        ? 'è¯·è¾“å…¥å¯†ç ï¼ˆè¿™å°ä¸»æœºè¿˜æ²¡æœ‰ä¿å­˜è¿‡å¯†ç ï¼‰'
-        : 'è¯·è¾“å…¥å¯†ç ï¼ˆå½“å‰ç³»ç»Ÿä¸æ”¯æŒå®‰å…¨ä¿å­˜å¯†ç ï¼Œæ¯æ¬¡è¿žæŽ¥éƒ½éœ€è¦é‡æ–°è¾“å…¥ï¼‰'
+        ? '请输入密码（这台主机还没有保存过密码）'
+        : '请输入密码（当前系统不支持安全保存密码，每次连接都需要重新输入）'
       return {
         ...EMPTY_SSH_STATE,
         status: 'error',
@@ -946,9 +953,9 @@ export class SessionRuntime {
           ? {
               scope: 'ssh',
               hostId: sshState.hostId ?? '',
-              label: sshState.name || sshState.target || 'è¿œç«¯ä¸»æœº'
+              label: sshState.name || sshState.target || '远端主机'
             }
-          : { scope: 'local', hostId: '', label: 'æœ¬æœº' }
+          : { scope: 'local', hostId: '', label: '本机' }
 
       info.extraNotes = this.readNotes()
       this.environment = info

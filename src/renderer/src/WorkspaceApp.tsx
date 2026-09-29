@@ -1,7 +1,11 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import type { AppTheme, ManagedSessionSummary, SshTransferTask, UpdateStatus, WorkspaceState } from '../../shared/types'
 import brandIcon from './assets/brand-icon.png'
+import chatGptIcon from './assets/ChatGPT.svg'
+import deepseekIcon from './assets/DeepSeek.svg'
+import claudeIcon from './assets/Claude.svg'
+import geminiIcon from './assets/Gemini.svg'
 import { platformById } from '../../shared/platforms'
 import App from './App'
 import ConfirmDialog from './components/ConfirmDialog'
@@ -274,7 +278,7 @@ export default function WorkspaceApp(): ReactElement {
               >
                 <span className="workspace__session-head">
                   <span className="workspace__session-title">{item.title || '会话'}</span>
-                  <span className={`workspace__session-platform workspace__session-platform--${item.platformId}`}>{platformById(item.platformId)?.label ?? item.platformId}</span>
+                  <span className={`workspace__session-platform workspace__session-platform--${item.platformId}`} title={platformById(item.platformId)?.label ?? item.platformId}>{item.platformId === 'chatgpt' ? <img src={chatGptIcon} alt="ChatGPT" className="workspace__session-platform-icon" /> : item.platformId === 'deepseek' ? <img src={deepseekIcon} alt="DeepSeek" className="workspace__session-platform-icon" /> : item.platformId === 'claude' ? <img src={claudeIcon} alt="Claude" className="workspace__session-platform-icon" /> : item.platformId === 'gemini' ? <img src={geminiIcon} alt="Gemini" className="workspace__session-platform-icon" /> : (platformById(item.platformId)?.label ?? item.platformId)}</span>
                 </span>
                 <span className="workspace__session-meta">
                   {item.taskRunning ? <span className="workspace__session-running"><svg viewBox="0 0 8 8" width="7" height="7" fill="currentColor"><circle cx="4" cy="4" r="3.2" /></svg> 执行中 · </span> : null}

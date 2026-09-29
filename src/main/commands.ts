@@ -126,6 +126,8 @@ export interface CommandRunnerDeps {
   sendRawToPage: (
     text: string
   ) => Promise<'ok' | 'busy' | 'stuck' | 'no-composer' | 'insert-failed'>
+  /** Whether terminal mode is on. Off: commands are not detected and results are not sent back. */
+  terminalModeEnabled?: () => boolean
   /**
    * The backend the model's commands must run on right now.
    *
@@ -401,7 +403,7 @@ export class CommandRunner {
     this.automation = { ...this.automation, paused }
     // Resuming should pick the loop back up. Otherwise a command that arrived
     // while paused would sit there forever with nothing driving it.
-    if (!paused && this.automation.mode === 'auto') this.resumeNewestPending()
+    if (!paused && this.automation.mode === 'auto' && this.terminalModeOn()) this.resumeNewestPending()
     return this.getAutomation()
   }
 
@@ -439,6 +441,11 @@ export class CommandRunner {
     }
   }
 
+  /** Terminal mode off: no detection, no auto-run, no result send-back. */
+  private terminalModeOn(): boolean {
+    return this.deps.terminalModeEnabled ? this.deps.terminalModeEnabled() : true
+  }
+
   /* ---------------- commands from the page ---------------- */
 
   /**
@@ -448,6 +455,11 @@ export class CommandRunner {
    * runs by itself depends on the mode and on `live` (see the notice below).
    */
   handleDetected(parsed: ParsedCommand, conversationIdOverride?: string): boolean {
+    // Terminal mode off: leave replies alone. Returning true marks the command handled so nothing is deferred.
+    if (!this.terminalModeOn()) {
+      console.info('[cmd] terminal mode off, detected command ignored')
+      return true
+    }
     const conversationId = conversationIdOverride ?? this.deps.currentConversationId()
     // A brand-new ChatGPT conversation briefly lives at '/' before the SPA assigns
     // /c/<id>. The command can arrive during that gap; tell SessionRuntime to defer
@@ -728,6 +740,12 @@ export class CommandRunner {
       }
     }
 
+    // Terminal mode off: keep the output in the execution record but do not send it back to the model.
+    if (!this.terminalModeOn()) {
+      this.appendLine({ kind: 'notice', text: '终端模式已关闭，结果未回传给模型' })
+      this.flushTerminal()
+      return
+    }
     const message = buildResultMessage(record.command, result)
     this.appendLine({ kind: 'notice', text: '正在发送...' })
     const outcome = await this.deps.sendRawToPage(message)

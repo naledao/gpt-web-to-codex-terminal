@@ -2015,6 +2015,12 @@
       return
     }
 
+    // Terminal mode is off: treat the reply as ordinary chat and never report it as a command.
+    if (!state.enabled) {
+      state.lastCommandMessageId = messageId
+      noteScan(messageId, 'terminal-mode-off')
+      return
+    }
     const live = state.awaitingReplySince !== 0
     state.lastCommandMessageId = messageId
 

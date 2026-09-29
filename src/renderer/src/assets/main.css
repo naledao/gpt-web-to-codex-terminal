@@ -3124,6 +3124,11 @@ body {
 .btn-spinner { width:14px; height:14px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:btn-spin .7s linear infinite; }
 @keyframes btn-spin { to { transform:rotate(360deg); } }
 .settings-session-row { display:grid; grid-template-columns:180px 1fr; align-items:center; gap:12px; margin-top:12px; }
+/* One named section per platform inside the login-state card. */
+.settings-session-group { margin-top:18px; padding-top:14px; border-top:1px solid #e6ecf5; }
+.settings-session-group:first-of-type { margin-top:8px; padding-top:0; border-top:0; }
+.settings-session-group__title { color:#28364b; font-size:14px; font-weight:700; }
+.settings-session-group__title small { margin-left:8px; color:#8b97aa; font-size:11px; font-weight:500; }
 .settings-session-row label { color:#344054; font-size:14px; font-weight:600; }
 .settings-session-row--value { grid-template-columns:180px minmax(220px,1fr) auto; align-items:start; }
 .settings-session-row--value label { padding-top:10px; }
@@ -7070,14 +7075,40 @@ body {
   color: #4a6bd6;
 }
 
+.workspace:not(.workspace--manager) .workspace__session-platform {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-platform-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
 .workspace:not(.workspace--manager) .workspace__session-platform--chatgpt {
-  background: #e4f6ee;
-  color: #10855f;
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 .workspace:not(.workspace--manager) .workspace__session-platform--deepseek {
-  background: #e7efff;
-  color: #3355d1;
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-platform--claude {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+.workspace:not(.workspace--manager) .workspace__session-platform--gemini {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 /* Smooth workspace view transition between manager and session */
@@ -7150,13 +7181,27 @@ body {
 }
 
 .workspace .workspace__session-platform--chatgpt {
-  background: #e4f6ee;
-  color: #10855f;
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 .workspace .workspace__session-platform--deepseek {
-  background: #e7efff;
-  color: #3355d1;
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+.workspace .workspace__session-platform--claude {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+.workspace .workspace__session-platform--gemini {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 .workspace__brand-mark img {
@@ -8035,10 +8080,10 @@ body {
   color: #c7d7ee !important;
 }
 
-.workspace[data-theme='dark'] .workspace__session-platform--chatgpt,
-.workspace[data-theme='dark'] .workspace__session-platform--deepseek {
-  background: #22334d !important;
-  color: #a9c7ff !important;
+.workspace[data-theme='dark'] .workspace__session-platform--gemini {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
 }
 
 .workspace[data-theme='dark'] .modal--settings,
@@ -11210,4 +11255,28 @@ body {
 .workspace[data-theme='dark'] .ssh-files__browser .wx-folder.wx-selected {
   background: #223653 !important;
   color: #dbe8ff !important;
+}
+
+.terminal__hint--inline {
+  margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Gemini icon size */
+.workspace .workspace__session-platform--gemini .workspace__session-platform-icon {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+/* ChatGPT icon size */
+.workspace .workspace__session-platform--chatgpt .workspace__session-platform-icon {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+/* DeepSeek icon slightly larger */
+.workspace .workspace__session-platform--deepseek .workspace__session-platform-icon {
+  width: 22px !important;
+  height: 22px !important;
 }

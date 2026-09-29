@@ -44,7 +44,7 @@ import type {
   TerminalState,
   UpdateStatus
 } from '../shared/types'
-import { embedAuthState, importSessionToken, previewSessionImport } from './session-import'
+import { embedAuthState, importCookieSet, importSessionToken, previewSessionImport } from './session-import'
 import { ConversationStore } from './db'
 import { EMPTY_SSH_STATE, SessionRuntime } from './session-runtime'
 import { installAppLog, installNetLog } from './app-log'
@@ -83,7 +83,16 @@ const rendererDevServerUrl = process.env['ELECTRON_RENDERER_URL']
 const isDev = !app.isPackaged
 const SETTING_EXECUTION_MODE = 'executionMode'
 const SETTING_THEME = 'theme'
-const SETTING_EMBED_PROXY = 'embedProxy'
+/**
+ * The pre-per-platform embed proxy key.
+ *
+ * Kept only so an existing installation is not silently reset to "no proxy" the first time this
+ * version runs. Everything now lives under one key PER PLATFORM (`embedProxy:claude`), because a
+ * single shared value cannot say "chatgpt.com goes through the proxy, claude.ai goes direct" —
+ * and those are different destinations that routinely need different routes.
+ */
+const SETTING_EMBED_PROXY_LEGACY = 'embedProxy'
+const embedProxyKey = (platformId: string): string => `embedProxy:${platformId}`
 const SETTING_SSH_PROXY = 'sshProxy'
 const SETTING_UPDATE_PROXY = 'updateProxy'
 const SETTING_USER_AVATAR = 'userAvatarDataUrl'
@@ -110,7 +119,7 @@ let tray: Tray | null = null
 let quitting = false
 let store: ConversationStore | null = null
 let localMachineId = ''
-let settings: AppSettings = { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 }
+let settings: AppSettings = { theme: 'light', embedProxy: {}, sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 }
 const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
 let workspaceOpenSshDialog = false
@@ -405,15 +414,60 @@ function normalizeProxy(raw: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
 }
 
-async function applyEmbedProxy(proxy: string): Promise<void> {
+/**
+ * Read each platform's proxy, migrating a single-platform setting the first time.
+ *
+ * The migration WRITES, rather than carrying the old value in memory on every start. That makes
+ * it a one-time event: the keys exist afterwards, so the branch cannot run again, a platform
+ * added later starts with no proxy instead of inheriting this one, and the log line below means
+ * what it says instead of repeating on every launch.
+ *
+ * The legacy key is left in place rather than deleted — a downgrade would otherwise lose the
+ * setting — but it is never read again once any per-platform key exists.
+ */
+function readEmbedProxies(store: {
+  getSetting(key: string): string | null
+  setSetting(key: string, value: string): void
+}): Record<string, string> {
+  const proxies: Record<string, string> = {}
+  let anyStored = false
+
+  for (const platform of CHAT_PLATFORMS) {
+    const stored = store.getSetting(embedProxyKey(platform.id))
+    if (stored !== null) {
+      anyStored = true
+      proxies[platform.id] = stored
+    } else {
+      proxies[platform.id] = ''
+    }
+  }
+
+  if (anyStored) return proxies
+
+  const legacy = store.getSetting(SETTING_EMBED_PROXY_LEGACY) ?? ''
+  if (legacy === '') return proxies
+
+  console.info(
+    `[settings] migrating the single embed proxy to ${CHAT_PLATFORMS.length} per-platform keys`
+  )
+  for (const platform of CHAT_PLATFORMS) {
+    proxies[platform.id] = legacy
+    store.setSetting(embedProxyKey(platform.id), legacy)
+  }
+  return proxies
+}
+
+async function applyEmbedProxy(proxies: Record<string, string>): Promise<void> {
   /*
-   * Applied to EVERY platform's partition, not just the active one.
+   * One session per platform, so each is set from ITS OWN value.
    *
-   * Each embedded site has its own Electron session, so a proxy set on one of them
-   * leaves the other going direct — which looks like "the proxy works for ChatGPT but
-   * not DeepSeek" and is really just half-applied configuration.
+   * This used to apply one shared value to every platform — which is why it carried a comment
+   * about "the proxy works for ChatGPT but not DeepSeek" being half-applied configuration. Now
+   * that the values are separate, a partial application is a real thing the user asked for
+   * rather than a bug, and the log below says which platform got what.
    */
   for (const platform of CHAT_PLATFORMS) {
+    const proxy = proxies[platform.id] ?? ''
     const embedSession = session.fromPartition(platform.partition)
     try {
       if (proxy === '') await embedSession.setProxy({ mode: 'direct' })
@@ -834,12 +888,30 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.embedGetState, (event): EmbedState => runtimeForEvent(event)?.embed.getState() ?? EMPTY_EMBED_STATE)
   ipcMain.handle(IpcChannels.embedGetExternalAuth, (event): ExternalAuthNotice | null => runtimeForEvent(event)?.externalAuthNotice ?? null)
   ipcMain.on(IpcChannels.embedLoginWithEmail, (event) => runtimeForEvent(event)?.embed.navigate(EMBED_LOGIN_URL))
-  ipcMain.handle(IpcChannels.embedImportSession, async (event, draft: SessionImportDraft): Promise<SessionImportResult> => {
+  ipcMain.handle(IpcChannels.embedImportSession, async (event, platformId: string, draft: SessionImportDraft): Promise<SessionImportResult> => {
     const runtime = runtimeForEvent(event)
-    if (!runtime) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
-    return importSessionToken(runtime.chatPlatform, draft, runtime.embed.contents(), () =>
-      runtime.embed.reloadAndWait()
-    )
+    const platform = platformById(String(platformId ?? '')) ?? runtime?.chatPlatform
+    if (!platform) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
+    /*
+     * The TARGET PLATFORM comes from the argument, not from whichever session is in front.
+     *
+     * A partition belongs to a platform and every session of that platform shares it, so a login
+     * state is global — routing by active session made the destination depend on which tab
+     * happened to be visible, which is not a property of the login at all.
+     *
+     * The VIEW, separately, is only needed to confirm the result, so it is used when the session
+     * in front happens to be showing the same platform and skipped otherwise. Writing is what
+     * matters; verification is a bonus that must not decide the routing.
+     */
+    const contents = runtime && runtime.chatPlatform.id === platform.id ? runtime.embed.contents() : null
+    return importSessionToken(platform, draft, contents, () => runtime?.embed.reloadAndWait() ?? Promise.resolve())
+  })
+  ipcMain.handle(IpcChannels.embedImportCookieSet, async (event, platformId: string, raw: string): Promise<SessionImportResult> => {
+    const runtime = runtimeForEvent(event)
+    const platform = platformById(String(platformId ?? '')) ?? runtime?.chatPlatform
+    if (!platform) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
+    const contents = runtime && runtime.chatPlatform.id === platform.id ? runtime.embed.contents() : null
+    return importCookieSet(platform, String(raw ?? ''), contents, () => runtime?.embed.reloadAndWait() ?? Promise.resolve())
   })
   ipcMain.handle(IpcChannels.embedPreviewSession, (event, draft: SessionImportDraft): SessionImportResult => {
     if (!runtimeForEvent(event)) return { ok: false, message: '请求不是来自应用窗口。', signedIn: false }
@@ -1019,19 +1091,34 @@ function registerIpcHandlers(): void {
     return runtime.ssh.getState()
   })
 
-  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => isManagerEvent(event) ? { ...settings } : { theme: 'light', embedProxy: '', sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 })
+  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => isManagerEvent(event) ? { ...settings } : { theme: 'light', embedProxy: {}, sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 })
   ipcMain.handle(IpcChannels.settingsUpdate, async (event, patch: AppSettingsPatch): Promise<AppSettings> => {
     if (!isManagerEvent(event) || !store) return { ...settings }
     if (patch?.theme === 'light' || patch?.theme === 'dark') {
       settings = { ...settings, theme: patch.theme }
       store.setSetting(SETTING_THEME, patch.theme)
     }
-    if (typeof patch?.embedProxy === 'string') {
-      const proxy = normalizeProxy(patch.embedProxy)
-      settings = { ...settings, embedProxy: proxy }
-      store.setSetting(SETTING_EMBED_PROXY, proxy)
-      await applyEmbedProxy(proxy)
-      for (const runtime of runtimes.values()) runtime.embed.reload()
+    if (patch?.embedProxy && typeof patch.embedProxy === 'object') {
+      /*
+       * Partial by design: the UI sends the whole map, but only the platforms it actually
+       * mentions are touched, so a caller that knows about two sites cannot wipe the third.
+       */
+      const next: Record<string, string> = { ...settings.embedProxy }
+      let changed = false
+      for (const platform of CHAT_PLATFORMS) {
+        const raw = patch.embedProxy[platform.id]
+        if (typeof raw !== 'string') continue
+        const proxy = normalizeProxy(raw)
+        if (next[platform.id] === proxy) continue
+        next[platform.id] = proxy
+        store.setSetting(embedProxyKey(platform.id), proxy)
+        changed = true
+      }
+      if (changed) {
+        settings = { ...settings, embedProxy: next }
+        await applyEmbedProxy(next)
+        for (const runtime of runtimes.values()) runtime.embed.reload()
+      }
     }
     if (typeof patch?.sshProxy === 'string') {
       const proxy = normalizeProxy(patch.sshProxy)
@@ -1115,7 +1202,7 @@ if (!app.requestSingleInstanceLock()) {
 
     settings = {
       theme: conversationStore.getSetting(SETTING_THEME) === 'dark' ? 'dark' : 'light',
-      embedProxy: conversationStore.getSetting(SETTING_EMBED_PROXY) ?? '',
+      embedProxy: readEmbedProxies(conversationStore),
       sshProxy: conversationStore.getSetting(SETTING_SSH_PROXY) ?? '',
       updateProxy: conversationStore.getSetting(SETTING_UPDATE_PROXY) ?? '',
       userAvatarDataUrl: conversationStore.getSetting(SETTING_USER_AVATAR) ?? '',

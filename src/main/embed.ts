@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView, shell } from 'electron'
+import { BrowserWindow, WebContentsView, session, shell } from 'electron'
 import interceptorSource from './injected/send-interceptor.js?raw'
 import { FALLBACK_ENVIRONMENT, buildTerminalPrefix, isConversationId } from '../shared/types'
 import type { ChatPlatform } from '../shared/platforms'
@@ -28,7 +28,7 @@ import type {
  * CSP `frame-ancestors`), so the page can only be embedded out-of-process.
  *
  * Why a dedicated partition: the embedded page gets its own cookie jar, so
- * third-party content can never touch the app's own session â€” and the two platforms get
+ * third-party content can never touch the app's own session — and the two platforms get
  * a jar each, so signing into one never signs into the other.
  *
  * IMPORTANT: a native view is not a DOM node. It always paints *above* the
@@ -41,8 +41,8 @@ const INTERCEPTOR_LOG_TAG = '[cmd-terminal] '
 /**
  * Conversation id of a URL, for whichever platform this view drives.
  *
- * A URL that will not parse is not an error worth reporting â€” the page navigates through
- * intermediate states constantly â€” so it answers "not a conversation", which is the safe
+ * A URL that will not parse is not an error worth reporting — the page navigates through
+ * intermediate states constantly — so it answers "not a conversation", which is the safe
  * reading: nothing gets written to the database.
  */
 function conversationIdOf(platform: ChatPlatform, url: string): string | null {
@@ -68,6 +68,101 @@ function chromeLikeUserAgent(): string {
   return (
     `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 (KHTML, like Gecko) ` +
     `Chrome/${process.versions.chrome} Safari/537.36`
+  )
+}
+
+/**
+ * What a real Chrome advertises in `Sec-CH-UA`, and the second half of the identity above.
+ *
+ * WHY THIS EXISTS. `setUserAgent` changes one request header. It does not change the CLIENT HINT
+ * brand list, which Electron reports as `["Not?A_Brand","Chromium"]` — with no `"Google Chrome"`
+ * in it. So every request said *same User-Agent as Chrome, different browser*, which is exactly
+ * what a browser pretending to be Chrome looks like, and Cloudflare's challenge on claude.ai
+ * would not let the page past it. Measured: the probe sat on 正在验证您是否是真人 indefinitely
+ * with a Chrome User-Agent and no hint rewrite, and loaded immediately once the rewrite was
+ * added. Electron 44 has no `setUserAgentMetadata`, so these headers are the only lever.
+ */
+function chromeBrandList(): string {
+  const version = String(process.versions.chrome)
+  const major = version.split('.')[0]
+  return `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not(A:Brand";v="24"`
+}
+
+function chromeFullVersionList(): string {
+  const version = String(process.versions.chrome)
+  return `"Google Chrome";v="${version}", "Chromium";v="${version}", "Not(A:Brand";v="24.0.0.0"`
+}
+
+/** Partitions already patched. `onBeforeSendHeaders` holds ONE handler, so this must be once. */
+const identityPatched = new Set<string>()
+
+/** Partitions whose patch has already been reported, so the log carries one line each. */
+const identityLogged = new Set<string>()
+
+/**
+ * Make the client hints agree with the User-Agent the view already presents.
+ *
+ * ONE handler for the whole partition, and installed once: Electron keeps a single
+ * `onBeforeSendHeaders` slot per session, so a second registration silently REPLACES the first.
+ * Registering a separate observer alongside this would therefore either vanish or disable the
+ * patch, and the log would then disagree with the wire.
+ *
+ * Applied to EVERY embedded partition, not just Claude's. Every view already sends a Chrome
+ * User-Agent, so a brand list that disagrees with it is a fingerprint on all three sites — there
+ * is nothing site-specific about this, and scoping it to the one site that happened to break
+ * first would leave the same inconsistency behind on the other two.
+ */
+function installChromeIdentity(partition: string): void {
+  if (identityPatched.has(partition)) return
+  identityPatched.add(partition)
+
+  session.fromPartition(partition).webRequest.onBeforeSendHeaders(
+    { urls: ['*://*/*'] },
+    (details, callback) => {
+      const headers = { ...details.requestHeaders }
+      let touched = false
+
+      for (const name of Object.keys(headers)) {
+        const lower = name.toLowerCase()
+        if (lower === 'sec-ch-ua') {
+          headers[name] = chromeBrandList()
+          touched = true
+        } else if (lower === 'sec-ch-ua-full-version-list') {
+          headers[name] = chromeFullVersionList()
+          touched = true
+        } else if (lower === 'sec-ch-ua-full-version') {
+          headers[name] = `"${String(process.versions.chrome)}"`
+          touched = true
+        } else if (lower === 'user-agent') {
+          headers[name] = chromeLikeUserAgent()
+          touched = true
+        }
+      }
+
+      if (touched) {
+        /*
+         * Logged once per partition, with the value that was there before.
+         *
+         * Without the before-value a failed load cannot be told apart from a patch that never
+         * applied — and "the patch silently did nothing" is the failure this whole area exists
+         * to avoid. Note the hint is often ABSENT rather than wrong, because Chromium only sends
+         * `sec-ch-ua` on requests that opt into it.
+         */
+        if (!identityLogged.has(partition)) {
+          identityLogged.add(partition)
+          const key = Object.keys(details.requestHeaders || {}).find(
+            (candidate) => candidate.toLowerCase() === 'sec-ch-ua'
+          )
+          console.info(
+            `[embed] chrome identity on ${partition}: sec-ch-ua ` +
+              `${JSON.stringify(key ? details.requestHeaders[key] : '(absent)')} -> ` +
+              `${JSON.stringify(chromeBrandList())}`
+          )
+        }
+      }
+
+      return callback({ requestHeaders: headers })
+    }
   )
 }
 
@@ -118,14 +213,14 @@ function externalAuthProvider(url: string): ExternalAuthProvider | null {
  * Each sidebar entry is rendered as:
  *   <li class="list-none">
  *     <a data-sidebar-item="true" aria-label="æ­Œæ›²åç§°ä»‹ç»"
- *        href="/c/6ab11ffa-64b8-83e8-9247-c19ae00ad95e">â€¦</a>
+ *        href="/c/6ab11ffa-64b8-83e8-9247-c19ae00ad95e">…</a>
  *   </li>
  *
  * The aria-label carries the conversation name; textContent is the fallback for
  * the unordered history list, which renders the label differently.
  *
  * The script itself now lives on the platform descriptor (`sidebarScript`), because the
- * link shape differs per site. Only the raw path segment is extracted there â€” validating
+ * link shape differs per site. Only the raw path segment is extracted there — validating
  * it is left to `isConversationId()` so that rule lives in exactly one place.
  */
 
@@ -234,6 +329,10 @@ export class ChatGptEmbed {
   attach(parent: BrowserWindow): void {
     if (this.view && !this.view.webContents.isDestroyed()) return
 
+    // Before the view exists, so the very first request of the very first navigation already
+    // carries a brand list that agrees with the User-Agent below.
+    installChromeIdentity(this.platform.partition)
+
     const view = new WebContentsView({
       webPreferences: {
         partition: this.platform.partition,
@@ -317,8 +416,8 @@ export class ChatGptEmbed {
     /*
      * Name the failures.
      *
-     * Chromium prints `handshake failed â€¦ net_error -100` with NO host, which is not enough
-     * to act on â€” two platforms are embedded at once and either could be the one dying. These
+     * Chromium prints `handshake failed … net_error -100` with NO host, which is not enough
+     * to act on — two platforms are embedded at once and either could be the one dying. These
      * events carry the URL, so a log can answer "which request, to where".
      */
     contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
@@ -403,7 +502,7 @@ export class ChatGptEmbed {
    *
    * Needed after a session import: the cookie has to be in the jar before the page
    * asks who the user is, so the caller cannot simply fire `reload()` and check
-   * immediately â€” it would inspect the OLD document and report a signed-out page for
+   * immediately — it would inspect the OLD document and report a signed-out page for
    * a session that is actually valid.
    *
    * Resolves on timeout rather than rejecting: a page that never finishes loading
@@ -551,7 +650,7 @@ export class ChatGptEmbed {
    * Inject the send interceptor into the page and push the current config.
    *
    * `executeJavaScript` is not subject to the page's CSP nonce (it does not go
-   * through a script tag), and it runs in the main world â€” which is what the
+   * through a script tag), and it runs in the main world — which is what the
    * page's own React handlers use, so our capture-phase listeners see the same
    * events they do.
    */
@@ -566,7 +665,7 @@ export class ChatGptEmbed {
       // history, otherwise an old reply would look like a fresh command.
       armBaseline: this.armBaselineOnInstall,
       // Which site's DOM to work against. The injected script is source text, so the
-      // platform cannot be imported there â€” this is the only route it has.
+      // platform cannot be imported there — this is the only route it has.
       page: this.platform.page
     })
 
@@ -586,7 +685,7 @@ export class ChatGptEmbed {
    * the system prompt: the prompt is already established by the first message of
    * the conversation, and re-sending it every round would bloat the context.
    *
-   * `busy` means the user is typing â€” we must never clobber their draft.
+   * `busy` means the user is typing — we must never clobber their draft.
    * `stuck` means the text went in but ChatGPT never accepted the submit.
    */
   async sendRaw(
@@ -618,8 +717,8 @@ export class ChatGptEmbed {
   }
 
   /**
-   * Tell the page to treat everything currently rendered â€” and whatever renders
-   * next â€” as pre-existing.
+   * Tell the page to treat everything currently rendered — and whatever renders
+   * next — as pre-existing.
    *
    * Called whenever the app moves to another conversation while auto mode is on,
    * and when auto mode is switched on. Without it, opening an old conversation
@@ -668,8 +767,8 @@ export class ChatGptEmbed {
   /**
    * Read the page's own sidebar markup and return every conversation it lists.
    *
-   * `executeJavaScript` resolves in the page's main world. It is awaited â€” and
-   * its result validated â€” because the page can navigate away mid-call, in which
+   * `executeJavaScript` resolves in the page's main world. It is awaited — and
+   * its result validated — because the page can navigate away mid-call, in which
    * case the promise resolves against a destroyed context.
    */
   async scrapeConversations(): Promise<ScrapedConversation[]> {
@@ -815,7 +914,7 @@ export class ChatGptEmbed {
          * Log which prompt the PAGE actually holds, and compare it with what main thinks it
          * pushed. The two can diverge because the prefix lives per view: a view created before
          * the environment probe, or reconfigured while it had no live contents, keeps the
-         * generic fallback â€” and the only visible symptom is messages going out un-prefixed.
+         * generic fallback — and the only visible symptom is messages going out un-prefixed.
          */
         console.info(
           `[embed:${this.platform.id}] injected #${this.interceptor.injectedCount} ` +
@@ -905,7 +1004,7 @@ export class ChatGptEmbed {
       /*
        * The scan notes: one line per (turn, reason) saying why a settled reply produced no
        * command. Without them, "the model answered with JSON and nothing happened" is
-       * undiagnosable â€” every path leading there returns silently.
+       * undiagnosable — every path leading there returns silently.
        */
       case 'scan':
         console.info(`[embed:${this.platform.id}] scan ${JSON.stringify(payload)}`)
@@ -917,7 +1016,7 @@ export class ChatGptEmbed {
         /*
          * The DETAIL is the point, not the event name.
          *
-         * This used to print one word â€” `interceptor reported send-failed` â€” while the page
+         * This used to print one word — `interceptor reported send-failed` — while the page
          * held everything needed to explain it: whether a send button existed at all, whether
          * it was disabled, what was left in the composer, and what the composer's toolbar
          * actually contained. "The result is written into the box and never sent" is not
@@ -957,7 +1056,7 @@ export class ChatGptEmbed {
 
     /*
      * Every one of these sites uses its own product name as the generic document title
-     * ("ChatGPT", "DeepSeek") â€” that is the shell, not a conversation name. Storing the
+     * ("ChatGPT", "DeepSeek") — that is the shell, not a conversation name. Storing the
      * product name as the conversation's title would then outrank the real one from the
      * sidebar scrape, because a non-empty title is never overwritten.
      */
