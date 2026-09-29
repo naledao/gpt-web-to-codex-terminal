@@ -1765,7 +1765,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
                             </div>
                           ) : null}
                           {message.content.trim() !== '' ? (
-                            <MDEditor.Markdown source={message.content} wrapperElement={{ 'data-color-mode': 'light' }} />
+                            <MDEditor.Markdown source={message.content} wrapperElement={{ 'data-color-mode': theme }} />
                           ) : null}
                         </div>
                       </div>

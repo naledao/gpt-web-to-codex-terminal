@@ -11280,3 +11280,64 @@ body {
   width: 22px !important;
   height: 22px !important;
 }
+
+/* 备用会话视图（切换对话视图）：深色模式 */
+.workspace[data-theme='dark'] .stage__alternate-card {
+  background: #101620 !important;
+}
+
+.workspace[data-theme='dark'] .conversation-transcript {
+  background: #101620 !important;
+  color: #dce8f8 !important;
+  scrollbar-color: #3a4a61 transparent;
+}
+
+.workspace[data-theme='dark'] .conversation-transcript__empty {
+  color: #7f8da3 !important;
+}
+
+.workspace[data-theme='dark'] .conversation-message__avatar {
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+
+.workspace[data-theme='dark'] .conversation-message--user .conversation-message__avatar {
+  background: #1c3350;
+  color: #8db8ea;
+}
+
+.workspace[data-theme='dark'] .conversation-message--assistant .conversation-message__avatar {
+  background: #2a2547;
+  color: #a99bdf;
+}
+
+.workspace[data-theme='dark'] .conversation-message__meta {
+  color: #8593a8;
+}
+
+.workspace[data-theme='dark'] .conversation-message__role {
+  color: #b3bfd1;
+}
+
+.workspace[data-theme='dark'] .conversation-message__time {
+  color: #74839a;
+}
+
+.workspace[data-theme='dark'] .conversation-message__body {
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  color: #e2ebf8;
+}
+
+.workspace[data-theme='dark'] .conversation-message--user .conversation-message__body {
+  background: #17304d !important;
+}
+
+.workspace[data-theme='dark'] .conversation-message--assistant .conversation-message__body {
+  background: #182131 !important;
+}
+
+.workspace[data-theme='dark'] .conversation-message__body .wmde-markdown code:not(pre code) {
+  background: #22264c;
+  color: #b9c5ff;
+}
