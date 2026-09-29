@@ -1893,6 +1893,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               type="button"
               className={automation?.paused ? 'btn btn--danger' : 'btn'}
               disabled={!automation}
+              title={automation?.paused ? '恢复自动执行：继续把待执行命令下发给终端并自动运行' : '暂停自动执行：保留当前任务进度，暂时停止下发命令和自动运行，可随时恢复'}
               onClick={() => void togglePaused()}
             >
               {automation?.paused ? '已暂停 · 恢复' : '暂停'}
