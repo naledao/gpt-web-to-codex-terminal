@@ -9,8 +9,6 @@ import type {
   EmbedBounds,
   EmbedCommand,
   EmbedState,
-  ExternalAuthNotice,
-  ExternalAuthProvider,
   InterceptorPageEvent,
   InterceptorStatus,
   ParsedCommand,
@@ -189,34 +187,26 @@ function normalizeUrl(input: string): string | null {
 }
 
 /**
- * Keep authentication providers out of the embedded user-agent.
+ * NAVIGATION IS NO LONGER POLICED, and this note is the record of why.
  *
- * OAuth commonly reaches the provider through a server-side redirect rather
- * than a user navigation, so this policy is shared by `will-navigate`,
- * `will-redirect`, and the main-frame branch of `will-frame-navigate`.
+ * The view used to allow only the platform's own hosts (`ChatPlatform.allowedOriginPattern`) and
+ * hand everything else to the system browser. That existed for one reason: to keep third-party
+ * sign-in out of the embedded user-agent, because Google refuses it there (`accounts.google.com`
+ * answers `/v3/signin/rejected` — measured, and recorded beside `EMBED_LOGIN_URL`).
  *
- * Takes the pattern rather than closing over one: two platforms now share this class, and
- * a module-level pattern would silently pin both to the first one constructed.
+ * It was removed because it broke loading outright on claude.ai. Cloudflare's challenge navigates
+ * through `challenges.cloudflare.com`, which was never on any platform's list, so the interstitial
+ * could not complete and the page re-challenged every ~15 seconds forever. A site that cannot load
+ * at all is a worse trade than losing an escape hatch to a sign-in route this repo had already
+ * measured as failing.
+ *
+ * The consequence, stated plainly so nobody has to rediscover it: **a Google sign-in started in
+ * the embedded view now runs to that refusal instead of escaping to a browser that would have
+ * completed it.** Email/OTP sign-in is unaffected, and it is what the ChatGPT platform supports.
+ *
+ * Ordinary outbound links are unchanged — a new window the page asks for still opens in the real
+ * browser (see `openExternalUrl`).
  */
-function isAllowedNavigation(platform: ChatPlatform, url: string): boolean {
-  return platform.allowedOriginPattern.test(url)
-}
-
-function isGoogleAuthUrl(url: string): boolean {
-  try {
-    return new URL(url).hostname.toLowerCase() === 'accounts.google.com'
-  } catch {
-    return false
-  }
-}
-
-function externalAuthProvider(url: string): ExternalAuthProvider | null {
-  try {
-    return new URL(url).hostname.toLowerCase() === 'appleid.apple.com' ? 'apple' : null
-  } catch {
-    return null
-  }
-}
 
 /**
  * Runs inside the embedded page (main world).
@@ -243,8 +233,6 @@ interface ScrapeResult {
 /** Callbacks the embed raises towards the main process. */
 export interface EmbedHandlers {
   onState(state: EmbedState): void
-  /** A third-party OAuth provider was opened in the system browser. */
-  onExternalAuth(notice: ExternalAuthNotice): void
   /** A conversation the page just navigated to (auto-saved). */
   onConversation(conversation: ScrapedConversation): void
   /** Results of a background sidebar scrape. */
@@ -423,14 +411,9 @@ export class ChatGptEmbed {
     const contents = view.webContents
     contents.setUserAgent(process.env.EMBED_USER_AGENT ?? chromeLikeUserAgent())
 
-    // Keep the view pinned to OpenAI properties; everything else is external.
-    // This is also what makes third-party OAuth (accounts.google.com) open in
-    // the system browser, since Google blocks embedded sign-in. OAuth flows
-    // often arrive as a 30x redirect, so `will-navigate` alone is not enough.
+    // Ordinary outbound links — a new window the page asks for — still go to the real browser.
+    // Navigation the page performs ITSELF is no longer policed; see `isAllowedNavigation`.
     const openExternalUrl = (url: string): void => {
-      const provider = externalAuthProvider(url)
-      if (provider) this.handlers.onExternalAuth({ provider, openedAt: Date.now() })
-
       try {
         const parsed = new URL(url)
         console.info(`[embed] opening external navigation: ${parsed.origin}${parsed.pathname}`)
@@ -443,37 +426,9 @@ export class ChatGptEmbed {
       })
     }
 
-    // Anything the page tries to open in a new window goes to the real browser.
     contents.setWindowOpenHandler(({ url }) => {
-      if (isGoogleAuthUrl(url)) {
-        void contents.loadURL(url)
-        return { action: 'deny' }
-      }
       openExternalUrl(url)
       return { action: 'deny' }
-    })
-
-    const openExternalNavigation = (event: Electron.Event, url: string): void => {
-      if (isAllowedNavigation(this.platform, url) || isGoogleAuthUrl(url)) return
-
-      event.preventDefault()
-      openExternalUrl(url)
-    }
-
-    contents.on('will-navigate', (event, url) => {
-      openExternalNavigation(event, url)
-    })
-
-    contents.on('will-redirect', (event, url) => {
-      openExternalNavigation(event, url)
-    })
-
-    contents.on('will-frame-navigate', (details) => {
-      if (details.isMainFrame) {
-        openExternalNavigation(details, details.url)
-      } else if (!isAllowedNavigation(this.platform, details.url) && !isGoogleAuthUrl(details.url)) {
-        details.preventDefault()
-      }
     })
 
     // The injected script reports through console.log, because the page has no

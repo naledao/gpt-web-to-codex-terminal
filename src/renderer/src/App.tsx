@@ -22,7 +22,6 @@ import type {
   ExecutionMode,
   ExecutionRecord,
   ExecutionStatus,
-  ExternalAuthNotice,
   InterceptorStatus,
   SessionImportResult,
   SshHost,
@@ -261,7 +260,6 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
 }
 export default function App({ initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
-  const [externalAuth, setExternalAuth] = useState<ExternalAuthNotice | null>(null)
   /*
    * The site this session is actually showing.
    *
@@ -485,23 +483,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     const timer = window.setInterval(() => setDurationNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [embed.botCheckSince])
-
-  // Third-party OAuth must run in the system browser. Pull the last notice once
-  // as well as subscribing so a redirect that happened before React mounted is
-  // still explained to the user.
-  useEffect(() => {
-    let cancelled = false
-
-    void window.api.getExternalAuthNotice().then((notice) => {
-      if (!cancelled && notice) setExternalAuth(notice)
-    })
-
-    const unsubscribe = window.api.onExternalAuth(setExternalAuth)
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [])
 
   // Embed state is pushed from the main process, but the earliest events fire
   // before React subscribes, so pull the current snapshot first as well.
@@ -748,18 +729,17 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   /**
    * Send the embedded view to the email/OTP sign-in page.
    *
-   * This used to send the embed home, which is not a sign-in route at all: the
-   * button promised email sign-in and did nothing. Email/OTP is the only route that
-   * can complete inside the embedded user-agent, so it is the one the banner must
-   * actually offer.
+   * Email/OTP is the only sign-in route that completes inside the embedded user-agent — Google
+   * refuses third-party OAuth there (measured; recorded beside `EMBED_LOGIN_URL`), and the
+   * navigation allowlist that used to hand those providers to the system browser has been
+   * removed so Cloudflare's challenge can finish. So this is the route worth offering, and it
+   * stays reachable even though the banner that used to advertise it is gone.
    */
   const loginWithEmail = useCallback((): void => {
-    setExternalAuth(null)
     window.api.loginWithEmail()
   }, [])
 
   const openChatgptExternal = useCallback((): void => {
-    setExternalAuth(null)
     window.api.openChatgptExternal()
   }, [])
 
@@ -854,8 +834,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
       setImportingCookieSet(false)
     }
   }, [cookieSetDraft])
-
-  const externalAuthProviderLabel = 'Apple'
 
   const conversationFolders = useMemo(() => {
     const folders = new Map<
@@ -2573,28 +2551,6 @@ ${record.command}`
       </section>
 
       <footer className="statusbar">
-        {externalAuth ? (
-          <div className="auth-notice" role="status">
-            <span className="auth-notice__text">
-              {externalAuthProviderLabel} 登录在内嵌页面里被提供方拒绝（“此浏览器或应用可能不安全”），已改在系统浏览器打开。用邮箱/验证码可以直接在这里登录。
-            </span>
-            <button type="button" className="auth-notice__button" onClick={loginWithEmail}>
-              改用邮箱登录
-            </button>
-            <button type="button" className="auth-notice__button" onClick={openChatgptExternal}>
-              打开浏览器版 ChatGPT
-            </button>
-            <button
-              type="button"
-              className="auth-notice__close"
-              aria-label="关闭登录提示"
-              title="关闭登录提示"
-              onClick={() => setExternalAuth(null)}
-            >
-              ×
-            </button>
-          </div>
-        ) : null}
         {embed.botCheckSince !== null ? (
           /*
             A bot-check interstitial is transient — measured at ~24s on claude.ai from a cold
@@ -2927,6 +2883,25 @@ ${record.command}`
                     <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
                   </div>
                   {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
+                  {/*
+                    The email/OTP sign-in route, which used to be advertised by a status-bar banner.
+                    That banner appeared when a third-party provider was handed to the system
+                    browser, and both it and that escape hatch are gone — the navigation allowlist
+                    was removed so Cloudflare's challenge can finish. Email/OTP is the route that
+                    still completes inside the embedded view, so it gets a plain button here rather
+                    than disappearing with the banner that happened to be its only caller.
+                  */}
+                  <div className="settings-session-row">
+                    <label>登录</label>
+                    <div className="settings-session-actions">
+                      <button type="button" className="settings-outline-btn" onClick={loginWithEmail}>
+                        用邮箱/验证码登录
+                      </button>
+                      <button type="button" className="settings-outline-btn" onClick={openChatgptExternal}>
+                        在系统浏览器打开
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="settings-session-group">

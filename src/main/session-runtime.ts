@@ -16,7 +16,6 @@ import type {
   EmbedCommand,
   EnvironmentInfo,
   ExecutionMode,
-  ExternalAuthNotice,
   ManagedSessionSummary,
   ParsedCommand,
   SshHost,
@@ -184,7 +183,6 @@ export class SessionRuntime {
   readonly ssh: SshManager
 
   window: BrowserWindow | null = null
-  externalAuthNotice: ExternalAuthNotice | null = null
   environment: EnvironmentInfo = { ...FALLBACK_ENVIRONMENT }
   environmentScope: Pick<TerminalNotes, 'scope' | 'hostId' | 'label'> = {
     scope: 'local',
@@ -415,10 +413,6 @@ export class SessionRuntime {
          * the user is looking at.
          */
         if (isActive()) this.options.onEmbedReady?.()
-      },
-      onExternalAuth: (notice) => {
-        this.externalAuthNotice = notice
-        if (isActive()) this.send(IpcChannels.embedExternalAuth, notice)
       },
       onConversation: (conversation) => {
         this.options.store.upsert(conversation, this.currentConversationProject())

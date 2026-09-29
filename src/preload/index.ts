@@ -16,7 +16,6 @@ import type {
   EnvironmentInfo,
   ExecutionMode,
   ExecutionRecord,
-  ExternalAuthNotice,
   InterceptorStatus,
   GitFileDiff,
   GitLogResult,
@@ -117,17 +116,6 @@ const api: AppApi = {
   },
 
   getEmbedState: (): Promise<EmbedState> => ipcRenderer.invoke(IpcChannels.embedGetState),
-
-  getExternalAuthNotice: (): Promise<ExternalAuthNotice | null> =>
-    ipcRenderer.invoke(IpcChannels.embedGetExternalAuth),
-
-  onExternalAuth: (listener: (notice: ExternalAuthNotice) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, notice: ExternalAuthNotice): void => listener(notice)
-    ipcRenderer.on(IpcChannels.embedExternalAuth, handler)
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.embedExternalAuth, handler)
-    }
-  },
 
   loginWithEmail: (): void => {
     ipcRenderer.send(IpcChannels.embedLoginWithEmail)

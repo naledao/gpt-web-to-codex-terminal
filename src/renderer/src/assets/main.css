@@ -3151,6 +3151,8 @@ body {
 .settings-session-row--value label { padding-top:10px; }
 .settings-session-row--value .session-import__value { min-height:72px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 .settings-import-btn { min-height:42px; align-self:start; white-space:nowrap; }
+/* Two buttons sharing the value column of a session row. */
+.settings-session-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .settings-local-note { margin:12px 0 0 180px; color:#8491a5; font-size:12px; }
 .settings-import-message { margin:10px 0 0 180px; color:#66758c; font-size:12px; }
 .settings-import-message--warn { color:#d15c48; }

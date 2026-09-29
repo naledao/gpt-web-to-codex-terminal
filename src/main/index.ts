@@ -25,7 +25,6 @@ import type {
   EmbedState,
   ExecutionMode,
   ExecutionRecord,
-  ExternalAuthNotice,
   GitFileDiff,
   GitLogResult,
   InterceptorStatus,
@@ -918,7 +917,6 @@ function registerIpcHandlers(): void {
   ipcMain.on(IpcChannels.embedCommand, (event, command: EmbedCommand) => runtimeForEvent(event)?.sendEmbedCommand(command))
   ipcMain.on(IpcChannels.embedNavigate, (event, url: string) => runtimeForEvent(event)?.navigateEmbed(String(url)))
   ipcMain.handle(IpcChannels.embedGetState, (event): EmbedState => runtimeForEvent(event)?.embed.getState() ?? EMPTY_EMBED_STATE)
-  ipcMain.handle(IpcChannels.embedGetExternalAuth, (event): ExternalAuthNotice | null => runtimeForEvent(event)?.externalAuthNotice ?? null)
   ipcMain.on(IpcChannels.embedLoginWithEmail, (event) => runtimeForEvent(event)?.embed.navigate(EMBED_LOGIN_URL))
   ipcMain.handle(IpcChannels.embedImportSession, async (event, platformId: string, draft: SessionImportDraft): Promise<SessionImportResult> => {
     const runtime = runtimeForEvent(event)

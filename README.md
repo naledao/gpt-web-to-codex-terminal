@@ -60,7 +60,7 @@ electron-builder.yml   安装包配置
 
 ### 安全边界与已知限制
 
-- 每个嵌入平台使用独立的持久 cookie 分区；只允许平台声明的官方域名留在应用窗口，其他导航交给系统浏览器。
+- 每个嵌入平台使用独立的持久 cookie 分区；页面自身的导航**不再限制域名**（放行 Cloudflare 校验所必需），但页面请求打开新窗口的链接仍交给系统浏览器。
 - 会话导入值只作为一次 IPC 参数写入 cookie，不写入日志或项目文件；它仍然是 bearer credential，应按密码保护。
 - SSH 的交互终端和模型命令通道是两个独立连接；`cd` 等交互输入不会改变模型命令通道的工作目录。
 - 当前 SSH 连接接受未知 host key，尚未提供 `known_hosts` 校验界面；不要把它当作完整的中间人防护。
@@ -130,7 +130,7 @@ electron-builder.yml   Installer configuration
 
 ### Security boundaries and known limits
 
-- Each embedded platform uses a separate persistent cookie partition. Only the platform's declared official domains stay in the app window; other navigations open in the system browser.
+- Each embedded platform uses a separate persistent cookie partition. Navigation the page performs **is no longer restricted by domain** (required for Cloudflare's challenge to complete); links the page asks to open in a new window still go to the system browser.
 - Imported session values are passed through one IPC call and are not written to logs or project files. They are still bearer credentials and must be protected like passwords.
 - The interactive SSH terminal and the model command channel are separate connections, so typing `cd` interactively does not change the model's working directory.
 - Unknown SSH host keys are currently accepted because there is no `known_hosts` UI yet; this is not full man-in-the-middle protection.

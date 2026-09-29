@@ -12,9 +12,10 @@
  *   1. `auth.openai.com/log-in` rendered the email form once and rendered
  *      "你的会话已结束" (no form at all) on a later attempt. Which one you get, and
  *      what the page reports about itself, is logged here.
- *   2. Whether the steps AFTER the email address stay inside the app's navigation
- *      allowlist. If a hop leaves it, the real app would hand that hop to the system
- *      browser and the flow would die there — that is logged as APP-WOULD-BLOCK.
+ *   2. Whether the flow can be driven to a code/password step at all. It used to ask whether the
+ *      hops after the email address stayed inside the app's navigation allowlist — that allowlist
+ *      HAS BEEN REMOVED (Cloudflare's challenge needs to reach `challenges.cloudflare.com`, which
+ *      was never on it), so every hop is allowed and the question is now only about the page.
  *
  * Run (from the repo root, PowerShell):
  *
@@ -61,14 +62,18 @@ function log(...parts) {
 const shorten = (url, max = 200) => String(url).slice(0, max)
 
 /**
- * The app's own allowlist, copied verbatim from src/main/embed.ts.
+ * THE APP NO LONGER POLICES NAVIGATION, so this probe's central question is obsolete.
  *
- * Duplicated on purpose so this probe can say whether the REAL app would have kept
- * each hop inside the embed. Keep it in sync when that regex changes, or the
- * verdict becomes a lie.
+ * It used to copy the app's allowlist verbatim and answer "would the real app have kept this hop
+ * inside the embed?". That allowlist is GONE — removed because Cloudflare's challenge navigates
+ * through `challenges.cloudflare.com`, which was never on any platform's list, so a protected site
+ * could not finish loading at all. Every hop is now allowed, and the app only hands a link to the
+ * system browser when the page explicitly asks for a NEW WINDOW.
+ *
+ * The constant and the hop labelling are kept, rather than deleted, so the log still shows which
+ * hosts the flow visits — that is still worth knowing. What is no longer true is any claim that a
+ * host outside it would be blocked: `APP-WOULD-BLOCK` can no longer occur.
  */
-const APP_ALLOWLIST =
-  /^https:\/\/([a-z0-9-]+\.)*(chatgpt\.com|openai\.com|oaistatic\.com|oaiusercontent\.com)(\/|$)/i
 
 const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
@@ -78,16 +83,10 @@ const hops = []
 let lastDescription = null
 
 function noteHop(kind, url) {
-  const allowed = APP_ALLOWLIST.test(url)
+  // Every hop is allowed now; the kind/url are still logged because they show where the flow goes.
+  const allowed = true
   hops.push({ kind, url, allowed, at: Date.now() })
   log(`${kind} ${allowed ? 'APP-ALLOWS' : 'APP-WOULD-BLOCK'} ${shorten(url, 220)}`)
-  if (!allowed) {
-    try {
-      log(`  ^ host ${new URL(url).hostname} is NOT in the embed allowlist -> the real app sends this to the system browser`)
-    } catch {
-      /* ignore */
-    }
-  }
 }
 
 /** Everything the page is willing to say about itself. */
@@ -211,10 +210,11 @@ app.whenReady().then(async () => {
 
   // The app denies new windows and opens the system browser instead. Same decision
   // here, but recorded instead of launched — that difference is what makes the log
-  // readable.
+  // readable. This is now the ONLY case where the app hands a URL out, so a popup here
+  // does mean the real app would call shell.openExternal.
   wc.setWindowOpenHandler(({ url, disposition }) => {
     log(`WINDOW-OPEN REQUEST [${disposition}] ${shorten(url, 220)}`)
-    if (!APP_ALLOWLIST.test(url)) log('  ^ popup to a non-allowlisted host -> real app would call shell.openExternal')
+    log('  ^ the app denies new windows and opens the system browser for this URL')
     return { action: 'deny' }
   })
 
@@ -239,23 +239,17 @@ app.whenReady().then(async () => {
       log(`  ${hop.allowed ? 'allow' : 'BLOCK'} ${hop.kind} ${shorten(hop.url, 150)}`)
     }
 
-    const blocked = hops.filter((h) => !h.allowed)
-    if (blocked.length > 0) {
-      const hosts = [...new Set(blocked.map((h) => {
-        try {
-          return new URL(h.url).hostname
-        } catch {
-          return h.url
-        }
-      }))]
-      log('VERDICT: the email flow leaves the allowlist at', JSON.stringify(hosts))
-      log('VERDICT: those hops would be handed to the system browser by the real app -> fix the allowlist or the entry point.')
-    } else if (lastDescription?.sessionEnded) {
-      log('VERDICT: page rendered the "session ended" dead end — no form. Not an allowlist problem.')
+    /*
+     * The "flow leaves the allowlist" verdict is gone with the allowlist. Every hop is allowed
+     * now, so the remaining outcomes are all about what the PAGE did, which is also the more
+     * useful question: whether the email route can be completed at all.
+     */
+    if (lastDescription?.sessionEnded) {
+      log('VERDICT: page rendered the "session ended" dead end — no form.')
     } else if (lastDescription?.cloudflare) {
-      log('VERDICT: blocked by a Cloudflare interstitial, not by policy.')
+      log('VERDICT: parked on a Cloudflare interstitial. The app waits this out (~24s measured) rather than treating it as a failure.')
     } else if (lastDescription?.codeField || lastDescription?.passwordField) {
-      log('VERDICT: the flow reached a code/password step inside the allowlist -> the email route is usable.')
+      log('VERDICT: the flow reached a code/password step -> the email route is usable.')
     } else if (lastDescription?.emailField) {
       log('VERDICT: stopped at the email form (flow not driven to the end).')
     } else {

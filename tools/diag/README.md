@@ -86,9 +86,11 @@ It answers two open questions in one run:
 1. `auth.openai.com/log-in` rendered the email form on one attempt and
    **“你的会话已结束”, with no form at all**, on a later one. Which one you get, and
    what the page says about itself, is logged.
-2. Whether the steps **after** the email address stay inside the app's navigation
-   allowlist. A hop that leaves it is logged `APP-WOULD-BLOCK` — in the real app that
-   hop goes to the system browser and the flow dies there.
+2. Whether the flow can be driven to a code/password step at all. This used to ask whether the
+   hops after the email address stayed inside the app's **navigation allowlist** — that allowlist
+   has since been **removed** (Cloudflare's challenge needs `challenges.cloudflare.com`, which was
+   never on it, so a protected site could not finish loading), so every hop is allowed now and the
+   question is only about the page.
 
 **Run (from the repo root, PowerShell):**
 
@@ -109,17 +111,20 @@ logs the app in. Log: `%TEMP%\gpt-login-diag\email-login-<timestamp>.log`
 
 | Line | Meaning |
 | --- | --- |
-| `START/NAV/IN-PAGE APP-ALLOWS` | hop stays inside the embed allowlist |
-| `START/NAV/IN-PAGE APP-WOULD-BLOCK` | **the real app would push this hop to the system browser** — flow dies here |
+| `START/NAV/IN-PAGE APP-ALLOWS` | a hop, with its host. **Always** `APP-ALLOWS` now — see below |
 | `INITIAL` / `AFTER-NAV` / `TICK` | URL, title, which fields exist (`email=/code=/password=/phone=`), visible text |
-| `sessionEnded=true` | the “你的会话已结束” dead end — a page state, not an allowlist problem |
-| `cloudflare=true` | a Cloudflare interstitial, not a policy refusal |
+| `sessionEnded=true` | the “你的会话已结束” dead end — a page state |
+| `cloudflare=true` | a Cloudflare interstitial; the app waits it out (~24s measured) |
 | `WINDOW-OPEN REQUEST` | a popup was requested; denied and recorded, never launched |
 | `BEFORE/AFTER COOKIES` | cookie **names and lengths only** |
 | `VERDICT:` | the summary, written when the window closes |
 
-The allowlist is duplicated in the probe on purpose, so it can judge hops the way the
-real app would. **Keep it in sync** when `ALLOWED_NAVIGATION` changes.
+**`APP-WOULD-BLOCK` can no longer appear.** The probe used to duplicate the app's navigation
+allowlist so it could judge hops the way the real app would; that allowlist is gone (Cloudflare's
+challenge needs `challenges.cloudflare.com`, which was never on it), so every hop is allowed and
+the label is now always `APP-ALLOWS`. The hop lines are kept because they still show which hosts
+the flow visits. The only case left where the app hands a URL out is `WINDOW-OPEN REQUEST` — a page
+asking for a **new window** — and that is unchanged.
 
 ## reset-session-urls.mjs
 
