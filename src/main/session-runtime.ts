@@ -38,6 +38,43 @@ const SETTING_EXECUTION_MODE = 'executionMode'
 const SETTING_LOCAL_NOTES = 'localTerminalNotes'
 
 /**
+ * Whether a URL is worth storing as a session's location.
+ *
+ * A DENYLIST rather than an allowlist: sites add routes constantly, and an allowlist would make a
+ * session with a novel-but-valid URL silently reopen at the home page. The cost of getting a
+ * denylist wrong is only that a dead end opens somewhere useless — which is what it was doing
+ * anyway.
+ *
+ * Two families are excluded, both redirects that a restart must never re-enter:
+ *
+ *   - **Auth dead ends.** `reauth=1` is an explicit "log out and start over" request, so loading
+ *     it puts the app back into the auth flow — and Cloudflare re-challenges the protected auth
+ *     host — every single launch. Measured on claude.ai: the session row held exactly such a URL
+ *     and could never get past the challenge, while the same challenge cleared in ~24s when the
+ *     page was entered at its normal URL.
+ *   - **Bot-check interstitials.** `__cf_chl_` links are single-use and expire in minutes; a URL
+ *     holding one is guaranteed to be stale by the next start.
+ */
+function isRestorableUrl(raw: string): boolean {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  if (/[?&]reauth=/.test(url.search)) return false
+  if (url.searchParams.has('__cf_chl_tk') || url.searchParams.has('__cf_chl_rt_tk')) return false
+  /*
+   * `log-?in` / `log-?out` rather than the bare words, because the hyphenated spellings are
+   * exactly the ones in use: OpenAI's sign-in page is `auth.openai.com/log-in`, and a first
+   * version of this test asserted on it and failed. Cheap to cover both; the alternative is
+   * discovering the hyphen one host at a time.
+   */
+  if (/^\/(log-?in|log-?out|sign-?in|sign-?up|register|auth)(\/|$)/i.test(url.pathname)) return false
+  return true
+}
+
+/**
  * One platform's embedded view plus the state that must survive being hidden.
  *
  * `conversationId` and `url` are per-platform because each site has its own notion of "where
@@ -332,7 +369,20 @@ export class SessionRuntime {
     return {
       onState: (state) => {
         const entry = record()
-        if (state.url !== '') entry.url = state.url
+        /*
+         * Remember the URL ONLY when it is one a restart should reopen.
+         *
+         * This used to store any non-empty URL, and that is how a session got stuck: claude.ai
+         * redirected through an involuntary logout to
+         * `/login?from=logout&reauth=1&returnTo=%2Fnew%3F`, that URL was written to the session
+         * row, and every later start loaded it again. Loading a `reauth=1` URL asks the site to
+         * log out and start over — so the app re-entered the auth flow (and its Cloudflare
+         * challenge) on every launch instead of entering at the clean URL a probe used, where the
+         * same challenge cleared in ~24 seconds.
+         *
+         * A persisted URL is a promise that reopening it is useful. A redirect dead end is not.
+         */
+        if (state.url !== '' && isRestorableUrl(state.url)) entry.url = state.url
 
         /*
          * Only the visible view drives the UI. A background platform keeps its own state

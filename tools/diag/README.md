@@ -121,6 +121,47 @@ logs the app in. Log: `%TEMP%\gpt-login-diag\email-login-<timestamp>.log`
 The allowlist is duplicated in the probe on purpose, so it can judge hops the way the
 real app would. **Keep it in sync** when `ALLOWED_NAVIGATION` changes.
 
+## reset-session-urls.mjs
+
+**The question this answers: "why does this session keep landing on a login page?"**
+
+A session's URL is persisted so a restart reopens where you were — which is wrong when the site
+redirected through something a restart must not re-enter. On claude.ai the row held
+
+```
+https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F
+```
+
+and `reauth=1` is an explicit "log out and start over". Loading it put the app back into the auth
+flow — behind Cloudflare — on **every** launch, so it could never reach the page a probe entered
+directly, where the same challenge cleared in ~24 seconds. The session looked permanently broken
+while the site was fine.
+
+**Run (from the repo root, with the app CLOSED):**
+
+```powershell
+node --experimental-sqlite tools\diag\reset-session-urls.mjs            # report only
+node --experimental-sqlite tools\diag\reset-session-urls.mjs --apply    # write
+```
+
+```
+[reset] sessions: 1, needing repair: 1
+
+  bba4ffab  claude
+      was: https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F
+      ->   https://claude.ai/new
+
+[reset] dry run — nothing written. Re-run with --apply to write.
+```
+
+- **Dry run by default.** Check the list before writing; it names the exact URLs it would replace.
+- Only the `url` column changes. Titles, conversations, terminal cwd and SSH state are untouched,
+  so a session keeps its identity.
+- The rule that stops this recurring lives in `isRestorableUrl` (`src/main/session-runtime.ts`).
+  The check in this script is a **copy** of it, because a `.mjs` diagnostic cannot import the
+  app's TypeScript. **Keep the two in sync** — otherwise this starts flagging sessions the app
+  considers fine.
+
 ## clear-cloudflare-state.mjs
 
 **The question this answers: "it works now — how do I get the challenge back?"**
