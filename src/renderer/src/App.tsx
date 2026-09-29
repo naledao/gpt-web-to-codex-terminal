@@ -116,6 +116,18 @@ function statusTone(status: ExecutionStatus): string {
   return 'badge'
 }
 
+function formatTerminalCommand(text: string, remote: boolean): string {
+  if (!remote) return `> ${text}`
+  return /(?:^|\s)[$#]\s+\S/.test(text) ? text : `$ ${text}`
+}
+
+type TerminalTranscriptLine = TerminalState['lines'][number]
+
+interface TerminalTranscriptBlock {
+  command: TerminalTranscriptLine | null
+  lines: TerminalTranscriptLine[]
+}
+
 function displayTitle(conversation: Conversation): string {
   if (conversation.title.trim() !== '') return conversation.title
   return `未命名对话 · ${conversation.id.slice(0, 8)}`
@@ -461,6 +473,22 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     if (!conversationId) return ''
     return conversations.find((conversation) => conversation.id === conversationId)?.goal?.trim() ?? ''
   }, [conversations, conversationId])
+
+  const visibleTerminalLines = sshActive ? ssh?.lines ?? [] : terminal?.lines ?? []
+  const terminalBlocks = useMemo<TerminalTranscriptBlock[]>(() => {
+    const lines = sshActive ? ssh?.lines ?? [] : terminal?.lines ?? []
+    const blocks: TerminalTranscriptBlock[] = []
+
+    for (const line of lines) {
+      if (line.kind === 'command' || blocks.length === 0) {
+        blocks.push(line.kind === 'command' ? { command: line, lines: [] } : { command: null, lines: [line] })
+      } else {
+        blocks[blocks.length - 1].lines.push(line)
+      }
+    }
+
+    return blocks
+  }, [sshActive, ssh?.lines, terminal?.lines])
 
   useEffect(() => {
     if (interceptor?.taskStartedAt == null || interceptor.taskFinishedAt != null) return
@@ -2497,31 +2525,39 @@ ${record.command}`
             ) : null}
 
             <div className="terminal-pane__output" ref={terminalOutputRef}>
-              {sshActive ? (
-                (ssh?.lines.length ?? 0) === 0 ? (
-                  <p className="terminal-pane__empty">{ssh?.message || '正在连接…'}</p>
-                ) : (
-                  ssh?.lines.map((line, index) => (
-                    <pre key={index} className={`line line--${line.kind}`}>
-                      {line.kind === 'command' ? `$ ${line.text}` : line.text}
-                    </pre>
-                  ))
-                )
-              ) : (terminal?.lines.length ?? 0) === 0 ? (
+              {visibleTerminalLines.length === 0 ? (
                 <p className="terminal-pane__empty">
-                  还没有输出。在下面直接输入命令，或让模型在这里执行。
+                  {sshActive ? ssh?.message || '正在连接…' : '还没有输出。在下面直接输入命令，或让模型在这里执行。'}
                 </p>
               ) : (
-                terminal?.lines.map((line, index) => (
-                  <pre key={index} className={`line line--${line.kind}`}>
-                    {line.kind === 'command' ? `> ${line.text}` : line.text}
-                  </pre>
+                terminalBlocks.map((block, blockIndex) => (
+                  <div
+                    key={`${blockIndex}-${block.command?.text ?? 'system'}`}
+                    className={block.command ? 'terminal-entry' : 'terminal-entry terminal-entry--system'}
+                  >
+                    {block.command ? (
+                      <pre className="line line--command">
+                        {formatTerminalCommand(block.command.text, sshActive)}
+                      </pre>
+                    ) : null}
+                    {block.lines.length > 0 ? (
+                      <div className="terminal-entry__body">
+                        {block.lines.map((line, lineIndex) => (
+                          <pre key={`${blockIndex}-${lineIndex}-${line.kind}`} className={`line line--${line.kind}`}>
+                            {line.text}
+                          </pre>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 ))
               )}
             </div>
 
-            <form className="terminal-pane__input" onSubmit={submitCommand}>
-              <span className="terminal-pane__prompt" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg></span>
+            <form className={sshActive ? 'terminal-pane__input terminal-pane__input--ssh' : 'terminal-pane__input'} onSubmit={submitCommand}>
+              <span className={sshActive ? 'terminal-pane__prompt terminal-pane__prompt--ssh' : 'terminal-pane__prompt'} aria-hidden="true">
+                {sshActive ? '$' : <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>}
+              </span>
               <input
                 className="address__input"
                 value={commandDraft}

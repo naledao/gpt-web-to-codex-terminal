@@ -575,6 +575,19 @@ const OUTPUT_FORMAT_SECTION = [
   '目标满足且完成必要验证后结束；不输出 JSON，第一行写【任务完成】，随后用中文简述完成内容、验证结果和注意事项。'
 ].join('\n')
 
+/**
+ * Guidance for work that outlives one terminal command. The runner only knows
+ * about one command at a time, so the model must create the durable background
+ * process first and then observe it with bounded, spaced checks instead of
+ * holding the interactive shell open or starting the same work repeatedly.
+ */
+const LONG_TASK_SECTION = [
+  '【长任务与后台监控】',
+  '预计 >2 分钟、持续输出、等待外部事件，或须跨终端运行的任务：先启动不依赖当前终端生命周期的后台任务，记录 PID/任务名、日志路径、完成/失败标记；stdout/stderr 必须落盘。',
+  '启动只执行一次；之后用只读、可重复、有界命令按 10–30 秒（重任务 30–60 秒）间隔检查进程、退出状态、标记和新增日志。可在单次命令中使用一次有界的 Start-Sleep/sleep；禁止 busy-loop、无限循环和无输出重启。',
+  '仍在运行则继续按间隔监控；完成、失败、超时或进程消失即停止，并报告状态、日志、产物和验证结果。仅需 stdin/TTY 的明确交互任务可前台运行。'
+].join('\n')
+
 /** Keep terminal mode from turning every kind of request into a shell command. */
 const TASK_ROUTING_SECTION = [
   '【任务路由】',
@@ -662,6 +675,8 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
     '',
     OUTPUT_FORMAT_SECTION,
     '',
+    LONG_TASK_SECTION,
+    '',
     ASK_USER_SECTION,
     '',
     '【执行环境】',
@@ -713,6 +728,8 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
     TASK_ROUTING_SECTION,
     '',
     OUTPUT_FORMAT_SECTION,
+    '',
+    LONG_TASK_SECTION,
     '',
     ASK_USER_SECTION,
     '',

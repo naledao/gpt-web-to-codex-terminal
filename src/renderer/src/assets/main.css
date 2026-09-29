@@ -1098,38 +1098,91 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 12px;
+  padding: 8px 12px 12px;
   user-select: text;
 }
 
+.terminal-entry {
+  margin: 10px 0 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.terminal-entry--system {
+  margin-top: 8px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.terminal-entry__body {
+  margin: 6px 0 0 10px;
+  padding-left: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+}
+
+.terminal-entry--system .terminal-entry__body {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
 .terminal-pane__empty {
-  margin: 0;
+  margin: 12px 0 0;
   color: var(--text-muted);
   font-size: 12px;
 }
 
 .line {
-  margin: 0 0 2px;
+  margin: 0;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11.5px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .line--command {
+  padding: 8px 10px;
+  border: 1px solid rgba(109, 149, 255, .24);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(109, 149, 255, .08);
   color: #a8c7ff;
+  font-weight: 600;
+}
+
+.line--command::before {
+  content: '命令';
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .08em;
 }
 
 .line--output {
+  padding: 2px 0 4px;
   color: var(--text);
 }
 
 .line--notice {
+  margin-top: 5px;
+  padding: 5px 9px;
+  border: 1px solid rgba(63, 185, 80, .2);
+  border-radius: 6px;
+  background: rgba(63, 185, 80, .08);
   color: var(--ok);
 }
 
 .line--error {
+  margin-top: 5px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 107, 107, .24);
+  border-radius: 6px;
+  background: rgba(255, 107, 107, .08);
   color: var(--danger);
 }
 
@@ -1149,6 +1202,13 @@ body {
   justify-content: center;
   flex: none;
   color: var(--accent);
+}
+
+.terminal-pane__prompt--ssh {
+  width: 30px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 /* ---------------- pending command strip ---------------- */
@@ -11359,4 +11419,393 @@ body {
 .workspace[data-theme='dark'] .conversation-message__body .wmde-markdown code:not(pre code) {
   background: #22264c;
   color: #b9c5ff;
+}
+
+/* ---------------- pure-black dark appearance ----------------
+ * Keep the existing blue accent and semantic status colours, but remove the
+ * blue cast from every neutral surface. This is the final pass so it wins over
+ * the earlier reference-theme refinements above.
+ */
+.workspace[data-theme='dark'] {
+  --bg: #000;
+  --bg-elevated: #080808;
+  --bg-chrome: #050505;
+  --border: #272727;
+  --text: #f2f2f2;
+  --text-muted: #a0a0a0;
+  background: #000 !important;
+  color: #f2f2f2 !important;
+}
+
+.workspace[data-theme='dark'] .workspace__nav,
+.workspace[data-theme='dark'] .workspace__transferbar,
+.workspace[data-theme='dark'] .workspace__content,
+.workspace[data-theme='dark'] .app,
+.workspace[data-theme='dark'] .topbar,
+.workspace[data-theme='dark'] .panel,
+.workspace[data-theme='dark'] .terminal-pane,
+.workspace[data-theme='dark'] .stage,
+.workspace[data-theme='dark'] .statusbar {
+  background: #000 !important;
+  border-color: #272727 !important;
+  color: #f2f2f2 !important;
+}
+
+.workspace[data-theme='dark'] .workspace__content,
+.workspace[data-theme='dark'] .stage,
+.workspace[data-theme='dark'] .manager-page {
+  background: #000 !important;
+}
+
+.workspace[data-theme='dark'] .workspace__sessions,
+.workspace[data-theme='dark'] .workspace__sessions::before,
+.workspace[data-theme='dark'] .workspace__brand,
+.workspace[data-theme='dark'] .workspace__nav-label,
+.workspace[data-theme='dark'] .terminal-controls,
+.workspace[data-theme='dark'] .terminal-pane__head,
+.workspace[data-theme='dark'] .terminal-pane__meta,
+.workspace[data-theme='dark'] .panel__head,
+.workspace[data-theme='dark'] .panel__collapse-head,
+.workspace[data-theme='dark'] .terminal-pane__input,
+.workspace[data-theme='dark'] .panel__list,
+.workspace[data-theme='dark'] .terminal-pane__output {
+  background: #080808 !important;
+  border-color: #272727 !important;
+}
+
+.workspace[data-theme='dark'] .workspace__session,
+.workspace[data-theme='dark'] .conversation-folder,
+.workspace[data-theme='dark'] .conversation,
+.workspace[data-theme='dark'] .current,
+.workspace[data-theme='dark'] .pending,
+.workspace[data-theme='dark'] .pending__item,
+.workspace[data-theme='dark'] .terminal,
+.workspace[data-theme='dark'] .ssh-list__item,
+.workspace[data-theme='dark'] .ssh-download,
+.workspace[data-theme='dark'] .transfer-item {
+  background: #0b0b0b !important;
+  border-color: #292929 !important;
+}
+
+.workspace[data-theme='dark'] .workspace__session:hover,
+.workspace[data-theme='dark'] .workspace__session--active,
+.workspace[data-theme='dark'] .conversation:hover,
+.workspace[data-theme='dark'] .conversation--active,
+.workspace[data-theme='dark'] .conversation-folder__head:hover,
+.workspace[data-theme='dark'] .ssh-list__item:hover,
+.workspace[data-theme='dark'] .ssh-list__item--active,
+.workspace[data-theme='dark'] .model-picker__option:hover {
+  background: #171717 !important;
+  border-color: #3a3a3a !important;
+}
+
+.workspace[data-theme='dark'] .conversation-folder__head,
+.workspace[data-theme='dark'] .current__head,
+.workspace[data-theme='dark'] .pending__item,
+.workspace[data-theme='dark'] .terminal__count,
+.workspace[data-theme='dark'] .badge,
+.workspace[data-theme='dark'] .mode,
+.workspace[data-theme='dark'] .mode__item,
+.workspace[data-theme='dark'] .panel__delay,
+.workspace[data-theme='dark'] .panel__sync {
+  background: #121212 !important;
+  border-color: #303030 !important;
+}
+
+.workspace[data-theme='dark'] .current__command,
+.workspace[data-theme='dark'] .terminal-pane__cwd,
+.workspace[data-theme='dark'] .terminal-pane__cwd-input,
+.workspace[data-theme='dark'] .terminal-pane__input .address__input,
+.workspace[data-theme='dark'] .address__input,
+.workspace[data-theme='dark'] .workspace__session-rename input,
+.workspace[data-theme='dark'] .settings-input,
+.workspace[data-theme='dark'] .settings-theme-select,
+.workspace[data-theme='dark'] .ssh-connect__input,
+.workspace[data-theme='dark'] .prompt-modal__search input {
+  background: #030303 !important;
+  border-color: #353535 !important;
+  color: #f2f2f2 !important;
+}
+
+.workspace[data-theme='dark'] .current__command,
+.workspace[data-theme='dark'] .terminal-pane__cwd:hover,
+.workspace[data-theme='dark'] .panel__sync--on,
+.workspace[data-theme='dark'] .mode__item--on,
+.workspace[data-theme='dark'] .mode__item--on:hover:not(:disabled) {
+  background: #1b1b1b !important;
+  border-color: #555 !important;
+}
+
+.workspace[data-theme='dark'] .workspace__new-session,
+.workspace[data-theme='dark'] .workspace__nav-collapse,
+.workspace[data-theme='dark'] .panel__collapse-button,
+.workspace[data-theme='dark'] .toolbar button,
+.workspace[data-theme='dark'] .settings-copy,
+.workspace[data-theme='dark'] .settings-modal__close,
+.workspace[data-theme='dark'] .transfer-modal__close,
+.workspace[data-theme='dark'] .ssh-connect__close,
+.workspace[data-theme='dark'] .ssh-files-modal__close {
+  background: #101010 !important;
+  border-color: #353535 !important;
+  color: #d6d6d6 !important;
+}
+
+.workspace[data-theme='dark'] .workspace__new-session:hover,
+.workspace[data-theme='dark'] .workspace__nav-collapse:hover,
+.workspace[data-theme='dark'] .panel__collapse-button:hover,
+.workspace[data-theme='dark'] .toolbar button:hover:not(:disabled),
+.workspace[data-theme='dark'] .settings-copy:hover:not(:disabled),
+.workspace[data-theme='dark'] .settings-modal__close:hover,
+.workspace[data-theme='dark'] .transfer-modal__close:hover,
+.workspace[data-theme='dark'] .ssh-connect__close:hover,
+.workspace[data-theme='dark'] .ssh-files-modal__close:hover {
+  background: #1c1c1c !important;
+  border-color: #5a5a5a !important;
+}
+
+.workspace[data-theme='dark'] .terminal__count,
+.workspace[data-theme='dark'] .terminal__count--time,
+.workspace[data-theme='dark'] .terminal__count--warn,
+.workspace[data-theme='dark'] .statusbar__id,
+.workspace[data-theme='dark'] .statusbar__mode,
+.workspace[data-theme='dark'] .statusbar__remote {
+  background: #151515 !important;
+  border-color: #3d3d3d !important;
+}
+
+.workspace[data-theme='dark'] .modal,
+.workspace[data-theme='dark'] .confirm-dialog,
+.workspace[data-theme='dark'] .new-session-modal,
+.workspace[data-theme='dark'] .modal--notes,
+.workspace[data-theme='dark'] .modal--prompt,
+.workspace[data-theme='dark'] .ssh-connect-overlay,
+.workspace[data-theme='dark'] .modal--ssh-files,
+.workspace[data-theme='dark'] .transfer-modal,
+.workspace[data-theme='dark'] .git-dialog {
+  background: rgba(0, 0, 0, .78) !important;
+}
+
+.workspace[data-theme='dark'] .settings-modal,
+.workspace[data-theme='dark'] .new-session-modal__box,
+.workspace[data-theme='dark'] .transfer-modal__box,
+.workspace[data-theme='dark'] .ssh-connect-modal,
+.workspace[data-theme='dark'] .notes-modal,
+.workspace[data-theme='dark'] .prompt-modal,
+.workspace[data-theme='dark'] .confirm-dialog__box,
+.workspace[data-theme='dark'] .git-dialog__box,
+.workspace[data-theme='dark'] .ssh-files-modal {
+  background: #080808 !important;
+  border-color: #2d2d2d !important;
+  color: #f2f2f2 !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .65) !important;
+}
+
+.workspace[data-theme='dark'] .settings-modal__head,
+.workspace[data-theme='dark'] .settings-modal__body,
+.workspace[data-theme='dark'] .settings-modal__foot,
+.workspace[data-theme='dark'] .settings-card,
+.workspace[data-theme='dark'] .new-session-modal__header,
+.workspace[data-theme='dark'] .new-session-modal__footer,
+.workspace[data-theme='dark'] .transfer-modal__head,
+.workspace[data-theme='dark'] .ssh-connect__head,
+.workspace[data-theme='dark'] .ssh-connect__sidebar,
+.workspace[data-theme='dark'] .ssh-connect__form,
+.workspace[data-theme='dark'] .ssh-connect__foot,
+.workspace[data-theme='dark'] .notes-modal__head,
+.workspace[data-theme='dark'] .notes-modal__editor-wrap,
+.workspace[data-theme='dark'] .notes-modal__foot,
+.workspace[data-theme='dark'] .prompt-modal__head,
+.workspace[data-theme='dark'] .prompt-modal__search,
+.workspace[data-theme='dark'] .ssh-files-modal__head,
+.workspace[data-theme='dark'] .confirm-dialog__foot {
+  background: #080808 !important;
+  border-color: #292929 !important;
+}
+
+.workspace[data-theme='dark'] .settings-card,
+.workspace[data-theme='dark'] .transfer-card,
+.workspace[data-theme='dark'] .manager-card,
+.workspace[data-theme='dark'] .manager-table__row,
+.workspace[data-theme='dark'] .manager-empty,
+.workspace[data-theme='dark'] .ssh-connect__advanced,
+.workspace[data-theme='dark'] .confirm-dialog__items {
+  background: #0b0b0b !important;
+  border-color: #292929 !important;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__option,
+.workspace[data-theme='dark'] .new-session-modal__option--local,
+.workspace[data-theme='dark'] .settings-outline-btn,
+.workspace[data-theme='dark'] .settings-cancel-btn,
+.workspace[data-theme='dark'] .ssh-connect__new,
+.workspace[data-theme='dark'] .ssh-connect__cancel,
+.workspace[data-theme='dark'] .manager-action,
+.workspace[data-theme='dark'] .manager-rename button,
+.workspace[data-theme='dark'] .manager-rename__input,
+.workspace[data-theme='dark'] .notes-modal__preview-toggle,
+.workspace[data-theme='dark'] .notes-modal__button,
+.workspace[data-theme='dark'] .prompt-modal__action {
+  background: #101010 !important;
+  border-color: #3d3d3d !important;
+  color: #e0e0e0 !important;
+}
+
+.workspace[data-theme='dark'] .new-session-modal__option:hover,
+.workspace[data-theme='dark'] .new-session-modal__option--local:hover,
+.workspace[data-theme='dark'] .settings-outline-btn:hover:not(:disabled),
+.workspace[data-theme='dark'] .settings-cancel-btn:hover,
+.workspace[data-theme='dark'] .ssh-connect__new:hover,
+.workspace[data-theme='dark'] .ssh-connect__cancel:hover,
+.workspace[data-theme='dark'] .manager-action:hover:not(:disabled),
+.workspace[data-theme='dark'] .manager-rename button:hover:not(:disabled),
+.workspace[data-theme='dark'] .notes-modal__preview-toggle:hover,
+.workspace[data-theme='dark'] .notes-modal__preview-toggle--on,
+.workspace[data-theme='dark'] .notes-modal__button:hover:not(:disabled),
+.workspace[data-theme='dark'] .prompt-modal__action:hover,
+.workspace[data-theme='dark'] .prompt-modal__action--active {
+  background: #1c1c1c !important;
+  border-color: #5a5a5a !important;
+}
+
+.workspace[data-theme='dark'] .notes-modal .w-md-editor,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-toolbar,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-content,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-area,
+.workspace[data-theme='dark'] .notes-modal .w-md-editor-preview,
+.workspace[data-theme='dark'] .notes-modal .wmde-markdown,
+.workspace[data-theme='dark'] .prompt-modal__body,
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown,
+.workspace[data-theme='dark'] .prompt-modal__body .wmde-markdown pre {
+  background: #000 !important;
+  color: #e8e8e8 !important;
+}
+
+.workspace[data-theme='dark'] .ssh-files-modal,
+.workspace[data-theme='dark'] .ssh-files-modal__head,
+.workspace[data-theme='dark'] .ssh-files,
+.workspace[data-theme='dark'] .ssh-files__browser,
+.workspace[data-theme='dark'] .ssh-files__browser > *,
+.workspace[data-theme='dark'] .ssh-files__reference-table,
+.workspace[data-theme='dark'] .ssh-files__table-row,
+.workspace[data-theme='dark'] .ssh-files__crumbs {
+  background: #000 !important;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-head,
+.workspace[data-theme='dark'] .ssh-files__view-modes,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-sidebar,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-wrapper,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-tree,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-content-wrapper,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-content-item,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-content-item-fit,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-list,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-table,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-filemanager,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-toolbar,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-row {
+  background: #080808 !important;
+  border-color: #292929 !important;
+}
+
+.workspace[data-theme='dark'] .ssh-files__table-row:hover,
+.workspace[data-theme='dark'] .ssh-files__view-modes button:hover,
+.workspace[data-theme='dark'] .ssh-files__sidebar-action:hover,
+.workspace[data-theme='dark'] .ssh-files__table-more:hover,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-folder:hover,
+.workspace[data-theme='dark'] .ssh-files__browser .wx-row:hover {
+  background: #181818 !important;
+}
+
+.workspace[data-theme='dark'] .git-dialog--dark .git-dialog__box,
+.workspace[data-theme='dark'] .git-dialog--dark .gitfiles,
+.workspace[data-theme='dark'] .git-dialog--dark .gitdiff__body,
+.workspace[data-theme='dark'] .git-dialog--dark .gitdiff__line {
+  background: #000 !important;
+}
+
+.workspace[data-theme='dark'] .git-dialog--dark .git-dialog__head,
+.workspace[data-theme='dark'] .git-dialog--dark .gitlog__columns,
+.workspace[data-theme='dark'] .git-dialog--dark .gitfiles__pane,
+.workspace[data-theme='dark'] .git-dialog--dark .gitdiff__head,
+.workspace[data-theme='dark'] .git-dialog--dark .git-dialog__tabs,
+.workspace[data-theme='dark'] .git-dialog--dark .gitfiles__chip,
+.workspace[data-theme='dark'] .git-dialog--dark .gitdiff__modes {
+  background: #0a0a0a !important;
+  border-color: #292929 !important;
+}
+
+.workspace[data-theme='dark'] .git-dialog--dark .gitlog__row,
+.workspace[data-theme='dark'] .git-dialog--dark .gitfiles__row,
+.workspace[data-theme='dark'] .git-dialog--dark .gitdiff__hunk-head {
+  background: #0d0d0d !important;
+  border-color: #292929 !important;
+}
+
+.workspace[data-theme='dark'] .git-dialog--dark .gitlog__row:hover,
+.workspace[data-theme='dark'] .git-dialog--dark .gitfiles__row:hover,
+.workspace[data-theme='dark'] .git-dialog--dark .gitfiles__row--on,
+.workspace[data-theme='dark'] .git-dialog--dark .gitdiff__mode:hover {
+  background: #1a1a1a !important;
+}
+
+.workspace[data-theme='dark'] .manager-table__head {
+  background: #0a0a0a !important;
+  border-color: #292929 !important;
+}
+
+.workspace[data-theme='dark'] .manager-table__row:hover {
+  background: #181818 !important;
+}
+
+.workspace[data-theme='dark'] .settings-avatar-preview,
+.workspace[data-theme='dark'] .settings-avatar-button,
+.workspace[data-theme='dark'] .settings-avatar-preview-img--empty,
+.workspace[data-theme='dark'] .settings-update-check,
+.workspace[data-theme='dark'] .settings-card__icon,
+.workspace[data-theme='dark'] .transfer-modal__empty-icon,
+.workspace[data-theme='dark'] .manager-empty__icon,
+.workspace[data-theme='dark'] .new-session-modal__icon,
+.workspace[data-theme='dark'] .new-session-modal__option--ssh .new-session-modal__icon {
+  background: #151515 !important;
+}
+
+.workspace[data-theme='dark'] .conversation-message--user .conversation-message__body,
+.workspace[data-theme='dark'] .conversation-message--assistant .conversation-message__body {
+  background: #0c0c0c !important;
+}
+
+.workspace[data-theme='dark'] .terminal-entry {
+  border-bottom-color: #262626 !important;
+}
+
+.workspace[data-theme='dark'] .terminal-entry__body {
+  border-left-color: #2b2b2b !important;
+}
+
+.workspace[data-theme='dark'] .line--command {
+  background: #111 !important;
+  border-color: #343434 !important;
+  border-left-color: #6d95ff !important;
+  color: #c6d9ff !important;
+}
+
+.workspace[data-theme='dark'] .line--command::before {
+  color: #999 !important;
+}
+
+.workspace[data-theme='dark'] .line--output {
+  color: #d6d6d6 !important;
+}
+
+.workspace[data-theme='dark'] .line--notice {
+  background: #0d1d12 !important;
+  border-color: #24502e !important;
+  color: #86e2a0 !important;
+}
+
+.workspace[data-theme='dark'] .line--error {
+  background: #211013 !important;
+  border-color: #5a292d !important;
+  color: #ff9da7 !important;
 }

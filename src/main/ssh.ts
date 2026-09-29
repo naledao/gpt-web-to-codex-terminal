@@ -9,8 +9,11 @@ import { basename, posix } from 'node:path'
 import type { SshDownloadTask, SshFileEntry, SshState, SshUploadTask, TerminalLine } from '../shared/types'
 import { REMOTE_SHELL_COMMAND, RemoteShell } from './remote-shell'
 
-/** Strips ANSI/VT escape sequences — there is no terminal emulator to render them. */
-const ANSI_RE = /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
+/** Strips ANSI/VT and OSC sequences — there is no terminal emulator to render them. */
+const ANSI_RE = /\u001B(?:\][^\u0007]*(?:\u0007|\u001B\\)|[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
+
+/** A visible PTY echo that contains a POSIX shell prompt and a command. */
+const SHELL_COMMAND_RE = /(?:^|[~./\\w:[\]@()-]+)\s*[$#]\s+\S/
 
 const MAX_LINES = 500
 const CONNECT_TIMEOUT_MS = 20_000
@@ -142,6 +145,8 @@ export class SshManager {
   private buffer = ''
   /** Index of a PTY line that has not received its newline yet (for password prompts). */
   private partialLineIndex: number | null = null
+  /** Set only for the next visible PTY line after a manual input, never stores its text. */
+  private manualInputPending = false
   private lines: TerminalLine[] = []
   private state: SshState = { ...EMPTY }
 
@@ -215,6 +220,7 @@ export class SshManager {
     this.lines = []
     this.buffer = ''
     this.partialLineIndex = null
+    this.manualInputPending = false
     this.execAttempts = 0
     this.state = {
       status: 'connecting',
@@ -652,9 +658,11 @@ export class SshManager {
     // would receive. Do not mirror the text into the transcript: it may be a sudo
     // password, and a PTY will echo ordinary commands by itself.
     const payload = text.replace(/[\r\n]+/g, '\r')
+    this.manualInputPending = payload.trim() !== ''
     try {
       stream.write(`${payload}\r`)
     } catch (error) {
+      this.manualInputPending = false
       this.pushLine('error', `写入交互式终端失败：${(error as Error).message}`)
       this.emit()
     }
@@ -831,7 +839,7 @@ export class SshManager {
   }
 
   private pushVisible(rawLine: string): void {
-    const cleaned = (ANSI_RE.test(rawLine) ? rawLine.replace(ANSI_RE, '') : rawLine).replace(/\r/g, '')
+    const cleaned = rawLine.replace(ANSI_RE, '').replace(/\r/g, '')
     if (this.partialLineIndex !== null) {
       // A newline completes a prompt that was buffered without one. Preserve the
       // prompt as a historical line, then let the next real output start a new line.
@@ -840,17 +848,23 @@ export class SshManager {
       if (cleaned.trim() === '') return
       const partial = this.lines[index]
       if (partial && partial.kind === 'output') {
+        if (this.manualInputPending && SHELL_COMMAND_RE.test(cleaned)) {
+          partial.kind = 'command'
+          this.manualInputPending = false
+        }
         partial.text = cleaned
         return
       }
     }
     // Blank lines are mostly PTY filler; dropping them keeps the pane readable.
     if (cleaned.trim() === '') return
-    this.pushLine('output', cleaned)
+    const kind = this.manualInputPending && SHELL_COMMAND_RE.test(cleaned) ? 'command' : 'output'
+    this.manualInputPending = false
+    this.pushLine(kind, cleaned)
   }
 
   private pushPartial(rawLine: string): void {
-    const cleaned = (ANSI_RE.test(rawLine) ? rawLine.replace(ANSI_RE, '') : rawLine).replace(/\r/g, '')
+    const cleaned = rawLine.replace(ANSI_RE, '').replace(/\r/g, '')
     if (cleaned === '') return
 
     if (this.partialLineIndex === null) {
