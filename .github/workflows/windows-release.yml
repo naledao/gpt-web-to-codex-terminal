@@ -47,6 +47,15 @@ jobs:
       - name: Build Windows installer
         run: npm run dist:win
 
+      - name: Prepare stable website download alias
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          Copy-Item `
+            "release/GPT-Web-to-Codex-Terminal-Setup-$env:VERSION.exe" `
+            "release/GPT-Web-to-Codex-Terminal-Setup.exe"
+
       - name: Create GitHub Release and upload installer
         shell: pwsh
         env:
@@ -63,6 +72,7 @@ jobs:
             --generate-notes `
             "release/GPT-Web-to-Codex-Terminal-Setup-$env:VERSION.exe" `
             "release/GPT-Web-to-Codex-Terminal-Setup-$env:VERSION.exe.blockmap" `
+            "release/GPT-Web-to-Codex-Terminal-Setup.exe" `
             "release/latest.yml"
       - name: Keep only latest 3 releases
         shell: pwsh

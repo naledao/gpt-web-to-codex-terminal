@@ -1,0 +1,116 @@
+---
+import '../styles/global.css'
+
+const repoUrl = 'https://github.com/naledao/gpt-web-to-codex-terminal'
+const releasesUrl = `${repoUrl}/releases`
+const downloadUrl = `${repoUrl}/releases/latest/download/GPT-Web-to-Codex-Terminal-Setup.exe`
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="theme-color" content="#08111f" />
+    <meta name="description" content="把 AI 对话、本机终端、SSH 和 Git 放进一个专注的桌面工作区。GPT Web to Codex Terminal 是一款开源 Windows 工具。" />
+    <link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}favicon.svg`} />
+    <title>GPT Web to Codex Terminal · AI 与终端，在一个工作区</title>
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="GPT Web to Codex Terminal 首页">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
+          <span class="brand-copy"><strong>GPT <i>→</i> Codex</strong><small>TERMINAL WORKSPACE</small></span>
+        </a>
+        <nav class="nav-links" aria-label="主导航">
+          <a href="#features">能力</a>
+          <a href="#workflow">工作方式</a>
+          <a href="#install">安装</a>
+          <a href={repoUrl} target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+        </nav>
+        <a class="nav-download" href={downloadUrl}>下载 Windows 版 <span aria-hidden="true">↓</span></a>
+      </header>
+
+      <main id="top">
+        <section class="hero section-grid">
+          <div class="hero-copy">
+            <div class="eyebrow"><span class="pulse-dot"></span> 开源 · Windows · MIT License</div>
+            <h1>让 AI 对话<br /><em>真正抵达终端。</em></h1>
+            <p class="hero-lede">把 ChatGPT 或 DeepSeek、本机 PowerShell、SSH、项目文件和 Git 信息放进一个桌面工作区。模型理解目标，你掌控每一步执行。</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href={downloadUrl} data-download>
+                <span class="button-icon">⌄</span>
+                <span><strong>下载 Windows 安装包</strong><small data-release-label>获取最新正式版本</small></span>
+              </a>
+              <a class="button button-ghost" href={repoUrl} target="_blank" rel="noreferrer"><span class="github-icon">◉</span> 查看源代码</a>
+            </div>
+            <div class="hero-meta"><span>当前版本 <strong data-version>v0.1.101</strong></span><span class="meta-separator"></span><span>Windows x64 · NSIS</span><span class="meta-separator"></span><a href={releasesUrl} target="_blank" rel="noreferrer">查看 Release ↗</a></div>
+          </div>
+
+          <div class="hero-visual" aria-label="应用工作区预览">
+            <div class="visual-orbit orbit-one"></div>
+            <div class="visual-orbit orbit-two"></div>
+            <div class="app-window">
+              <div class="window-bar"><div class="window-dots"><span></span><span></span><span></span></div><div class="window-title"><i></i> GPT → Codex Terminal</div><div class="window-actions">—　□　×</div></div>
+              <div class="window-body">
+                <aside class="mini-sidebar"><div class="mini-logo">⌁</div><div class="mini-side-line active"></div><div class="mini-side-line"></div><div class="mini-side-line"></div><div class="mini-side-line short"></div><div class="mini-side-bottom">⚙</div></aside>
+                <div class="mini-terminal"><div class="mini-toolbar"><span>终端</span><b>●</b><small>PowerShell</small></div><div class="terminal-code"><span class="comment"># 探索本机环境</span><br /><span class="prompt">&gt;</span> $os = Get-CimInstance<br /><span class="prompt">&gt;</span> $os.Caption<br /><strong>Microsoft Windows 11 企业版</strong><br /><span class="prompt">&gt;</span> git status<br /><span class="muted">On branch main</span><br /><span class="prompt">&gt;</span> <span class="cursor"></span></div><div class="mini-input"><span>&gt;</span> 直接在本机执行命令</div></div>
+                <div class="mini-chat"><div class="chat-tabs"><span class="selected">聊天</span><span>工作</span></div><div class="chat-space"><span class="chat-orb">✦</span><p>随时可以开始。</p></div><div class="chat-input"><span>＋</span><span>询问 ChatGPT</span><b>◉</b></div></div>
+                <aside class="mini-inspector"><div class="inspector-head">侧栏 <span>»</span></div><div class="inspector-section"><b>终端模式</b><span class="toggle"></span></div><div class="mode-switch"><span class="active">手动执行</span><span>自动执行</span></div><p>模型提出一条命令，执行结果会回到对话。</p><div class="inspector-pill">已连接</div></aside>
+              </div>
+            </div>
+            <div class="floating-card card-terminal"><span class="card-icon blue">⌘</span><span><strong>本机 + SSH</strong><small>每个会话独立持久</small></span></div>
+            <div class="floating-card card-model"><span class="card-icon green">✦</span><span><strong>ChatGPT / DeepSeek</strong><small>随时切换模型页面</small></span></div>
+          </div>
+        </section>
+
+        <section class="trust-strip" aria-label="产品摘要"><div><span class="trust-number">01</span><span>一个会话，一台机器</span></div><div><span class="trust-number">02</span><span>命令与结果可追踪</span></div><div><span class="trust-number">03</span><span>开源，数据在你的设备</span></div><div class="trust-arrow">↓</div></section>
+
+        <section class="features-section section-grid" id="features">
+          <div class="section-intro"><div class="eyebrow">WHY GPT → CODEX</div><h2>把上下文留在<br /><em>同一个地方。</em></h2><p>少一点复制粘贴，多一点连续工作。工作区让模型看到目标，也让你看到正在发生什么。</p></div>
+          <div class="feature-grid">
+            <article class="feature-card feature-card-wide"><div class="feature-number">01 / CONTEXT</div><div class="feature-symbol">◎</div><h3>对话和终端并排</h3><p>AI 的建议紧挨着真实执行环境。你可以查看命令、运行结果和当前目录，不必在窗口之间来回切换。</p><div class="feature-line"><span></span><span></span><span></span><span></span><span></span></div></article>
+            <article class="feature-card"><div class="feature-number">02 / CONNECTION</div><div class="feature-symbol">⌁</div><h3>本机或 SSH</h3><p>为每台机器建立独立会话，保存终端状态、工作目录和连接信息。</p><div class="connection-chips"><span>LOCAL</span><span>SSH</span><span>64-BIT</span></div></article>
+            <article class="feature-card"><div class="feature-number">03 / CONTROL</div><div class="feature-symbol">◇</div><h3>每一步由你掌控</h3><p>手动执行或开启自动循环。执行之前看清命令，随时暂停或终止任务。</p><div class="control-bar"><span class="active"></span><span></span><span></span><b>SAFE MODE</b></div></article>
+            <article class="feature-card feature-card-wide accent-card"><div><div class="feature-number">04 / PROJECT</div><div class="feature-symbol">⌘</div><h3>文件、Git、差异视图</h3><p>浏览远程文件、查看 Git 历史和 diff，把项目上下文带回当前对话。</p></div><div class="diff-preview"><span class="diff-title">README.md</span><span class="diff-minus">− 旧的工作方式</span><span class="diff-plus">+ 一个连续的工作区</span><span class="diff-plus">+ 真实的执行反馈</span></div></article>
+          </div>
+        </section>
+
+        <section class="screenshot-section section-grid"><div class="screenshot-copy"><div class="eyebrow">ONE WORKSPACE</div><h2>从目标到结果，<br /><em>不丢上下文。</em></h2><p>左侧保持会话，中间连接模型和终端，右侧保留控制与记录。你可以让 AI 帮忙，也可以直接执行命令。</p><div class="mini-stat-grid"><div><strong>2</strong><span>模型入口</span></div><div><strong>∞</strong><span>独立会话</span></div><div><strong>1</strong><span>工作上下文</span></div></div></div><figure class="screenshot-frame"><div class="frame-label"><span>WORKSPACE / 01</span><span>GPT → CODEX</span></div><img src={`${import.meta.env.BASE_URL}screenshots/workspace.png`} alt="GPT Web to Codex Terminal 工作区截图" loading="lazy" /><figcaption>本机 PowerShell、ChatGPT 和任务控制在同一窗口中协作。</figcaption></figure></section>
+
+        <section class="workflow-section" id="workflow"><div class="section-heading"><div class="eyebrow">HOW IT WORKS</div><h2>一条清晰的反馈回路。</h2><p>模型负责理解和提出建议，应用负责在你选择的机器上执行，并把结果带回当前对话。</p></div><div class="workflow-steps"><div class="workflow-step"><span class="step-index">01</span><div class="step-icon">↳</div><h3>描述目标</h3><p>告诉模型你想完成什么，保留项目和环境上下文。</p></div><div class="workflow-connector"></div><div class="workflow-step"><span class="step-index">02</span><div class="step-icon">⌘</div><h3>审阅命令</h3><p>模型一次提出一条结构化命令，你可以选择手动执行。</p></div><div class="workflow-connector"></div><div class="workflow-step"><span class="step-index">03</span><div class="step-icon">▶</div><h3>执行任务</h3><p>命令在本机 PowerShell 或 SSH 通道中运行。</p></div><div class="workflow-connector"></div><div class="workflow-step"><span class="step-index">04</span><div class="step-icon">↺</div><h3>回到对话</h3><p>退出码、输出和状态回到模型，继续下一步。</p></div></div></section>
+
+        <section class="install-section section-grid" id="install"><div class="install-card"><div class="install-glow"></div><div class="eyebrow">READY WHEN YOU ARE</div><h2>给你的下一个<br /><em>开发任务一个终端。</em></h2><p>免费下载 Windows x64 安装包。安装后登录你常用的模型页面，选择一台机器，开始工作。</p><div class="install-actions"><a class="button button-primary" href={downloadUrl} data-download><span class="button-icon">⌄</span><span><strong>下载 Windows 版</strong><small data-release-label>最新正式版本</small></span></a><a class="button button-ghost light-button" href={releasesUrl} target="_blank" rel="noreferrer">查看所有 Release ↗</a></div><div class="install-notes"><span>Windows 10 / 11</span><span>64-bit</span><span>MIT License</span><span>开源项目</span></div></div><aside class="install-aside"><div class="eyebrow">TRUST &amp; CONTROL</div><h3>你始终知道<br />命令在哪里运行。</h3><ul><li><span>✓</span> 本机和 SSH 会话彼此隔离</li><li><span>✓</span> 每条命令都有明确的执行结果</li><li><span>✓</span> SSH 凭据由系统安全存储保护</li><li><span>✓</span> 源代码和更新公开在 GitHub</li></ul><a href={`${repoUrl}#security-boundary`} target="_blank" rel="noreferrer">查看安全边界 <span>↗</span></a></aside></section>
+
+        <section class="faq-section"><div class="section-heading"><div class="eyebrow">QUESTIONS, ANSWERED</div><h2>开始之前，先知道这些。</h2></div><div class="faq-list"><details open><summary>它需要 API Key 吗？<span>＋</span></summary><p>不需要。应用通过独立的网页分区打开 ChatGPT 或 DeepSeek，你使用自己的登录状态。终端命令在你选择的本机或 SSH 主机上执行。</p></details><details><summary>下载的安装包从哪里来？<span>＋</span></summary><p>网站按钮直接指向本项目 GitHub Releases 的最新正式版本。你也可以打开 Release 页面查看版本、更新说明和源代码。</p></details><details><summary>我可以只手动执行命令吗？<span>＋</span></summary><p>可以。手动执行模式会在终端中显示模型提出的命令，你可以逐条运行；自动执行适合你已经确认过的重复任务。</p></details><details><summary>它支持哪些系统？<span>＋</span></summary><p>当前宣传页提供 Windows x64 NSIS 安装包。项目也保留 macOS 和 Linux 的打包配置，后续版本会根据实际发布情况提供对应下载。</p></details></div></section>
+      </main>
+
+      <footer class="footer"><div class="footer-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span></span><div><strong>GPT <i>→</i> Codex Terminal</strong><small>AI 对话与真实执行环境的连接层</small></div></div><div class="footer-links"><a href={repoUrl} target="_blank" rel="noreferrer">GitHub</a><a href={releasesUrl} target="_blank" rel="noreferrer">Releases</a><a href={`${repoUrl}/issues`} target="_blank" rel="noreferrer">反馈问题</a></div><div class="footer-bottom"><span>© 2026 GPT Web to Codex Terminal</span><span>Built for focused work.</span></div></footer>
+    </div>
+
+    <script>
+      const repo = 'https://api.github.com/repos/naledao/gpt-web-to-codex-terminal/releases/latest'
+      const fallbackDownload = 'https://github.com/naledao/gpt-web-to-codex-terminal/releases/latest/download/GPT-Web-to-Codex-Terminal-Setup.exe'
+      const versionNodes = document.querySelectorAll('[data-version]')
+      const labelNodes = document.querySelectorAll('[data-release-label]')
+      const downloadNodes = document.querySelectorAll('[data-download]')
+      const formatDate = (value) => {
+        try { return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(value)) } catch { return '' }
+      }
+      fetch(repo, { headers: { Accept: 'application/vnd.github+json' } })
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error('release lookup failed')))
+        .then((release) => {
+          const version = release.tag_name || 'latest'
+          versionNodes.forEach((node) => { node.textContent = version })
+          const date = release.published_at ? formatDate(release.published_at) : ''
+          labelNodes.forEach((node) => { node.textContent = date ? `${version} · ${date}` : `获取 ${version}` })
+          const installer = release.assets?.find((asset) => asset.name.endsWith('.exe') && !asset.name.endsWith('.blockmap'))
+          if (installer?.browser_download_url) downloadNodes.forEach((node) => { node.href = installer.browser_download_url })
+        })
+        .catch(() => {
+          downloadNodes.forEach((node) => { node.href = fallbackDownload })
+        })
+    </script>
+  </body>
+</html>
