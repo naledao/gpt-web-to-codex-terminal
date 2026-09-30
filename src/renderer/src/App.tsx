@@ -1755,8 +1755,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               aria-haspopup="menu"
               disabled={taskRunning || switchingPlatform || platformId === ''}
               title={taskRunning ? '任务运行中不能切换模型' : '切换模型'}
-              onClick={() => {
-                void window.api.showModelMenu(platformId).then((next) => {
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                void window.api.showModelMenu(platformId, { x: Math.round(rect.left), y: Math.round(rect.bottom) }).then((next) => {
                   if (next && next !== platformId) void switchPlatform(next)
                 })
               }}

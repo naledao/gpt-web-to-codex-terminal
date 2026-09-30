@@ -1332,7 +1332,7 @@ export interface AppApi {
    */
   switchSessionPlatform(platformId: string): Promise<boolean>
   /** Pop a native menu of the chat platforms; resolves to the chosen id, or null when dismissed. */
-  showModelMenu(currentId: string): Promise<string | null>
+  showModelMenu(currentId: string, anchor?: { x: number; y: number }): Promise<string | null>
   onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
   getWorkspaceState(): Promise<WorkspaceState>
   showWorkspaceManager(): Promise<boolean>

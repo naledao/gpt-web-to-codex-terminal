@@ -64,8 +64,8 @@ const api: AppApi = {
   switchSessionPlatform: (platformId: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.sessionSwitchPlatform, platformId),
 
-  showModelMenu: (currentId: string): Promise<string | null> =>
-    ipcRenderer.invoke(IpcChannels.sessionShowModelMenu, currentId),
+  showModelMenu: (currentId: string, anchor?: { x: number; y: number }): Promise<string | null> =>
+    ipcRenderer.invoke(IpcChannels.sessionShowModelMenu, currentId, anchor),
 
   onManagedSessionsChanged: (listener: (items: ManagedSessionSummary[]) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, items: ManagedSessionSummary[]): void => listener(items)

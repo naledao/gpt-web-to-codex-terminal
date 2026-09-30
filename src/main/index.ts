@@ -870,7 +870,7 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(
     IpcChannels.sessionShowModelMenu,
-    (event, currentId: string): Promise<string | null> =>
+    (event, currentId: string, anchor?: { x: number; y: number }): Promise<string | null> =>
       new Promise((resolve) => {
         const win = BrowserWindow.fromWebContents(event.sender)
         if (!win) {
@@ -891,7 +891,7 @@ function registerIpcHandlers(): void {
             click: () => settle(platform.id)
           }))
         )
-        menu.popup({ window: win, callback: () => settle(null) })
+        menu.popup({ window: win, ...(anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y) ? { x: Math.round(anchor.x), y: Math.round(anchor.y) } : {}), callback: () => settle(null) })
       })
   )
 
