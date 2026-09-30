@@ -1095,6 +1095,89 @@ body {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* Folder picker: opens the native directory dialog next to the cwd button. */
+.terminal-pane__browse {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 1px 8px;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.terminal-pane__browse:hover {
+  border-color: var(--accent);
+  color: #7ee787;
+  background: rgba(255, 255, 255, 0.05);
+}
+/* Remote directory editor: the input stays inline, suggestions float below. */
+.ssh-cwd-picker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.ssh-cwd-picker__list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #141b26;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.ssh-cwd-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: #c8d4e4;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ssh-cwd-picker__item--active,
+.ssh-cwd-picker__item:hover {
+  background: var(--accent-soft);
+  color: #ffffff;
+}
+
+.ssh-cwd-picker__icon {
+  flex: none;
+}
+
+.ssh-cwd-picker__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ssh-cwd-picker__hint {
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ssh-cwd-picker__hint--error {
+  color: #ff9ca5;
+}
 .terminal-pane__cwd-form {
   flex: 1;
   min-width: 0;
@@ -6307,6 +6390,43 @@ body {
   border-color: #afc4df;
   background: #e3edf8;
 }
+.workspace:not(.workspace--manager) .terminal-pane__browse {
+  flex: none;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid #cbd6e5;
+  border-radius: 10px;
+  background: #eaf1f8;
+  color: #214980;
+  padding: 0 14px;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__browse:hover {
+  border-color: #afc4df;
+  background: #e3edf8;
+}
+.workspace:not(.workspace--manager) .ssh-cwd-picker__list {
+  border-color: #cbd6e5;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(16, 51, 97, 0.18);
+}
+
+.workspace:not(.workspace--manager) .ssh-cwd-picker__item {
+  color: #214980;
+}
+
+.workspace:not(.workspace--manager) .ssh-cwd-picker__item--active,
+.workspace:not(.workspace--manager) .ssh-cwd-picker__item:hover {
+  background: #e3edf8;
+  color: #103361;
+}
+
+.workspace:not(.workspace--manager) .ssh-cwd-picker__hint {
+  color: #5b7290;
+}
 .workspace:not(.workspace--manager) .terminal-pane__cwd-input {
   width: 100%;
   height: 38px;
@@ -8645,6 +8765,17 @@ body {
   background: #223653 !important;
   border-color: #6288c4 !important;
 }
+.workspace[data-theme='dark'] .terminal-pane__browse {
+  background: #182538 !important;
+  border-color: #3a506d !important;
+  color: #d5e2f4 !important;
+}
+
+.workspace[data-theme='dark'] .terminal-pane__browse:hover {
+  background: #223653 !important;
+  border-color: #6288c4 !important;
+  color: #ffffff !important;
+}
 
 .workspace[data-theme='dark'] .current,
 .workspace[data-theme='dark'] .pending {
@@ -8800,23 +8931,25 @@ body {
 
 .git-dialog {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(23, 32, 46, 0.42);
-  backdrop-filter: blur(3px);
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: #fff;
+  backdrop-filter: none;
 }
 
 .git-dialog__box {
-  width: min(1180px, calc(100vw - 64px));
-  height: min(880px, calc(100vh - 64px));
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #e4e9f1;
-  border-radius: 18px;
+  border: 0;
+  border-radius: 0;
   background: #fff;
-  box-shadow: 0 28px 90px rgba(20, 32, 52, 0.26);
+  box-shadow: none;
 }
 
 /* ---------------- header ---------------- */

@@ -7,6 +7,7 @@ import { Menu } from '@base-ui/react/menu'
 import AvatarEditor from 'react-avatar-editor'
 import type { AvatarEditorRef } from 'react-avatar-editor'
 import GitDialog from './components/GitDialog'
+import SshDirectoryPicker from './components/SshDirectoryPicker'
 import brandIcon from './assets/brand-icon.png'
 import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
@@ -382,6 +383,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const [sshDirectoryLoading, setSshDirectoryLoading] = useState(false)
   const [sshFilesError, setSshFilesError] = useState('')
   const sshFilemanagerApiRef = useRef<FilemanagerApi | null>(null)
+  const [sshCwdEditing, setSshCwdEditing] = useState(false)
   const [sshFilePath, setSshFilePath] = useState('/')
   const [sshFileSearch, setSshFileSearch] = useState('')
   const [sshFileMode, setSshFileMode] = useState<'table' | 'cards' | 'panels'>('table')
@@ -1310,6 +1312,26 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     },
     [cwdDraft]
   )
+  /**
+   * Open the native folder picker and switch the terminal to the chosen
+   * directory. Cancelling leaves the current directory untouched.
+   */
+  const applyCwd = useCallback(async (path: string): Promise<void> => {
+    try {
+      setTerminal(await window.api.setTerminalCwd(path))
+    } catch {
+      /* main leaves the previous directory in place */
+    }
+  }, [])
+  const pickDirectory = useCallback(async (): Promise<void> => {
+    try {
+      const chosen = await window.api.selectDirectory()
+      if (!chosen) return
+      setTerminal(await window.api.setTerminalCwd(chosen))
+    } catch {
+      /* main leaves the previous directory in place */
+    }
+  }, [])
 
   // Settings: load once, then mirror into the draft the dialog edits.
   useEffect(() => {
@@ -2226,30 +2248,24 @@ ${conversation.url}`}
           <div className="terminal-pane__meta">
             <span className="terminal-pane__id">{ssh?.name || 'SSH'}</span>
             {ssh?.status === 'connected' ? (
-              cwdDraft !== null ? (
-                <form className="terminal-pane__cwd-form" onSubmit={submitCwd}>
-                  <input
-                    className="terminal-pane__cwd-input"
-                    value={cwdDraft}
-                    spellCheck={false}
-                    autoFocus
-                    aria-label="SSH 工作目录"
-                    onChange={(event) => setCwdDraft(event.target.value)}
-                    onBlur={() => setCwdDraft(null)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Escape') setCwdDraft(null)
-                    }}
-                  />
-                </form>
+              sshCwdEditing ? (
+                <SshDirectoryPicker
+                  basePath={ssh.ptyCwd || ssh.modelCwd || '/'}
+                  onPick={(path) => {
+                    setSshCwdEditing(false)
+                    void applyCwd(path)
+                  }}
+                  onClose={() => setSshCwdEditing(false)}
+                />
               ) : (
                 <button
                   type="button"
                   className="terminal-pane__cwd"
-                  title={`${ssh.modelCwd || '目录尚未确定'}
-点击编辑，回车切换目录`}
-                  onClick={() => setCwdDraft(ssh.modelCwd ?? '')}
+                  title={`${ssh.ptyCwd || ssh.modelCwd || '目录尚未确定'}
+点击浏览或输入远程目录`}
+                  onClick={() => setSshCwdEditing(true)}
                 >
-                  {ssh.modelCwd || '设置目录…'}
+                  {ssh.ptyCwd || ssh.modelCwd || '设置目录…'}
                 </button>
               )
             ) : (
@@ -2311,6 +2327,14 @@ ${conversation.url}`}
                 {terminal?.cwd || '设置目录…'}
               </button>
             )}
+            <button
+              type="button"
+              className="terminal-pane__browse"
+              title="浏览并选择目录"
+              onClick={() => void pickDirectory()}
+            >
+              浏览
+            </button>
             <button
               type="button"
               className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}

@@ -1065,6 +1065,20 @@ function registerIpcHandlers(): void {
     return runtime.runner.getTerminalState()
   })
   ipcMain.handle(IpcChannels.terminalSetCwd, async (event, path: string): Promise<TerminalState> => runtimeForEvent(event)?.setTerminalCwd(String(path ?? '')) ?? FALLBACK_TERMINAL_STATE)
+  ipcMain.handle(IpcChannels.dialogSelectDirectory, async (event): Promise<string | null> => {
+    const window = runtimeForEvent(event)?.window
+    const result = window && !window.isDestroyed()
+      ? await dialog.showOpenDialog(window, {
+          properties: ['openDirectory'],
+          title: '选择终端目录'
+        })
+      : await dialog.showOpenDialog({
+          properties: ['openDirectory'],
+          title: '选择终端目录'
+        })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0] ?? null
+  })
   ipcMain.handle(IpcChannels.terminalSetSendDelay, (event, seconds: number): TerminalState => runtimeForEvent(event)?.setTerminalSendDelay(Number(seconds ?? 0)) ?? FALLBACK_TERMINAL_STATE)
   ipcMain.handle(IpcChannels.environmentGet, (event) => ({ ...(runtimeForEvent(event)?.environment ?? FALLBACK_ENVIRONMENT) }))
   ipcMain.handle(IpcChannels.terminalNotesGet, (event): TerminalNotes => runtimeForEvent(event)?.currentNotes() ?? EMPTY_NOTES)

@@ -56,6 +56,7 @@ export const IpcChannels = {
   terminalReset: 'terminal:reset',
   terminalSetCwd: 'terminal:set-cwd',
   terminalSetSendDelay: 'terminal:set-send-delay',
+  dialogSelectDirectory: 'dialog:select-directory',
   terminalChanged: 'terminal:changed',
   terminalNotesGet: 'terminal-notes:get',
   terminalNotesSet: 'terminal-notes:set',
@@ -1267,6 +1268,12 @@ export interface SshState {
    * sessions: typing `cd /tmp` in the pane does not move the model's shell.
    */
   modelCwd: string
+  /**
+   * Working directory of the interactive PTY the user types into, parsed from
+   * the shell prompt. Kept apart from `modelCwd` because the two are different
+   * shells: this one moves the moment the user runs `cd` by hand.
+   */
+  ptyCwd: string
   lines: TerminalLine[]
 }
 
@@ -1468,6 +1475,13 @@ export interface AppApi {
    * back to the model. Clamped to 0..600 seconds; 0 disables the wait.
    */
   setTerminalSendDelay(seconds: number): Promise<TerminalState>
+  /**
+   * Show a native directory picker and return the chosen absolute path.
+   *
+   * Returns null when the user cancels. The terminal directory is left
+   * untouched - the caller decides whether to apply the choice.
+   */
+  selectDirectory(): Promise<string | null>
   onTerminalChanged(listener: (state: TerminalState) => void): () => void
 
   /**

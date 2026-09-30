@@ -114,6 +114,7 @@ const EMPTY: SshState = {
   message: '',
   remoteExec: false,
   modelCwd: '',
+  ptyCwd: '',
   lines: []
 }
 
@@ -147,6 +148,10 @@ export class SshManager {
   private partialLineIndex: number | null = null
   /** Set only for the next visible PTY line after a manual input, never stores its text. */
   private manualInputPending = false
+  /** Working directory parsed from the interactive PTY prompt (best effort). */
+  private ptyCwd = ''
+  /** Remote $HOME, resolved once so a `~` in the prompt can be expanded. */
+  private homeDir = ''
   private lines: TerminalLine[] = []
   private state: SshState = { ...EMPTY }
 
@@ -175,6 +180,7 @@ export class SshManager {
       // driving the remote host when it has already fallen back to local.
       remoteExec: this.exec !== null && this.exec.alive,
       modelCwd: this.exec?.cwd ?? '',
+      ptyCwd: this.ptyCwd,
       lines: [...this.lines]
     }
   }
@@ -222,6 +228,8 @@ export class SshManager {
     this.partialLineIndex = null
     this.manualInputPending = false
     this.execAttempts = 0
+    this.ptyCwd = ''
+    this.homeDir = ''
     this.state = {
       status: 'connecting',
       attached: true,
@@ -235,6 +243,7 @@ export class SshManager {
       // before a command channel exists.
       remoteExec: false,
       modelCwd: '',
+  ptyCwd: '',
       lines: []
     }
     this.pushLine('notice', this.state.message)
@@ -668,6 +677,13 @@ export class SshManager {
     }
   }
 
+  /** Move the visible interactive PTY to the model execution directory. */
+  async setPtyCwd(path: string): Promise<void> {
+    const target = path.trim()
+    if (target === '' || target === this.ptyCwd) return
+    await this.write(`cd ${posixQuote(target)}`)
+  }
+
   dispose(): void {
     this.teardown()
   }
@@ -730,9 +746,31 @@ export class SshManager {
       })
 
       if (resumeCwd !== '') shell.noteCwd(resumeCwd)
-      this.exec = shell
-      this.pushLine('notice', '已接管：模型命令将在这台主机上执行')
-      this.emit()
+      // Resolve $HOME once so a `~` in the PTY prompt can be expanded to a real
+      // path for the directory picker. Silent: plumbing, not user output.
+      // The takeover notice is deferred until this probe releases the shell.
+      // Publishing it earlier lets the environment probe that follows arrive
+      // while `pending` is still set, and RemoteShell.run rejects that with
+      // "远端终端正忙，忽略了这条命令" — a red banner on every fresh connect.
+      void shell
+        .run('printf "%s\\n" "$HOME"', undefined, true)
+        .then((probeResult) => {
+          const home = probeResult.output.trim()
+          if (home !== '') {
+            this.homeDir = home
+            // The first prompt is nearly always `~`, which could not be expanded
+            // before HOME was known. Adopt it now so the pane shows a real path.
+            if (this.ptyCwd === '') this.ptyCwd = home
+          }
+        })
+        .finally(() => {
+          // A dropped connection during the probe already tore this session
+          // down; do not resurrect a dead exec channel.
+          if (this.client !== client) return
+          this.exec = shell
+          this.pushLine('notice', '已接管：模型命令将在这台主机上执行')
+          this.emit()
+        })
     })
   }
 
@@ -840,6 +878,7 @@ export class SshManager {
 
   private pushVisible(rawLine: string): void {
     const cleaned = rawLine.replace(ANSI_RE, '').replace(/\r/g, '')
+    this.notePtyPrompt(cleaned)
     if (this.partialLineIndex !== null) {
       // A newline completes a prompt that was buffered without one. Preserve the
       // prompt as a historical line, then let the next real output start a new line.
@@ -866,6 +905,7 @@ export class SshManager {
   private pushPartial(rawLine: string): void {
     const cleaned = rawLine.replace(ANSI_RE, '').replace(/\r/g, '')
     if (cleaned === '') return
+    this.notePtyPrompt(cleaned)
 
     if (this.partialLineIndex === null) {
       this.pushLine('output', cleaned)
@@ -877,7 +917,32 @@ export class SshManager {
     if (line && line.kind === 'output') line.text = cleaned
   }
 
-  /** Stop treating the last PTY line as an in-progress prompt. */
+  /**
+   * Read the working directory out of a shell prompt such as user@host:/srv$.
+   *
+   * Best effort by design: prompt formats vary (and can be customised), so a
+   * line that does not look like a prompt simply leaves the last known value in
+   * place. A leading ~ is expanded with the remote $HOME once it is known.
+   */
+  private notePtyPrompt(cleaned: string): void {
+    const match = /:([~][^\s$#]*|[^\s:$#][^\s$#]*)[$#]\s*$/.exec(cleaned.trim())
+    if (!match) return
+    let dir = match[1]
+    if (dir.startsWith('~')) {
+      if (this.homeDir === '') return
+      dir = this.homeDir + dir.slice(1)
+    }
+    if (dir === '' || dir === this.ptyCwd) return
+    this.ptyCwd = dir
+    // The two shells started apart; a manual `cd` is the user saying "this is
+    // where I am". Mirror it onto the model's channel so the display and the
+    // executor never disagree, and the next model command lands here too.
+    if (this.exec !== null && this.exec.alive && this.exec.cwd !== dir) {
+      void this.exec.cd(dir).then((ok) => {
+        if (ok) this.emit()
+      })
+    }
+  }  /** Stop treating the last PTY line as an in-progress prompt. */
   private finishPartialLine(): boolean {
     if (this.partialLineIndex === null) return false
     this.partialLineIndex = null

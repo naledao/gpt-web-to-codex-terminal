@@ -303,6 +303,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   setTerminalSendDelay: (seconds: number): Promise<TerminalState> =>
     ipcRenderer.invoke(IpcChannels.terminalSetSendDelay, seconds),
 
+  selectDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke(IpcChannels.dialogSelectDirectory),
+
   onTerminalChanged: (listener: (state: TerminalState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: TerminalState): void => listener(state)
     ipcRenderer.on(IpcChannels.terminalChanged, handler)

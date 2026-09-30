@@ -14,6 +14,8 @@ interface PendingRun {
   ceilingMs: number
   timedOut: false | 'idle' | 'ceiling'
   interrupted: boolean
+  /** Suppress live mirroring for an internal command such as a cwd sync. */
+  silent: boolean
 }
 
 /**
@@ -111,8 +113,15 @@ export class RemoteShell implements ExecutionShell {
   noteCwd(path: string): void {
     if (path !== '') this.currentCwd = path
   }
+  async cd(path: string): Promise<boolean> {
+    const target = path.trim()
+    if (target === '') return false
+    const quoted = "'" + target.replace(/'/g, "'\\''") + "'"
+    const result = await this.run('cd ' + quoted, undefined, true)
+    return result.exitCode === 0 && !result.rejected && !result.sessionLost && !result.timedOut
+  }
 
-  run(command: string, timeoutMs?: number): Promise<ShellResult> {
+  run(command: string, timeoutMs?: number, silent = false): Promise<ShellResult> {
     if (this.disposed) return Promise.resolve(this.reject('远端会话已关闭。'))
     if (this.closed) return Promise.resolve(this.reject('远端会话已结束，请重新连接后重试。'))
     if (this.pending) return Promise.resolve(this.reject('远端终端正忙，忽略了这条命令。'))
@@ -146,7 +155,7 @@ export class RemoteShell implements ExecutionShell {
         this.terminate()
       }, ceilingMs)
 
-      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, ceilingMs, timedOut: false, interrupted: false }
+      this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, ceilingMs, timedOut: false, interrupted: false, silent }
 
       try {
         this.stream.write(buildEnvelope(this.token, seq, cleaned))
@@ -315,7 +324,7 @@ export class RemoteShell implements ExecutionShell {
       this.pending.output += `${line}\n`
     }
 
-    this.options.onOutput?.(`${line}\n`)
+    if (!this.pending?.silent) this.options.onOutput?.(`${line}\n`)
   }
 }
 

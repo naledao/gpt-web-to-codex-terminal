@@ -5,7 +5,7 @@ import {
   IpcChannels,
   buildTerminalPrefix
 } from '../shared/types'
-import { CHAT_PLATFORMS } from '../shared/platforms'
+import { CHAT_PLATFORMS, DEEPSEEK_PLATFORM } from '../shared/platforms'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
   AppTheme,
@@ -98,6 +98,7 @@ export const EMPTY_SSH_STATE: SshState = {
   message: '',
   remoteExec: false,
   modelCwd: '',
+  ptyCwd: '',
   lines: []
 }
 
@@ -208,6 +209,7 @@ export class SessionRuntime {
    */
   private readonly embeds = new Map<string, PlatformEmbed>()
   private activePlatformId: string
+  private preferredSendDelaySeconds: number
   private remoteShell: RemoteShell | null = null
   private customTitle: string
   private sshCwd: string
@@ -253,6 +255,7 @@ export class SessionRuntime {
     this.sshCwd = options.initialSshCwd?.trim() ?? ''
     this.lastPersistedLocalCwd = options.initialLocalCwd?.trim() ?? ''
     this.activePlatformId = options.platform.id
+    this.preferredSendDelaySeconds = options.initialSendDelaySeconds ?? 0
 
     for (const platform of CHAT_PLATFORMS) {
       /*
@@ -297,7 +300,7 @@ export class SessionRuntime {
 
     this.runner.restoreMode(options.initialMode)
     this.runner.restorePaused(options.initialPaused ?? false)
-    this.runner.setSendDelay(options.initialSendDelaySeconds ?? 0)
+    this.runner.setSendDelay(options.platform.id === DEEPSEEK_PLATFORM.id ? 4 : this.preferredSendDelaySeconds)
     this.embed.setBaselinePolicy(options.initialMode === 'auto')
 
     this.ssh = new SshManager((state) => {
@@ -599,6 +602,7 @@ export class SessionRuntime {
     if (!entry || platformId === this.activePlatformId) return false
     if (this.taskRunning()) return false
     this.activePlatformId = platformId
+    this.runner.setSendDelay(platformId === DEEPSEEK_PLATFORM.id ? 4 : this.preferredSendDelaySeconds)
     // Created here on first switch, and kept alive after that so its conversation survives.
     const created = this.ensureEmbed(platformId)
     const embed = created.embed as ChatGptEmbed
@@ -703,7 +707,7 @@ export class SessionRuntime {
       sshAttached: sshState.attached,
       sshReconnect: sshState.attached && sshState.status !== 'disconnected',
       sshCwd: this.sshCwd,
-      sendDelaySeconds: terminal.sendDelaySeconds,
+      sendDelaySeconds: this.preferredSendDelaySeconds,
       createdAt: this.createdAt
     }
   }
@@ -908,14 +912,29 @@ export class SessionRuntime {
   }
 
   async setTerminalCwd(path: string): Promise<TerminalState> {
+    const target = path.trim()
+    const remote = this.remoteShell
+    const previousRemoteCwd = remote?.cwd ?? ''
     const state = await this.runner.setTerminalCwd(path)
+
+    // SSH has separate model-exec and interactive PTY channels. Mirror the cwd only
+    // when the model-side cd actually changed directory, or selected the current one.
+    if (remote !== null && remote === this.remoteShell && remote.alive) {
+      const nextRemoteCwd = remote.cwd
+      if (nextRemoteCwd !== '' && (nextRemoteCwd !== previousRemoteCwd || target === nextRemoteCwd)) {
+        await this.ssh.setPtyCwd(nextRemoteCwd)
+      }
+    }
+
     await this.probeEnvironment()
     return state
   }
 
   /** Pace the loop without touching any stored state or the environment probe. */
   setTerminalSendDelay(seconds: number): TerminalState {
-    const state = this.runner.setSendDelay(seconds)
+    const value = Number.isFinite(seconds) ? Math.min(Math.max(Math.floor(seconds), 0), 600) : 0
+    this.preferredSendDelaySeconds = value
+    const state = this.runner.setSendDelay(this.activePlatformId === DEEPSEEK_PLATFORM.id ? 4 : value)
     this.options.onSummaryChanged()
     return state
   }
