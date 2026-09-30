@@ -755,23 +755,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   )
 
   /**
-   * Send the embedded view to the email/OTP sign-in page.
-   *
-   * Email/OTP is the only sign-in route that completes inside the embedded user-agent — Google
-   * refuses third-party OAuth there (measured; recorded beside `EMBED_LOGIN_URL`), and the
-   * navigation allowlist that used to hand those providers to the system browser has been
-   * removed so Cloudflare's challenge can finish. So this is the route worth offering, and it
-   * stays reachable even though the banner that used to advertise it is gone.
-   */
-  const loginWithEmail = useCallback((): void => {
-    window.api.loginWithEmail()
-  }, [])
-
-  const openChatgptExternal = useCallback((): void => {
-    window.api.openChatgptExternal()
-  }, [])
-
-  /**
    * Hand the pasted token to the main process, then forget it here.
    *
    * The field is cleared in `finally` rather than on success: a failed import is
@@ -2920,25 +2903,6 @@ ${record.command}`
                     <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
                   </div>
                   {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
-                  {/*
-                    The email/OTP sign-in route, which used to be advertised by a status-bar banner.
-                    That banner appeared when a third-party provider was handed to the system
-                    browser, and both it and that escape hatch are gone — the navigation allowlist
-                    was removed so Cloudflare's challenge can finish. Email/OTP is the route that
-                    still completes inside the embedded view, so it gets a plain button here rather
-                    than disappearing with the banner that happened to be its only caller.
-                  */}
-                  <div className="settings-session-row">
-                    <label>登录</label>
-                    <div className="settings-session-actions">
-                      <button type="button" className="settings-outline-btn" onClick={loginWithEmail}>
-                        用邮箱/验证码登录
-                      </button>
-                      <button type="button" className="settings-outline-btn" onClick={openChatgptExternal}>
-                        在系统浏览器打开
-                      </button>
-                    </div>
-                  </div>
                 </div>
 
                 <div className="settings-session-group">
