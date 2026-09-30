@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, Willow } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
@@ -241,7 +242,7 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
           loading="lazy"
         />
       </button>
-      {previewOpen ? (
+      {previewOpen ? createPortal(
         <div
           className="conversation-attachment-preview"
           role="dialog"
@@ -265,7 +266,8 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
             alt={attachment.fileName || 'Image attachment'}
             onClick={(event) => event.stopPropagation()}
           />
-        </div>
+        </div>,
+        document.body
       ) : null}
     </>
   )

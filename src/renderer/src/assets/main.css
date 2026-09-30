@@ -10152,8 +10152,8 @@ body {
 
 .conversation-attachment-preview__image {
   display: block;
-  max-width: min(94vw, 1600px);
-  max-height: 90vh;
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 64px);
   width: auto;
   height: auto;
   object-fit: contain;
