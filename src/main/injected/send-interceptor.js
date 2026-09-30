@@ -145,6 +145,10 @@
     awaitingReplySince: 0,
     /** Remains true across clarification turns until explicit completion or manual end. */
     taskActive: false,
+    /** A live question pauses the command loop until an explicit user answer. */
+    pendingQuestion: null,
+    /** Only this draft may be replaced when retrying a failed dialog submission. */
+    answerDraft: null,
     /** Dedupe for the "looked like a command but would not parse" report. */
     lastUnparsedMessageId: null
   }
@@ -1219,6 +1223,11 @@
         // Ignore only the assistant turn that existed BEFORE this send. Never
         // baseline the new placeholder/reply that may already have appeared.
         state.lastCommandMessageId = replyBaselineId
+        if (state.pendingQuestion) {
+          report({ event: 'question-cleared', messageId: state.pendingQuestion.messageId })
+          state.pendingQuestion = null
+          state.answerDraft = null
+        }
         // The send landed, so the new turn is about to render below the fold.
         scheduleScrollToBottom()
       }
@@ -1762,6 +1771,51 @@
       const parsed = toCommand(candidates[i])
       if (parsed) return parsed
     }
+
+    /*
+     * Some PowerShell replies contain a valid command value but put raw `"` characters
+     * inside the outer JSON string, for example `$q + '"type"'`. `balancedObjects()` is
+     * intentionally JSON-aware, so those quotes make it stop tracking the outer object
+     * before `toCommand()` gets a candidate. The command field reader already handles this
+     * common model mistake safely; give it the last command-shaped object as a fallback.
+     */
+    const starts = [...cleaned.matchAll(/\{\s*"command"\s*:/g)].map((match) => match.index ?? -1).filter((index) => index >= 0)
+    for (let i = starts.length - 1; i >= 0; i -= 1) {
+      const parsed = lenientCommand(cleaned.slice(starts[i]))
+      if (parsed) return parsed
+    }
+    return null
+  }
+
+  // Questions have their own discriminator. Never send a question-shaped object
+  // through the lenient command parser, even if it also contains a command field.
+  const looksLikeQuestionReply = (text) => /"type"\s*:\s*"questions?"/.test(String(text || ''))
+  const extractQuestion = (rawText) => {
+    const candidates = balancedObjects(String(rawText || '').replace(/```[a-zA-Z0-9_-]*/g, '\n'))
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      for (const attempt of [candidates[i], repairJson(candidates[i])]) {
+        let parsed
+        try {
+          parsed = JSON.parse(attempt)
+        } catch (_) {
+          continue
+        }
+        if (!parsed || (parsed.type !== 'question' && parsed.type !== 'questions')) continue
+        if ('command' in parsed) return null
+        const items = parsed.type === 'questions'
+          ? parsed.questions
+          : [{ question: parsed.question, placeholder: parsed.placeholder }]
+        if (!Array.isArray(items) || items.length < 1 || items.length > 20) return null
+        const questions = []
+        for (const item of items) {
+          if (!item || typeof item !== 'object') return null
+          if (typeof item.question !== 'string' || !item.question.trim() || item.question.length > 16000) return null
+          if (item.placeholder !== undefined && (typeof item.placeholder !== 'string' || item.placeholder.length > 1000)) return null
+          questions.push({ question: item.question.trim(), placeholder: (item.placeholder || '').trim() })
+        }
+        return { questions }
+      }
+    }
     return null
   }
 
@@ -1785,7 +1839,7 @@
       const messageId = messageIdOf(node)
       if (!messageId) continue
       const text = readReplyMarkdown(node)
-      if (!text || looksLikeCommandReply(text) || reportedHistoryMarkdown.get(messageId) === text) continue
+      if (!text || looksLikeCommandReply(text) || looksLikeQuestionReply(text) || reportedHistoryMarkdown.get(messageId) === text) continue
       reportedHistoryMarkdown.set(messageId, text)
       report({ event: 'assistant-history-markdown', messageId, text })
     }
@@ -1901,6 +1955,37 @@
      * command the model never issued to us.
      */
     const text = readReplyText(node)
+    if (looksLikeQuestionReply(text)) {
+      if (findStopButton()) {
+        noteScan(messageId, 'question-still-generating')
+        return
+      }
+      if (!state.enabled || state.awaitingReplySince === 0) {
+        state.lastCommandMessageId = messageId
+        noteScan(messageId, 'question-not-live')
+        return
+      }
+      const question = extractQuestion(text)
+      if (!question) {
+        if (state.lastUnparsedMessageId !== messageId) {
+          state.lastUnparsedMessageId = messageId
+          report({ event: 'parse-failed', text: text.slice(0, 2000), reason: 'invalid-question' })
+        }
+        return
+      }
+      state.lastCommandMessageId = messageId
+      state.awaitingReplySince = 0
+      state.pendingQuestion = { messageId, ...question }
+      report({ event: 'question', messageId, ...question, live: true })
+      // Keep readable questions in the app transcript, rather than the transport JSON.
+      report({
+        event: 'assistant-message',
+        messageId,
+        text: question.questions.map((item, index) => `${index + 1}. ${item.question}`).join('\n')
+      })
+      return
+    }
+    if (state.pendingQuestion) return
     const parsed = extractCommand(text)
 
     // Nothing runnable yet. Deliberately do NOT mark it handled and do NOT
@@ -2067,6 +2152,8 @@
   const armBaseline = () => {
     state.awaitingReplySince = 0
     state.lastCommandMessageId = null
+    state.pendingQuestion = null
+    state.answerDraft = null
     return true
   }
 
@@ -2216,6 +2303,8 @@
       if (config.armBaseline === true) {
         state.awaitingReplySince = 0
         state.lastCommandMessageId = null
+        state.pendingQuestion = null
+        state.answerDraft = null
       }
       report({
         event: 'configured',
@@ -2281,6 +2370,8 @@
       if (stop && typeof stop.click === 'function') stop.click()
       state.awaitingReplySince = 0
       state.taskActive = false
+      state.pendingQuestion = null
+      state.answerDraft = null
       state.lastCommandMessageId = lastAssistantId()
       state.lastUnparsedMessageId = null
       return true
@@ -2288,25 +2379,31 @@
 
     /**
      * Type `text` into the composer and submit it WITHOUT the system prompt.
-     * Used to hand command output back to the model.
+     * Used to hand command output or collected user answers back to the model.
      *
      * Resolves only once the send has been CONFIRMED (the composer cleared), so
      * callers can tell the user the truth instead of assuming success.
      *
      * @returns Promise<'ok' | 'no-composer' | 'busy' | 'insert-failed' | 'stuck'>
      */
-    sendRaw(text) {
+    sendRaw(text, ownedDraft = null) {
       const element = getComposer()
       if (!element) return Promise.resolve('no-composer')
+      if (state.programmatic || findStopButton()) return Promise.resolve('busy')
       // Never clobber something the user is in the middle of typing.
-      if (collapse(readComposer(element)) !== '') return Promise.resolve('busy')
+      const existing = readComposer(element)
+      if (collapse(existing) !== '') {
+        if (!ownedDraft || !composerMatches(element, ownedDraft)) return Promise.resolve('busy')
+      }
 
       const payload = normalizeLineEndings(text)
 
       state.programmatic = true
       let inserted = false
       try {
-        inserted = insertText(element, payload)
+        // Reuse an unchanged answer draft, or replace only our own failed draft
+        // when the user revised an answer on a previous page before retrying.
+        inserted = composerMatches(element, payload) || insertText(element, payload)
       } catch (_) {
         inserted = false
       }
@@ -2351,6 +2448,23 @@
           Date.now() + SEND_BUTTON_GRACE_MS
         )
       })
+    },
+
+    async answerQuestion(messageId, answer) {
+      if (!state.enabled || !state.pendingQuestion || state.pendingQuestion.messageId !== messageId || !state.taskActive) return 'stale'
+      if (typeof answer !== 'string' || !answer.trim() || answer.length > 20000) return 'invalid-answer'
+      const ownedDraft = state.answerDraft?.messageId === messageId ? state.answerDraft.text : null
+      const outcome = await window[STATE_KEY].sendRaw(answer, ownedDraft)
+      if (outcome === 'ok') {
+        report({ event: 'user-message', text: answer })
+      } else if (outcome === 'stuck' || outcome === 'insert-failed') {
+        // A retry may replace only the text that this submission left in the composer.
+        const element = getComposer()
+        if (element && composerMatches(element, normalizeLineEndings(answer))) {
+          state.answerDraft = { messageId, text: normalizeLineEndings(answer) }
+        }
+      }
+      return outcome
     },
 
     takeUserImageAttachments,

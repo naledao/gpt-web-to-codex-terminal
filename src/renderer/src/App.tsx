@@ -340,6 +340,10 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const [cookieSetResult, setCookieSetResult] = useState<SessionImportResult | null>(null)
   const [importingCookieSet, setImportingCookieSet] = useState(false)
   const [commandDraft, setCommandDraft] = useState('')
+  const [questionDrafts, setQuestionDrafts] = useState<string[]>([])
+  const [questionPage, setQuestionPage] = useState(0)
+  const [questionError, setQuestionError] = useState('')
+  const [answeringQuestion, setAnsweringQuestion] = useState(false)
   /** Non-null while the working directory is being edited inline. */
   const [cwdDraft, setCwdDraft] = useState<string | null>(null)
   /**
@@ -440,6 +444,10 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const conversationId = embed.conversationId
   const isAuto = automation?.mode === 'auto'
   const taskRunning = interceptor?.taskStartedAt != null && interceptor.taskFinishedAt == null
+  const pendingQuestion = interceptor?.pendingQuestion ?? null
+  const questionCount = pendingQuestion?.questions.length ?? 0
+  const currentQuestion = pendingQuestion?.questions[questionPage] ?? null
+  const currentQuestionDraft = questionDrafts[questionPage] ?? ''
 
   const waiting = useMemo(
     () => executions.filter((record) => RUNNABLE.has(record.status)),
@@ -950,6 +958,68 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     }
   }, [refreshExecutions])
 
+  useEffect(() => {
+    setQuestionDrafts(pendingQuestion ? pendingQuestion.questions.map(() => '') : [])
+    setQuestionPage(0)
+    setQuestionError('')
+    setAnsweringQuestion(false)
+  }, [pendingQuestion?.messageId])
+
+  const updateQuestionDraft = useCallback((value: string): void => {
+    setQuestionDrafts((previous) => {
+      const next = [...previous]
+      next[questionPage] = value
+      return next
+    })
+    setQuestionError('')
+  }, [questionPage])
+
+  const previousQuestion = useCallback((): void => {
+    setQuestionError('')
+    setQuestionPage((page) => Math.max(0, page - 1))
+  }, [])
+
+  const nextQuestion = useCallback((): void => {
+    if (!currentQuestionDraft.trim()) {
+      setQuestionError('请先回答当前问题。')
+      return
+    }
+    setQuestionError('')
+    setQuestionPage((page) => Math.min(questionCount - 1, page + 1))
+  }, [currentQuestionDraft, questionCount])
+
+  const answerQuestion = useCallback(async (): Promise<void> => {
+    if (!pendingQuestion || answeringQuestion) return
+    const answers = pendingQuestion.questions.map((_, index) => (questionDrafts[index] ?? '').trim())
+    const missingIndex = answers.findIndex((answer) => answer === '')
+    if (missingIndex >= 0) {
+      setQuestionPage(missingIndex)
+      setQuestionError('请先回答当前问题。')
+      return
+    }
+    const answer = answers.length === 1
+      ? answers[0]
+      : answers.map((value, index) => `第${index + 1}题：${value}`).join('\n')
+    if (answer.length > 20000) {
+      setQuestionError('回答内容过长，请压缩后再发送（最多 20000 个字符）。')
+      return
+    }
+    setAnsweringQuestion(true)
+    setQuestionError('')
+    try {
+      setInterceptor(await window.api.answerQuestion(pendingQuestion.messageId, answer))
+    } catch (error) {
+      setQuestionError(error instanceof Error ? error.message : '回答发送失败，请重试。')
+    } finally {
+      setAnsweringQuestion(false)
+    }
+  }, [answeringQuestion, pendingQuestion, questionDrafts])
+
+  const cancelQuestion = useCallback(async (): Promise<void> => {
+    if (answeringQuestion) return
+    await endTask()
+  }, [answeringQuestion, endTask])
+
   const togglePaused = useCallback(async (): Promise<void> => {
     if (!automation) return
     try {
@@ -1337,9 +1407,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
    * overlay alone would be hidden behind it. Hide the view while a dialog is up.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
+    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && pendingQuestion === null)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen])
+  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, pendingQuestion])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -2610,6 +2680,61 @@ ${record.command}`
         ) : null}
         <span className="statusbar__spacer" />
       </footer>
+
+        {pendingQuestion && currentQuestion ? (
+          <div className="modal modal--question" role="dialog" aria-modal="true" aria-label="需要你的回答">
+            <div className="question-modal">
+              <div className="question-modal__head">
+                <span className="question-modal__icon" aria-hidden="true">?</span>
+                <div>
+                  <h2 className="question-modal__title">模型需要你的回答</h2>
+                  <p className="question-modal__subtitle">回答完全部问题后会发送回当前对话，并继续执行任务。</p>
+                </div>
+              </div>
+              <div className="question-modal__body">
+                <div className="question-modal__progress">第 {questionPage + 1} / {questionCount} 题</div>
+                <div className="question-modal__question">{currentQuestion.question}</div>
+                <textarea
+                  key={questionPage}
+                  autoFocus
+                  className="question-modal__input"
+                  value={currentQuestionDraft}
+                  placeholder={currentQuestion.placeholder || '输入你的回答…'}
+                  aria-label="回答模型的问题"
+                  disabled={answeringQuestion}
+                  onChange={(event) => {
+                    updateQuestionDraft(event.currentTarget.value)
+                  }}
+                  onKeyDown={(event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                      event.preventDefault()
+                      if (questionPage + 1 < questionCount) nextQuestion()
+                      else void answerQuestion()
+                    }
+                  }}
+                />
+                {questionError ? <p className="question-modal__error" role="alert">{questionError}</p> : null}
+              </div>
+              <div className="question-modal__foot">
+                <button type="button" className="question-modal__cancel" disabled={answeringQuestion} onClick={() => void cancelQuestion()}>取消并结束</button>
+                <span className="panel__spacer" />
+                <button type="button" className="question-modal__back" disabled={answeringQuestion || questionPage === 0} onClick={previousQuestion}>上一题</button>
+                <span className="question-modal__hint">{typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'} + Enter {questionPage + 1 < questionCount ? '下一题' : '发送'}</span>
+                <button
+                  type="button"
+                  className="question-modal__confirm"
+                  disabled={answeringQuestion || !currentQuestionDraft.trim()}
+                  onClick={() => {
+                    if (questionPage + 1 < questionCount) nextQuestion()
+                    else void answerQuestion()
+                  }}
+                >
+                  {answeringQuestion ? '发送中…' : questionPage + 1 < questionCount ? '下一题' : '确认并发送'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Injected prompt viewer. Rendered as Markdown. */}
         {promptOpen ? (

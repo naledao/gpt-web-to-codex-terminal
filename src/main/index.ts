@@ -402,6 +402,7 @@ const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
   lastSentText: null,
   taskStartedAt: null,
   taskFinishedAt: null,
+  pendingQuestion: null,
   prefix: ''
 }
 
@@ -990,6 +991,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannels.interceptorGetState, (event): InterceptorStatus => runtimeForEvent(event)?.embed.getInterceptorStatus() ?? FALLBACK_INTERCEPTOR_STATE)
   ipcMain.handle(IpcChannels.interceptorSetEnabled, (event, enabled: boolean): InterceptorStatus => runtimeForEvent(event)?.embed.setInterceptorEnabled(Boolean(enabled)) ?? FALLBACK_INTERCEPTOR_STATE)
+  ipcMain.handle(IpcChannels.interceptorAnswerQuestion, async (event, messageId: string, answer: string): Promise<InterceptorStatus> => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime || typeof messageId !== 'string' || typeof answer !== 'string') throw new Error('当前会话不可用。')
+    return runtime.embed.answerQuestion(messageId, answer)
+  })
   ipcMain.handle(IpcChannels.interceptorEndTask, async (event): Promise<InterceptorStatus> => {
     const runtime = runtimeForEvent(event)
     return runtime ? await runtime.endTask() : FALLBACK_INTERCEPTOR_STATE

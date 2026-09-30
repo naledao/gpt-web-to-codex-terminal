@@ -354,6 +354,22 @@ body {
 
 .conversation-message__body .wmde-markdown pre {
   overflow-x: auto;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #e6edf3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.conversation-message__body .wmde-markdown pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
 }
 
 .conversation-message__body .wmde-markdown code:not(pre code) {
@@ -4470,6 +4486,116 @@ body {
 }
 
 .terminal__prompt-link:hover { color: var(--text); }
+
+/* Model clarification dialog. The native page is hidden while this is open. */
+.modal--question {
+  z-index: 360;
+  background: rgba(8, 14, 24, .58);
+  backdrop-filter: blur(5px);
+}
+
+.question-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, calc(100vw - 36px));
+  max-height: min(680px, calc(100vh - 36px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg-chrome);
+  color: var(--text);
+  box-shadow: 0 26px 80px rgba(15, 23, 42, .3);
+}
+
+.question-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.question-modal__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: #635bda;
+  color: #fff;
+  font-size: 23px;
+  font-weight: 800;
+}
+
+.question-modal__title { margin: 0; color: var(--text); font-size: 20px; font-weight: 780; }
+.question-modal__subtitle { margin: 5px 0 0; color: var(--text-muted); font-size: 12px; }
+.question-modal__body { min-height: 0; overflow-y: auto; padding: 22px 24px 18px; }
+.question-modal__progress { margin: 0 0 10px; color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.question-modal__question {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.question-modal__input {
+  display: block;
+  width: 100%;
+  min-height: 128px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  outline: 0;
+  background: var(--bg-input, var(--bg));
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.question-modal__input:focus { border-color: #746cf0; box-shadow: 0 0 0 3px rgba(99, 91, 218, .16); }
+.question-modal__input::placeholder { color: var(--text-muted); }
+.question-modal__error { margin: 9px 0 0; color: #d9534f; font-size: 12px; }
+.question-modal__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 24px 18px;
+  border-top: 1px solid var(--border);
+}
+.question-modal__hint { color: var(--text-muted); font-size: 11px; }
+.question-modal__cancel,
+.question-modal__back,
+.question-modal__confirm {
+  min-height: 36px;
+  padding: 0 15px;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.question-modal__cancel,
+.question-modal__back { border: 1px solid var(--border); background: transparent; color: var(--text-muted); }
+.question-modal__cancel:hover:not(:disabled),
+.question-modal__back:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text); }
+.question-modal__confirm { border: 1px solid #5f58d8; background: #635bda; color: #fff; }
+.question-modal__confirm:hover:not(:disabled) { background: #5149c4; }
+.question-modal__cancel:disabled,
+.question-modal__back:disabled,
+.question-modal__confirm:disabled,
+.question-modal__input:disabled { cursor: default; opacity: .55; }
+
+@media (max-width: 600px) {
+  .question-modal { width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
+  .question-modal__head, .question-modal__body, .question-modal__foot { padding-left: 16px; padding-right: 16px; }
+  .question-modal__hint { display: none; }
+}
 
 .prompt-modal {
   display: flex;

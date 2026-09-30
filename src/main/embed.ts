@@ -11,6 +11,7 @@ import type {
   EmbedState,
   InterceptorPageEvent,
   InterceptorStatus,
+  PendingQuestionItem,
   ParsedCommand,
   ScrapedConversation
 } from '../shared/types'
@@ -241,7 +242,7 @@ export interface EmbedHandlers {
   onInterceptor(status: InterceptorStatus): void
   /** Clean user text, with the injected system prefix already removed. */
   onUserMessage(text: string, attachments: ConversationImageAttachmentInput[]): void
-  /** A finished assistant turn that answered a live send. */
+  /** An assistant message that belongs in the app's conversation transcript. */
   onAssistantMessage(messageId: string, text: string): void
   /** Re-read Markdown for an already stored assistant turn in restored history. */
   onAssistantHistoryMarkdown(messageId: string, text: string): void
@@ -298,6 +299,7 @@ export class ChatGptEmbed {
     lastSentText: null,
     taskStartedAt: null,
     taskFinishedAt: null,
+    pendingQuestion: null,
     // A safe default until main has probed the machine and calls
     // setPromptPrefix(); see buildTerminalPrompt().
     prefix: buildTerminalPrefix(FALLBACK_ENVIRONMENT)
@@ -742,7 +744,47 @@ export class ChatGptEmbed {
   }
 
   getInterceptorStatus(): InterceptorStatus {
-    return { ...this.interceptor }
+    return {
+      ...this.interceptor,
+      pendingQuestion: this.interceptor.pendingQuestion
+        ? {
+            ...this.interceptor.pendingQuestion,
+            questions: this.interceptor.pendingQuestion.questions.map((item) => ({ ...item }))
+          }
+        : null
+    }
+  }
+
+  /** The page validates the question id again before touching the composer. */
+  async answerQuestion(messageId: string, answer: string): Promise<InterceptorStatus> {
+    if (!this.interceptor.enabled || this.interceptor.pendingQuestion?.messageId !== messageId) {
+      throw new Error('这个问题已失效，请查看当前会话。')
+    }
+    if (typeof answer !== 'string' || !answer.trim() || answer.length > 20000) {
+      throw new Error('请输入回答（最多 20000 个字符）。')
+    }
+    const contents = this.liveContents()
+    if (!contents) throw new Error('模型页面尚未就绪，请稍后重试。')
+    const outcome: unknown = await contents.executeJavaScript(
+      `window.__cmdTerminalInterceptor ? window.__cmdTerminalInterceptor.answerQuestion(${JSON.stringify(messageId)}, ${JSON.stringify(answer)}) : 'no-composer'`
+    )
+    console.info(`[embed:${this.platform.id}] question answer outcome=${String(outcome)} messageId=${messageId}`)
+    if (outcome !== 'ok') {
+      const messages: Record<string, string> = {
+        busy: '模型仍在生成，或网页输入框已有内容。请稍后重试，或先处理网页中的草稿。',
+        stuck: '回答已写入网页输入框，但尚未确认发送。可重试，或关闭弹框后在网页中手动发送。',
+        'insert-failed': '回答未能写入网页输入框，请稍后重试。',
+        stale: '这个问题已失效，请查看当前会话。',
+        'invalid-answer': '请输入回答（最多 20000 个字符）。'
+      }
+      throw new Error(messages[String(outcome)] ?? '模型页面尚未就绪，请稍后重试。')
+    }
+    // Do not clear a newer question that may have arrived while this send was awaited.
+    if (this.interceptor.pendingQuestion?.messageId === messageId) {
+      this.interceptor.pendingQuestion = null
+      this.handlers.onInterceptor(this.getInterceptorStatus())
+    }
+    return this.getInterceptorStatus()
   }
 
   /**
@@ -767,6 +809,7 @@ export class ChatGptEmbed {
    */
   setInterceptorEnabled(enabled: boolean): InterceptorStatus {
     this.interceptor.enabled = enabled
+    if (!enabled) this.interceptor.pendingQuestion = null
     void this.installInterceptor()
     const status = this.getInterceptorStatus()
     this.handlers.onInterceptor(status)
@@ -774,6 +817,7 @@ export class ChatGptEmbed {
   }
   /** Mark the current task finished and publish the interceptor state. */
   completeTask(): InterceptorStatus {
+    this.interceptor.pendingQuestion = null
     if (this.interceptor.taskStartedAt !== null && this.interceptor.taskFinishedAt === null) {
       this.interceptor.taskFinishedAt = Date.now()
     }
@@ -1150,11 +1194,55 @@ export class ChatGptEmbed {
         }
         break
       case 'sent':
+        this.interceptor.pendingQuestion = null
         this.interceptor.lastSentText = payload.text ?? null
         if (this.interceptor.taskStartedAt === null || this.interceptor.taskFinishedAt !== null) {
           this.interceptor.taskStartedAt = Date.now()
         }
         this.interceptor.taskFinishedAt = null
+        break
+      case 'question':
+        {
+          const candidates: unknown[] = Array.isArray(payload.questions)
+            ? payload.questions
+            : typeof payload.question === 'string'
+              ? [{ question: payload.question, placeholder: payload.placeholder }]
+              : []
+          const questions: PendingQuestionItem[] = candidates.map((item) => {
+            if (!item || typeof item !== 'object') return null
+            const value = item as { question?: unknown; placeholder?: unknown }
+            if (
+              typeof value.question !== 'string' || value.question.trim() === '' || value.question.length > 16000 ||
+              (value.placeholder !== undefined && (typeof value.placeholder !== 'string' || value.placeholder.length > 1000))
+            ) return null
+            return {
+              question: value.question.trim(),
+              placeholder: typeof value.placeholder === 'string' ? value.placeholder.trim() : ''
+            }
+          }).filter((item): item is PendingQuestionItem => item !== null)
+          if (
+            this.interceptor.enabled && payload.live === true &&
+            typeof payload.messageId === 'string' && payload.messageId !== '' &&
+            questions.length === candidates.length && questions.length >= 1 && questions.length <= 20
+          ) {
+            this.interceptor.pendingQuestion = {
+              messageId: payload.messageId,
+              questions
+            }
+            console.info(`[embed:${this.platform.id}] question waiting messageId=${payload.messageId}`)
+            // Capture the clarification immediately so the alternate conversation view
+            // shows the model's questions alongside the later user answers. The injected
+            // page script also reports assistant-message for this turn; the database's
+            // source-message uniqueness makes that duplicate harmless.
+            this.handlers.onAssistantMessage(
+              payload.messageId,
+              questions.map((item, index) => `${index + 1}. ${item.question}`).join('\n')
+            )
+          }
+        }
+        break
+      case 'question-cleared':
+        if (this.interceptor.pendingQuestion?.messageId === payload.messageId) this.interceptor.pendingQuestion = null
         break
       case 'task-finished':
         /*

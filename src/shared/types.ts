@@ -34,6 +34,7 @@ export const IpcChannels = {
   conversationsChanged: 'conversations:changed',
   interceptorGetState: 'interceptor:get-state',
   interceptorSetEnabled: 'interceptor:set-enabled',
+  interceptorAnswerQuestion: 'interceptor:answer-question',
   interceptorEndTask: 'interceptor:end-task',
   interceptorEvent: 'interceptor:event',
   settingsGet: 'settings:get',
@@ -561,12 +562,12 @@ const OUTPUT_FORMAT_SECTION = [
   '按“目标→一条命令→真实结果→下一步”循环；每轮只推进一个可验证步骤，等结果再继续，不猜结果、不重复成功命令。',
   '',
   '【需要执行时】',
-  '只输出一个 ```json 代码块，外面不要有文字：',
+  '只输出一个 JSON 代码块，外面不要有文字：',
   '```json',
   '{"command":"...","description":"...","timeout_seconds":120}',
   '```',
   'command 是当前 shell 可直接执行的一条命令；有依赖的动作在其中用 shell 连接符。description 用中文一句话说明目的，不要只复制命令；timeout_seconds 为按工作量估算的 1–1800 整数。',
-  'JSON 必须合法：双引号、反斜杠、换行正确转义；命令中的 _、$、* 原样保留。',
+    'JSON 必须合法：双引号、反斜杠、换行正确转义；命令中的 _、$、* 原样保留。',
   '',
   '【读取结果】',
   '以用户回传的命令、输出、目录、退出码为真实状态；0 继续，非 0/超时/中断/断线先诊断并给最小修正。空输出不等于失败。',
@@ -620,8 +621,13 @@ const TASK_ROUTING_SECTION = [
 const ASK_USER_SECTION = [
   '【判断与确认】',
   '目标明确且可逆时直接推进；先只读核实路径、文件、版本和状态。',
-  '目标含糊、缺少用户信息、方案会改变结果或工具未安装时，先用中文说明事实/不确定点/方案/建议并提问；不擅自安装或选差方案。',
-  '删除、覆盖、格式化、改权限、发布、发消息、付费等不可逆动作，范围不明先确认；目标明确的代码修改、构建、测试可直接做。提问不输出 JSON，答复后恢复。'
+  '目标含糊、缺少用户信息、方案会改变结果或工具未安装时，暂停并询问；不擅自安装或选差方案。',
+  '询问时只输出一个 JSON 代码块，外面不要有文字：',
+  '```json',
+  '{"type":"questions","questions":[{"question":"需要用户回答的问题","placeholder":"可选提示"}]}',
+  '```',
+  'questions 为 1~20 项；question 必填，placeholder 可省略。软件逐页收集回答，按题号合并后一次发回。',
+  '删除、覆盖、格式化、改权限、发布、发消息、付费等不可逆动作，范围不明先询问；目标明确的代码修改、构建、测试可直接做。用户回答会发回并恢复循环。'
 ].join('\n')
 
 /** The parts of the prompt only true of a Windows PowerShell session. */
@@ -691,7 +697,7 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
     chainingRule,
     '语法符号用半角 ASCII；中文可写但不能用全角标点。',
     '管道末尾不要 Format-Table/List/Wide（会等完整输入而触发无输出超时）；让对象直接输出或 Select-Object。全仓搜索排除 node_modules/.git/out。',
-    '反斜杠加双引号 (\\") 不是转义；用反引号、单引号或 here-string，不要用 [char]39 拼接。字面匹配前把 CRLF 归一化为 LF。',
+    'PowerShell 和 JSON 是两层语法：PowerShell 中反斜杠加双引号 (\\") 不是转义，但 command 字符串里的字面双引号仍必须做 JSON 转义；PowerShell 内优先用反引号、单引号或 here-string，不要用 [char]39 拼接。字面匹配前把 CRLF 归一化为 LF。',
     '',
     ...fileIoSection,
     '',
@@ -826,7 +832,24 @@ export interface InterceptorStatus {
   taskStartedAt: number | null
   /** Epoch milliseconds when the final non-command assistant reply settled. */
   taskFinishedAt: number | null
+  /** A live clarification request waiting for the user's answers. */
+  pendingQuestion: PendingQuestion | null
   prefix: string
+}
+
+/** One item in a clarification request lifted out of a live assistant reply. */
+export interface PendingQuestionItem {
+  /** The question shown on one page of the app dialog. */
+  question: string
+  /** Optional input hint supplied by the model. */
+  placeholder: string
+}
+
+export interface PendingQuestion {
+  /** Assistant message id, used to ignore duplicate DOM scans. */
+  messageId: string
+  /** Questions shown one at a time in the paged app dialog. */
+  questions: PendingQuestionItem[]
 }
 
 /**
@@ -856,6 +879,8 @@ export interface InterceptorPageEvent {
     | 'user-image-capture'
     | 'assistant-message'
     | 'assistant-history-markdown'
+    | 'question'
+    | 'question-cleared'
     | 'task-finished'
     | 'send-failed'
     | 'send-recovery'
@@ -889,6 +914,11 @@ export interface InterceptorPageEvent {
   messageId?: string
   command?: string
   description?: string
+  /** Present on `question` events. */
+  question?: string
+  placeholder?: string
+  /** Present on `question` events; one page is rendered for each item. */
+  questions?: PendingQuestionItem[]
   /** Present on command events: absolute runtime limit selected for this command, in seconds. */
   timeoutSeconds?: number
   /** Present on `command` events: true when it answers a message we just sent. */
@@ -1384,6 +1414,8 @@ export interface AppApi {
   /** Terminal-mode send interceptor. */
   getInterceptorStatus(): Promise<InterceptorStatus>
   setInterceptorEnabled(enabled: boolean): Promise<InterceptorStatus>
+  /** Send the user's collected answers without re-injecting the prompt. */
+  answerQuestion(messageId: string, answer: string): Promise<InterceptorStatus>
   /** Stop the current model/terminal loop and mark the task as manually ended. */
   endTask(): Promise<InterceptorStatus>
   onInterceptorEvent(listener: (status: InterceptorStatus) => void): () => void
