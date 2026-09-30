@@ -4,6 +4,7 @@ import '../styles/global.css'
 const repoUrl = 'https://github.com/naledao/gpt-web-to-codex-terminal'
 const releasesUrl = `${repoUrl}/releases`
 const downloadUrl = `${repoUrl}/releases/latest/download/GPT-Web-to-Codex-Terminal-Setup.exe`
+const asset = (path: string) => `${import.meta.env.BASE_URL}${path}`
 ---
 
 <!doctype html>
@@ -11,114 +12,97 @@ const downloadUrl = `${repoUrl}/releases/latest/download/GPT-Web-to-Codex-Termin
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
-    <meta name="theme-color" content="#08111f" />
-    <meta name="description" content="把 AI 对话、本机终端、SSH 和 Git 放进一个专注的桌面工作区。GPT Web to Codex Terminal 是一款开源 Windows 工具。" />
-    <link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}favicon.svg`} />
-    <title>GPT Web to Codex Terminal · AI 与终端，在一个工作区</title>
+    <meta name="theme-color" content="#101319" />
+    <meta name="description" content="GPT Web to Codex Terminal：四种 AI、一个 Windows 工作区，连接终端、SSH 和项目上下文。" />
+    <link rel="icon" type="image/svg+xml" href={asset('favicon.svg')} />
+    <title>GPT Web to Codex Terminal · 让 AI 动手做事</title>
   </head>
   <body>
     <div class="site-shell">
+      <div class="scroll-progress" aria-hidden="true"></div>
       <header class="topbar">
         <a class="brand" href="#top" aria-label="GPT Web to Codex Terminal 首页">
           <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
           <span class="brand-copy"><strong>GPT <i>→</i> Codex</strong><small>TERMINAL WORKSPACE</small></span>
         </a>
         <nav class="nav-links" aria-label="主导航">
-          <a href="#models">四种 AI</a>
-          <a href="#features">能力</a>
-          <a href="#workflow">工作方式</a>
-          <a href="#install">安装</a>
-          <a href={repoUrl} target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+          <a href="#models">AI 模型</a>
+          <a href="#workspace">工作区</a>
+          <a href="#download">下载</a>
+          <a href={repoUrl} target="_blank" rel="noreferrer">GitHub</a>
         </nav>
-        <a class="nav-download" href={downloadUrl}>下载 Windows 版 <span aria-hidden="true">↓</span></a>
+        <a class="nav-download" href={downloadUrl} data-download>下载 Windows 版</a>
       </header>
 
       <main id="top">
-        <section class="hero section-grid">
+        <section class="hero" data-reveal data-reveal-immediate>
           <div class="hero-copy">
-            <div class="eyebrow"><span class="pulse-dot"></span> 开源 · Windows · MIT License</div>
-            <h1>让 AI 对话<br /><em>真正抵达终端。</em></h1>
-            <p class="hero-lede">把 ChatGPT、DeepSeek、Claude、Gemini，以及本机 PowerShell、SSH、项目文件和 Git 信息放进一个桌面工作区。模型理解目标，你掌控每一步执行。</p>
+            <div class="eyebrow"><span class="pulse-dot"></span> 开源桌面工作区 · Windows x64</div>
+            <h1>让 AI<br /><em>动手做事。</em></h1>
+            <p>ChatGPT、DeepSeek、Claude、Gemini，连接同一台机器和同一份项目上下文。</p>
             <div class="hero-actions">
-              <a class="button button-primary" href={downloadUrl} data-download>
-                <span class="button-icon">⌄</span>
-                <span><strong>下载 Windows 安装包</strong><small data-release-label>获取最新正式版本</small></span>
-              </a>
-              <a class="button button-ghost" href={repoUrl} target="_blank" rel="noreferrer"><span class="github-icon">◉</span> 查看源代码</a>
+              <a class="button button-primary" href={downloadUrl} data-download><span class="button-icon">↓</span><span><strong>下载 Windows 版</strong><small data-release-label>获取最新正式版本</small></span></a>
+              <a class="button button-ghost" href={repoUrl} target="_blank" rel="noreferrer">查看源代码</a>
             </div>
-            <div class="hero-meta"><span>当前版本 <strong data-version>v0.1.101</strong></span><span class="meta-separator"></span><span>Windows x64 · NSIS</span><span class="meta-separator"></span><a href={releasesUrl} target="_blank" rel="noreferrer">查看 Release ↗</a></div>
+            <div class="hero-meta"><span>Windows 10 / 11</span><span class="meta-separator"></span><span>MIT License</span><span class="meta-separator"></span><a href={releasesUrl} target="_blank" rel="noreferrer">查看 Release</a></div>
           </div>
 
-          <div class="hero-visual" aria-label="应用工作区预览">
-            <div class="visual-orbit orbit-one"></div>
-            <div class="visual-orbit orbit-two"></div>
-            <div class="app-window">
-              <div class="window-bar"><div class="window-dots"><span></span><span></span><span></span></div><div class="window-title"><i></i> GPT → Codex Terminal</div><div class="window-actions">—　□　×</div></div>
-              <div class="window-body">
-                <aside class="mini-sidebar"><div class="mini-logo">⌁</div><div class="mini-side-line active"></div><div class="mini-side-line"></div><div class="mini-side-line"></div><div class="mini-side-line short"></div><div class="mini-side-bottom">⚙</div></aside>
-                <div class="mini-terminal"><div class="mini-toolbar"><span>终端</span><b>●</b><small>PowerShell</small></div><div class="terminal-code"><span class="comment"># 探索本机环境</span><br /><span class="prompt">&gt;</span> $os = Get-CimInstance<br /><span class="prompt">&gt;</span> $os.Caption<br /><strong>Microsoft Windows 11 企业版</strong><br /><span class="prompt">&gt;</span> git status<br /><span class="muted">On branch main</span><br /><span class="prompt">&gt;</span> <span class="cursor"></span></div><div class="mini-input"><span>&gt;</span> 直接在本机执行命令</div></div>
-                <div class="mini-chat"><div class="chat-tabs"><span class="selected">聊天</span><span>工作</span></div><div class="chat-space"><span class="chat-orb">✦</span><p>随时可以开始。</p></div><div class="chat-input"><span>＋</span><span class="current-model-prompt" data-model-label>询问 ChatGPT</span><b>◉</b></div></div>
-                <aside class="mini-inspector"><div class="inspector-head">侧栏 <span>»</span></div><div class="inspector-section"><b>终端模式</b><span class="toggle"></span></div><div class="mode-switch"><span class="active">手动执行</span><span>自动执行</span></div><p>模型提出一条命令，执行结果会回到对话。</p><div class="inspector-pill">已连接</div></aside>
+          <div class="hero-preview" data-parallax="0.12" aria-label="应用工作区预览">
+            <div class="preview-orbit preview-orbit-a"></div>
+            <div class="preview-orbit preview-orbit-b"></div>
+            <div class="preview-window">
+              <div class="preview-bar"><span class="window-dots"><i></i><i></i><i></i></span><strong>GPT → Codex Terminal</strong><span>Windows / workspace</span></div>
+              <div class="preview-body">
+                <aside class="preview-rail"><span class="rail-logo">⌁</span><i class="active"></i><i></i><i></i><i></i><span class="rail-bottom">⚙</span></aside>
+                <div class="preview-terminal"><div class="preview-label">TERMINAL <span>PowerShell</span></div><div class="terminal-lines"><span># inspect workspace</span><b>&gt; git status</b><strong>On branch main</strong><b>&gt; npm run build</b><em>✓ build complete</em><b>&gt;</b><span class="cursor"></span></div></div>
+                <div class="preview-chat"><div class="chat-top"><span>当前模型</span><strong data-model-label>ChatGPT</strong></div><div class="chat-empty"><span>✦</span><p>准备开始下一项任务。</p></div><div class="chat-compose"><span>＋</span><span>询问 <b data-model-label>ChatGPT</b></span><i>↑</i></div></div>
+                <aside class="preview-control"><span>CONTROL</span><strong>手动执行</strong><small>命令先审阅，再运行</small><i>● 已连接</i></aside>
               </div>
             </div>
-            <div class="floating-card card-terminal"><span class="card-icon blue">⌘</span><span><strong>本机 + SSH</strong><small>每个会话独立持久</small></span></div>
-            <div class="floating-card card-model"><span class="model-stack model-stack-mini" aria-hidden="true"><img src={`${import.meta.env.BASE_URL}platforms/ChatGPT.svg`} alt="" /><img src={`${import.meta.env.BASE_URL}platforms/DeepSeek.svg`} alt="" /><img src={`${import.meta.env.BASE_URL}platforms/Claude.svg`} alt="" /><img src={`${import.meta.env.BASE_URL}platforms/Gemini.svg`} alt="" /></span><span><strong>四种 AI 模型</strong><small>随时切换，保持同一工作区</small></span></div>
+            <div class="preview-float preview-float-terminal"><span>⌘</span><strong>本机 + SSH</strong><small>独立会话</small></div>
+            <div class="preview-float preview-float-model"><div class="model-stack" aria-hidden="true"><img src={asset('platforms/ChatGPT.svg')} alt="" /><img src={asset('platforms/DeepSeek.svg')} alt="" /><img src={asset('platforms/Claude.svg')} alt="" /><img src={asset('platforms/Gemini.svg')} alt="" /></div><strong>4 AI</strong><small>同一工作区</small></div>
           </div>
         </section>
 
-        <section class="trust-strip" aria-label="产品摘要"><div><span class="trust-number">01</span><span>四种 AI，一个工作区</span></div><div><span class="trust-number">02</span><span>命令与结果可追踪</span></div><div><span class="trust-number">03</span><span>开源，数据在你的设备</span></div><div class="trust-arrow">↓</div></section>
-
-        <section class="models-section" id="models">
-          <div class="models-heading">
-            <div class="eyebrow">FOUR AI ROUTES</div>
-            <h2>选择最合适的模型，<br /><em>继续同一项工作。</em></h2>
-            <p>不同模型负责不同节奏，终端、SSH 连接和项目上下文始终留在原位。点选一个入口，看看它在工作区中的位置。</p>
+        <section class="model-section" id="models" data-reveal>
+          <div class="section-lead"><div class="eyebrow">FOUR AI ROUTES</div><h2>一个工作区，<br /><em>四种选择。</em></h2><p>换模型，不换上下文。</p></div>
+          <div class="model-panel">
+            <div class="model-panel-head"><span class="status-dot"></span><span>MODEL ROUTER</span><b>READY</b></div>
+            <div class="model-current"><small>当前入口</small><strong data-model-title>ChatGPT</strong><p data-model-caption>通用推理与任务拆解。</p></div>
+            <div class="model-context"><span>共享</span><i>PowerShell</i><i>SSH</i><i>Git</i></div>
           </div>
-          <div class="models-layout">
-            <div class="model-console">
-              <div class="console-topline"><span class="console-dot"></span><span>MODEL ROUTER</span><span class="console-status">READY</span></div>
-              <div class="console-current"><span class="console-label">当前入口</span><strong data-model-title>ChatGPT</strong><p data-model-caption>通用推理与任务拆解，适合从目标开始建立执行计划。</p></div>
-              <div class="console-context"><span>共享上下文</span><span class="context-chip">PowerShell</span><span class="context-chip">SSH</span><span class="context-chip">Git</span></div>
-              <div class="console-line"><span>&gt;</span><span>switch --keep-context</span><b>●</b></div>
-            </div>
-            <div class="model-grid" role="list" aria-label="四种 AI 模型">
-              <button class="model-card model-card-chatgpt selected" type="button" data-model-switch data-model="ChatGPT" data-caption="通用推理与任务拆解，适合从目标开始建立执行计划。" aria-pressed="true">
-                <span class="model-card-top"><span class="model-icon"><img src={`${import.meta.env.BASE_URL}platforms/ChatGPT.svg`} alt="" /></span><span class="model-card-index">01</span></span>
-                <strong>ChatGPT</strong><span>通用推理与任务拆解</span>
-              </button>
-              <button class="model-card model-card-deepseek" type="button" data-model-switch data-model="DeepSeek" data-caption="中文任务与高密度推理，适合快速拆解复杂问题。" aria-pressed="false">
-                <span class="model-card-top"><span class="model-icon"><img src={`${import.meta.env.BASE_URL}platforms/DeepSeek.svg`} alt="" /></span><span class="model-card-index">02</span></span>
-                <strong>DeepSeek</strong><span>中文任务与深度思考</span>
-              </button>
-              <button class="model-card model-card-claude" type="button" data-model-switch data-model="Claude" data-caption="长上下文与代码审阅，适合持续阅读和修改项目。" aria-pressed="false">
-                <span class="model-card-top"><span class="model-icon"><img src={`${import.meta.env.BASE_URL}platforms/Claude.svg`} alt="" /></span><span class="model-card-index">03</span></span>
-                <strong>Claude</strong><span>长上下文与代码审阅</span>
-              </button>
-              <button class="model-card model-card-gemini" type="button" data-model-switch data-model="Gemini" data-caption="多模态探索与快速协作，适合把更多信息带进对话。" aria-pressed="false">
-                <span class="model-card-top"><span class="model-icon"><img src={`${import.meta.env.BASE_URL}platforms/Gemini.svg`} alt="" /></span><span class="model-card-index">04</span></span>
-                <strong>Gemini</strong><span>多模态探索与快速协作</span>
-              </button>
-            </div>
+          <div class="model-list" aria-label="四种 AI 模型">
+            <button class="model-card selected" type="button" data-model-switch data-model="ChatGPT" data-caption="通用推理与任务拆解。" aria-pressed="true"><span class="model-card-top"><span class="model-icon"><img src={asset('platforms/ChatGPT.svg')} alt="" /></span><small>01</small></span><strong>ChatGPT</strong><span>通用推理</span></button>
+            <button class="model-card" type="button" data-model-switch data-model="DeepSeek" data-caption="中文任务与高密度推理。" aria-pressed="false"><span class="model-card-top"><span class="model-icon"><img src={asset('platforms/DeepSeek.svg')} alt="" /></span><small>02</small></span><strong>DeepSeek</strong><span>深度思考</span></button>
+            <button class="model-card" type="button" data-model-switch data-model="Claude" data-caption="长上下文与代码审阅。" aria-pressed="false"><span class="model-card-top"><span class="model-icon"><img src={asset('platforms/Claude.svg')} alt="" /></span><small>03</small></span><strong>Claude</strong><span>代码审阅</span></button>
+            <button class="model-card" type="button" data-model-switch data-model="Gemini" data-caption="多模态探索与快速协作。" aria-pressed="false"><span class="model-card-top"><span class="model-icon"><img src={asset('platforms/Gemini.svg')} alt="" /></span><small>04</small></span><strong>Gemini</strong><span>多模态协作</span></button>
           </div>
         </section>
 
-        <section class="features-section section-grid" id="features">
-          <div class="section-intro"><div class="eyebrow">WHY GPT → CODEX</div><h2>把上下文留在<br /><em>同一个地方。</em></h2><p>少一点复制粘贴，多一点连续工作。工作区让模型看到目标，也让你看到正在发生什么。</p></div>
-          <div class="feature-grid">
-            <article class="feature-card feature-card-wide"><div class="feature-number">01 / CONTEXT</div><div class="feature-symbol">◎</div><h3>对话和终端并排</h3><p>AI 的建议紧挨着真实执行环境。你可以查看命令、运行结果和当前目录，不必在窗口之间来回切换。</p><div class="feature-line"><span></span><span></span><span></span><span></span><span></span></div></article>
-            <article class="feature-card"><div class="feature-number">02 / CONNECTION</div><div class="feature-symbol">⌁</div><h3>本机或 SSH</h3><p>为每台机器建立独立会话，保存终端状态、工作目录和连接信息。</p><div class="connection-chips"><span>LOCAL</span><span>SSH</span><span>64-BIT</span></div></article>
-            <article class="feature-card"><div class="feature-number">03 / CONTROL</div><div class="feature-symbol">◇</div><h3>每一步由你掌控</h3><p>手动执行或开启自动循环。执行之前看清命令，随时暂停或终止任务。</p><div class="control-bar"><span class="active"></span><span></span><span></span><b>SAFE MODE</b></div></article>
-            <article class="feature-card feature-card-wide accent-card"><div><div class="feature-number">04 / PROJECT</div><div class="feature-symbol">⌘</div><h3>文件、Git、差异视图</h3><p>浏览远程文件、查看 Git 历史和 diff，把项目上下文带回当前对话。</p></div><div class="diff-preview"><span class="diff-title">README.md</span><span class="diff-minus">− 旧的工作方式</span><span class="diff-plus">+ 一个连续的工作区</span><span class="diff-plus">+ 真实的执行反馈</span></div></article>
+        <section class="workspace-section" id="workspace" data-reveal>
+          <div class="workspace-copy"><div class="eyebrow">THE WORKSPACE</div><h2>对话在左，<br /><em>结果在眼前。</em></h2><p>终端、对话和控制面板放在同一窗口。模型提出命令，你决定它何时运行。</p><div class="workspace-stats"><span><strong>4</strong> AI 入口</span><span><strong>∞</strong> 独立会话</span><span><strong>1</strong> 连续上下文</span></div></div>
+          <figure class="workspace-shot"><div class="shot-label"><span>WORKSPACE / 01</span><span>LIVE CONTEXT</span></div><img src={asset('screenshots/workspace.png')} alt="GPT Web to Codex Terminal 工作区截图" loading="lazy" /><figcaption>本机 PowerShell、模型入口和任务控制在同一窗口。</figcaption></figure>
+        </section>
+
+        <section class="capability-section" data-reveal>
+          <div class="capability-intro"><div class="eyebrow">WHAT IT CONNECTS</div><h2>从想法到<br /><em>可见结果。</em></h2></div>
+          <div class="capability-grid">
+            <article class="capability-card"><span class="card-index">01</span><div class="capability-icon">⌘</div><h3>本机与 SSH</h3><p>连接你的机器，保留独立终端状态。</p></article>
+            <article class="capability-card"><span class="card-index">02</span><div class="capability-icon">↗</div><h3>命令有回路</h3><p>审阅、执行、把输出带回对话。</p></article>
+            <article class="capability-card capability-card-dark"><span class="card-index">03</span><div class="capability-icon">◇</div><h3>项目有上下文</h3><p>文件、Git、差异视图就在手边。</p></article>
           </div>
         </section>
 
-        <section class="screenshot-section section-grid"><div class="screenshot-copy"><div class="eyebrow">ONE WORKSPACE</div><h2>从目标到结果，<br /><em>不丢上下文。</em></h2><p>左侧保持会话，中间连接四种模型和终端，右侧保留控制与记录。你可以让 AI 帮忙，也可以直接执行命令。</p><div class="mini-stat-grid"><div><strong>4</strong><span>模型入口</span></div><div><strong>∞</strong><span>独立会话</span></div><div><strong>1</strong><span>工作上下文</span></div></div></div><figure class="screenshot-frame"><div class="frame-label"><span>WORKSPACE / 01</span><span>GPT → CODEX</span></div><img src={`${import.meta.env.BASE_URL}screenshots/workspace.png`} alt="GPT Web to Codex Terminal 工作区截图" loading="lazy" /><figcaption>本机 PowerShell、四种模型入口和任务控制在同一窗口中协作。</figcaption></figure></section>
+        <section class="loop-section" data-reveal>
+          <div class="loop-copy"><div class="eyebrow">THE LOOP</div><h2>说清目标，<br /><em>看着它完成。</em></h2><p>每一步都能停下来检查。每一次输出都回到当前任务。</p></div>
+          <div class="loop-steps"><div><span>01</span><strong>描述</strong><small>告诉 AI 你要什么</small></div><i></i><div><span>02</span><strong>审阅</strong><small>确认下一条命令</small></div><i></i><div><span>03</span><strong>执行</strong><small>在目标机器上运行</small></div></div>
+        </section>
 
-        <section class="workflow-section" id="workflow"><div class="section-heading"><div class="eyebrow">HOW IT WORKS</div><h2>一条清晰的反馈回路。</h2><p>模型负责理解和提出建议，应用负责在你选择的机器上执行，并把结果带回当前对话。</p></div><div class="workflow-steps"><div class="workflow-step"><span class="step-index">01</span><div class="step-icon">↳</div><h3>描述目标</h3><p>告诉模型你想完成什么，保留项目和环境上下文。</p></div><div class="workflow-connector"></div><div class="workflow-step"><span class="step-index">02</span><div class="step-icon">⌘</div><h3>审阅命令</h3><p>模型一次提出一条结构化命令，你可以选择手动执行。</p></div><div class="workflow-connector"></div><div class="workflow-step"><span class="step-index">03</span><div class="step-icon">▶</div><h3>执行任务</h3><p>命令在本机 PowerShell 或 SSH 通道中运行。</p></div><div class="workflow-connector"></div><div class="workflow-step"><span class="step-index">04</span><div class="step-icon">↺</div><h3>回到对话</h3><p>退出码、输出和状态回到模型，继续下一步。</p></div></div></section>
+        <section class="download-section" id="download" data-reveal>
+          <div class="download-inner"><div class="eyebrow">READY WHEN YOU ARE</div><h2>把下一个任务<br /><em>交给工作区。</em></h2><p>免费下载 Windows x64 安装包。登录你已有的模型账号，马上开始。</p><div class="download-actions"><a class="button button-primary" href={downloadUrl} data-download><span class="button-icon">↓</span><span><strong>下载 Windows 版</strong><small data-release-label>最新正式版本</small></span></a><a class="button button-outline-light" href={releasesUrl} target="_blank" rel="noreferrer">所有 Release</a></div><div class="download-notes"><span>Windows 10 / 11</span><span>64-bit</span><span>MIT License</span></div></div>
+        </section>
 
-        <section class="install-section section-grid" id="install"><div class="install-card"><div class="install-glow"></div><div class="eyebrow">READY WHEN YOU ARE</div><h2>给你的下一个<br /><em>开发任务一个终端。</em></h2><p>免费下载 Windows x64 安装包。安装后登录 ChatGPT、DeepSeek、Claude 或 Gemini，选择一台机器，开始工作。</p><div class="install-actions"><a class="button button-primary" href={downloadUrl} data-download><span class="button-icon">⌄</span><span><strong>下载 Windows 版</strong><small data-release-label>最新正式版本</small></span></a><a class="button button-ghost light-button" href={releasesUrl} target="_blank" rel="noreferrer">查看所有 Release ↗</a></div><div class="install-notes"><span>Windows 10 / 11</span><span>64-bit</span><span>MIT License</span><span>开源项目</span></div></div><aside class="install-aside"><div class="eyebrow">TRUST &amp; CONTROL</div><h3>你始终知道<br />命令在哪里运行。</h3><ul><li><span>✓</span> 本机和 SSH 会话彼此隔离</li><li><span>✓</span> 每条命令都有明确的执行结果</li><li><span>✓</span> SSH 凭据由系统安全存储保护</li><li><span>✓</span> 源代码和更新公开在 GitHub</li></ul><a href={`${repoUrl}#security-boundary`} target="_blank" rel="noreferrer">查看安全边界 <span>↗</span></a></aside></section>
-
-        <section class="faq-section"><div class="section-heading"><div class="eyebrow">QUESTIONS, ANSWERED</div><h2>开始之前，先知道这些。</h2></div><div class="faq-list"><details open><summary>它需要 API Key 吗？<span>＋</span></summary><p>不需要。应用通过独立的网页分区打开 ChatGPT、DeepSeek、Claude 或 Gemini，你使用自己的登录状态。终端命令在你选择的本机或 SSH 主机上执行。</p></details><details><summary>四种模型可以共用一个工作区吗？<span>＋</span></summary><p>可以。切换模型只改变前台网页，终端、SSH 连接、工作目录和项目上下文继续保留。Gemini 还支持从真实浏览器导入登录态。</p></details><details><summary>下载的安装包从哪里来？<span>＋</span></summary><p>网站按钮直接指向本项目 GitHub Releases 的最新正式版本。你也可以打开 Release 页面查看版本、更新说明和源代码。</p></details><details><summary>我可以只手动执行命令吗？<span>＋</span></summary><p>可以。手动执行模式会在终端中显示模型提出的命令，你可以逐条运行；自动执行适合你已经确认过的重复任务。</p></details><details><summary>它支持哪些系统？<span>＋</span></summary><p>当前宣传页提供 Windows x64 NSIS 安装包。项目也保留 macOS 和 Linux 的打包配置，后续版本会根据实际发布情况提供对应下载。</p></details></div></section>
+        <section class="faq-section" data-reveal><div class="faq-heading"><div class="eyebrow">SHORT ANSWERS</div><h2>开始之前，知道三件事。</h2></div><div class="faq-list"><details open><summary>需要 API Key 吗？<span>＋</span></summary><p>不需要。使用你已有的 ChatGPT、DeepSeek、Claude 或 Gemini 登录状态。</p></details><details><summary>换模型会丢掉当前工作吗？<span>＋</span></summary><p>不会。终端、SSH、工作目录和项目上下文会继续保留。</p></details><details><summary>安装包从哪里下载？<span>＋</span></summary><p>按钮始终指向本项目 GitHub Releases 的最新 Windows 安装包。</p></details></div></section>
       </main>
 
       <footer class="footer"><div class="footer-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span></span><div><strong>GPT <i>→</i> Codex Terminal</strong><small>AI 对话与真实执行环境的连接层</small></div></div><div class="footer-links"><a href={repoUrl} target="_blank" rel="noreferrer">GitHub</a><a href={releasesUrl} target="_blank" rel="noreferrer">Releases</a><a href={`${repoUrl}/issues`} target="_blank" rel="noreferrer">反馈问题</a></div><div class="footer-bottom"><span>© 2026 GPT Web to Codex Terminal</span><span>Built for focused work.</span></div></footer>
@@ -134,9 +118,11 @@ const downloadUrl = `${repoUrl}/releases/latest/download/GPT-Web-to-Codex-Termin
       const modelTitleNodes = document.querySelectorAll('[data-model-title]')
       const modelCaptionNodes = document.querySelectorAll('[data-model-caption]')
       const modelLabelNodes = document.querySelectorAll('[data-model-label]')
+
       const formatDate = (value) => {
         try { return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(value)) } catch { return '' }
       }
+
       fetch(repo, { headers: { Accept: 'application/vnd.github+json' } })
         .then((response) => response.ok ? response.json() : Promise.reject(new Error('release lookup failed')))
         .then((release) => {
@@ -147,9 +133,7 @@ const downloadUrl = `${repoUrl}/releases/latest/download/GPT-Web-to-Codex-Termin
           const installer = release.assets?.find((asset) => asset.name.endsWith('.exe') && !asset.name.endsWith('.blockmap'))
           if (installer?.browser_download_url) downloadNodes.forEach((node) => { node.href = installer.browser_download_url })
         })
-        .catch(() => {
-          downloadNodes.forEach((node) => { node.href = fallbackDownload })
-        })
+        .catch(() => { downloadNodes.forEach((node) => { node.href = fallbackDownload }) })
 
       modelButtons.forEach((button) => {
         button.addEventListener('click', () => {
@@ -162,9 +146,40 @@ const downloadUrl = `${repoUrl}/releases/latest/download/GPT-Web-to-Codex-Termin
           })
           modelTitleNodes.forEach((node) => { node.textContent = model })
           modelCaptionNodes.forEach((node) => { node.textContent = caption })
-          modelLabelNodes.forEach((node) => { node.textContent = `询问 ${model}` })
+          modelLabelNodes.forEach((node) => { node.textContent = model })
         })
       })
+
+      const revealItems = document.querySelectorAll('[data-reveal]')
+      document.documentElement.classList.add('motion-ready')
+      const revealObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return
+          entry.target.classList.add('is-visible')
+          observer.unobserve(entry.target)
+        })
+      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' })
+      revealItems.forEach((item) => {
+        if (item.hasAttribute('data-reveal-immediate')) item.classList.add('is-visible')
+        revealObserver.observe(item)
+      })
+
+      const progress = document.querySelector('.scroll-progress')
+      const parallaxItems = document.querySelectorAll('[data-parallax]')
+      let ticking = false
+      const updateScrollMotion = () => {
+        const max = document.documentElement.scrollHeight - window.innerHeight
+        progress?.style.setProperty('--progress', max > 0 ? `${window.scrollY / max}` : '0')
+        parallaxItems.forEach((item) => {
+          const amount = Number(item.getAttribute('data-parallax')) || 0
+          item.style.setProperty('--parallax-y', `${window.scrollY * amount}px`)
+        })
+        ticking = false
+      }
+      window.addEventListener('scroll', () => {
+        if (!ticking) { window.requestAnimationFrame(updateScrollMotion); ticking = true }
+      }, { passive: true })
+      updateScrollMotion()
     </script>
   </body>
 </html>
