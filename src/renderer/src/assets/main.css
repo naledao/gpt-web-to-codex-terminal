@@ -38,6 +38,7 @@ body {
 }
 
 .app {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) var(--panel-width, 288px);
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -4573,24 +4574,34 @@ body {
 
 .terminal__prompt-link:hover { color: var(--text); }
 
-/* Model clarification dialog. The native page is hidden while this is open. */
+/* Model clarification widget. It stays in the DOM terminal column so the native chat page remains usable. */
 .modal--question {
+  position: absolute;
+  inset: auto auto 36px 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  width: var(--terminal-width, 400px);
+  max-width: 100vw;
+  height: auto;
+  padding: 10px;
   z-index: 360;
-  background: rgba(8, 14, 24, .58);
-  backdrop-filter: blur(5px);
+  background: transparent;
+  pointer-events: none;
 }
 
 .question-modal {
   display: flex;
   flex-direction: column;
-  width: min(620px, calc(100vw - 36px));
-  max-height: min(680px, calc(100vh - 36px));
+  width: min(420px, calc(100% - 20px));
+  max-height: min(680px, calc(100vh - 70px));
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 18px;
   background: var(--bg-chrome);
   color: var(--text);
   box-shadow: 0 26px 80px rgba(15, 23, 42, .3);
+  pointer-events: auto;
 }
 
 .question-modal__head {
@@ -4616,6 +4627,45 @@ body {
 
 .question-modal__title { margin: 0; color: var(--text); font-size: 20px; font-weight: 780; }
 .question-modal__subtitle { margin: 5px 0 0; color: var(--text-muted); font-size: 12px; }
+.question-modal__minimize {
+  flex: none;
+  align-self: flex-start;
+  min-height: 30px;
+  margin-left: auto;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.question-modal__minimize:hover { background: var(--bg-elevated); color: var(--text); }
+.question-modal__restore {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 5px 8px 5px 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.question-modal__restore:hover { color: var(--accent); }
+.question-modal__minimized-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.question-modal--minimized { width: min(220px, calc(100% - 20px)); border-radius: 12px; }
+.question-modal--minimized .question-modal__restore { min-height: 38px; }
+.question-modal--narrow { width: 100%; }
+.question-modal--narrow .question-modal__restore { justify-content: center; gap: 0; padding: 1px; }
+.question-modal--narrow .question-modal__icon { width: 24px; height: 24px; border-radius: 8px; font-size: 16px; }
+.question-modal--narrow .question-modal__minimized-label { display: none; }
 .question-modal__body { min-height: 0; overflow-y: auto; padding: 22px 24px 18px; }
 .question-modal__progress { margin: 0 0 10px; color: var(--text-muted); font-size: 12px; font-weight: 700; }
 .question-modal__question {
@@ -4626,6 +4676,9 @@ body {
   color: var(--text);
   font-size: 15px;
   line-height: 1.65;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
   white-space: pre-wrap;
 }
 .question-modal__input {
@@ -4678,7 +4731,7 @@ body {
 .question-modal__input:disabled { cursor: default; opacity: .55; }
 
 @media (max-width: 600px) {
-  .question-modal { width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
+  .question-modal:not(.question-modal--minimized) { width: min(420px, calc(100% - 20px)); max-height: calc(100vh - 70px); }
   .question-modal__head, .question-modal__body, .question-modal__foot { padding-left: 16px; padding-right: 16px; }
   .question-modal__hint { display: none; }
 }
@@ -11845,6 +11898,11 @@ body {
 .workspace[data-theme='dark'] .transfer-modal,
 .workspace[data-theme='dark'] .git-dialog {
   background: rgba(0, 0, 0, .78) !important;
+}
+
+/* The pending-question widget is non-blocking and must never add a page-wide backdrop. */
+.workspace[data-theme='dark'] .modal--question {
+  background: transparent !important;
 }
 
 .workspace[data-theme='dark'] .settings-modal,

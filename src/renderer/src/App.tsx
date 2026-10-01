@@ -345,6 +345,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const [questionPage, setQuestionPage] = useState(0)
   const [questionError, setQuestionError] = useState('')
   const [answeringQuestion, setAnsweringQuestion] = useState(false)
+  const [questionMinimized, setQuestionMinimized] = useState(false)
   /** Non-null while the working directory is being edited inline. */
   const [cwdDraft, setCwdDraft] = useState<string | null>(null)
   /**
@@ -965,6 +966,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     setQuestionPage(0)
     setQuestionError('')
     setAnsweringQuestion(false)
+    setQuestionMinimized(false)
   }, [pendingQuestion?.messageId])
 
   const updateQuestionDraft = useCallback((value: string): void => {
@@ -1425,13 +1427,14 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   }, [])
 
   /**
-   * The embedded page is a NATIVE view: it always paints above the DOM, so an
-   * overlay alone would be hidden behind it. Hide the view while a dialog is up.
+   * The embedded page is a NATIVE view: it always paints above the DOM. Regular dialogs hide
+   * it while they are open; the pending-question widget is deliberately excluded because it
+   * lives in the terminal column and must leave the chat page usable underneath.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && pendingQuestion === null)
+    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, pendingQuestion])
+  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -2707,57 +2710,83 @@ ${record.command}`
       </footer>
 
         {pendingQuestion && currentQuestion ? (
-          <div className="modal modal--question" role="dialog" aria-modal="true" aria-label="需要你的回答">
-            <div className="question-modal">
-              <div className="question-modal__head">
-                <span className="question-modal__icon" aria-hidden="true">?</span>
-                <div>
-                  <h2 className="question-modal__title">模型需要你的回答</h2>
-                  <p className="question-modal__subtitle">回答完全部问题后会发送回当前对话，并继续执行任务。</p>
-                </div>
-              </div>
-              <div className="question-modal__body">
-                <div className="question-modal__progress">第 {questionPage + 1} / {questionCount} 题</div>
-                <div className="question-modal__question">{currentQuestion.question}</div>
-                <textarea
-                  key={questionPage}
-                  autoFocus
-                  className="question-modal__input"
-                  value={currentQuestionDraft}
-                  placeholder={currentQuestion.placeholder || '输入你的回答…'}
-                  aria-label="回答模型的问题"
-                  disabled={answeringQuestion}
-                  onChange={(event) => {
-                    updateQuestionDraft(event.currentTarget.value)
-                  }}
-                  onKeyDown={(event) => {
-                    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-                      event.preventDefault()
-                      if (questionPage + 1 < questionCount) nextQuestion()
-                      else void answerQuestion()
-                    }
-                  }}
-                />
-                {questionError ? <p className="question-modal__error" role="alert">{questionError}</p> : null}
-              </div>
-              <div className="question-modal__foot">
-                <button type="button" className="question-modal__cancel" disabled={answeringQuestion} onClick={() => void cancelQuestion()}>取消并结束</button>
-                <span className="panel__spacer" />
-                <button type="button" className="question-modal__back" disabled={answeringQuestion || questionPage === 0} onClick={previousQuestion}>上一题</button>
-                <span className="question-modal__hint">{typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'} + Enter {questionPage + 1 < questionCount ? '下一题' : '发送'}</span>
+          <div className="modal modal--question" role="dialog" aria-modal="false" aria-label="需要你的回答">
+            {questionMinimized || terminalCollapsed ? (
+              <div className={terminalCollapsed ? 'question-modal question-modal--minimized question-modal--narrow' : 'question-modal question-modal--minimized'}>
                 <button
                   type="button"
-                  className="question-modal__confirm"
-                  disabled={answeringQuestion || !currentQuestionDraft.trim()}
+                  className="question-modal__restore"
+                  title="展开待回答问题"
+                  aria-label="展开待回答问题"
                   onClick={() => {
-                    if (questionPage + 1 < questionCount) nextQuestion()
-                    else void answerQuestion()
+                    setTerminalCollapsed(false)
+                    setQuestionMinimized(false)
                   }}
                 >
-                  {answeringQuestion ? '发送中…' : questionPage + 1 < questionCount ? '下一题' : '确认并发送'}
+                  <span className="question-modal__icon" aria-hidden="true">?</span>
+                  <span className="question-modal__minimized-label">待回答 · {questionPage + 1}/{questionCount}</span>
                 </button>
               </div>
-            </div>
+            ) : (
+              <div className="question-modal">
+                <div className="question-modal__head">
+                  <span className="question-modal__icon" aria-hidden="true">?</span>
+                  <div>
+                    <h2 className="question-modal__title">模型需要你的回答</h2>
+                    <p className="question-modal__subtitle">回答完全部问题后会发送回当前对话，并继续执行任务。</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="question-modal__minimize"
+                    title="收起问题弹框，继续操作主页面"
+                    aria-label="收起问题弹框，继续操作主页面"
+                    onClick={() => setQuestionMinimized(true)}
+                  >
+                    收起
+                  </button>
+                </div>
+                <div className="question-modal__body">
+                  <div className="question-modal__progress">第 {questionPage + 1} / {questionCount} 题</div>
+                  <div className="question-modal__question">{currentQuestion.question}</div>
+                  <textarea
+                    key={questionPage}
+                    className="question-modal__input"
+                    value={currentQuestionDraft}
+                    placeholder={currentQuestion.placeholder || '输入你的回答…'}
+                    aria-label="回答模型的问题"
+                    disabled={answeringQuestion}
+                    onChange={(event) => {
+                      updateQuestionDraft(event.currentTarget.value)
+                    }}
+                    onKeyDown={(event) => {
+                      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                        event.preventDefault()
+                        if (questionPage + 1 < questionCount) nextQuestion()
+                        else void answerQuestion()
+                      }
+                    }}
+                  />
+                  {questionError ? <p className="question-modal__error" role="alert">{questionError}</p> : null}
+                </div>
+                <div className="question-modal__foot">
+                  <button type="button" className="question-modal__cancel" disabled={answeringQuestion} onClick={() => void cancelQuestion()}>取消并结束</button>
+                  <span className="panel__spacer" />
+                  <button type="button" className="question-modal__back" disabled={answeringQuestion || questionPage === 0} onClick={previousQuestion}>上一题</button>
+                  <span className="question-modal__hint">{typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'} + Enter {questionPage + 1 < questionCount ? '下一题' : '发送'}</span>
+                  <button
+                    type="button"
+                    className="question-modal__confirm"
+                    disabled={answeringQuestion || !currentQuestionDraft.trim()}
+                    onClick={() => {
+                      if (questionPage + 1 < questionCount) nextQuestion()
+                      else void answerQuestion()
+                    }}
+                  >
+                    {answeringQuestion ? '发送中…' : questionPage + 1 < questionCount ? '下一题' : '确认并发送'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ) : null}
 
