@@ -37,11 +37,10 @@ const asset = (path: string) => `${import.meta.env.BASE_URL}${path}`
       <main id="top">
         <section class="hero" data-reveal data-reveal-immediate>
           <div class="hero-copy">
-            <div class="eyebrow"><span class="pulse-dot"></span> 开源桌面工作区 · Windows x64</div>
             <h1>让 AI<br /><em>动手做事。</em></h1>
             <p>ChatGPT、DeepSeek、Claude、Gemini，连接同一台机器和同一份项目上下文。</p>
             <div class="hero-actions">
-              <a class="button button-primary" href={downloadUrl} data-download><span class="button-icon">↓</span><span><strong>下载 Windows 版</strong><small data-release-label>获取最新正式版本</small></span></a>
+              <a class="button button-primary" href={downloadUrl} data-download><span class="button-icon" aria-hidden="true"></span><span><strong>下载 Windows 版</strong><small data-release-label>获取最新正式版本</small></span></a>
               <a class="button button-ghost" href={repoUrl} target="_blank" rel="noreferrer">查看源代码</a>
             </div>
             <div class="hero-meta"><span>Windows 10 / 11</span><span class="meta-separator"></span><span>MIT License</span><span class="meta-separator"></span><a href={releasesUrl} target="_blank" rel="noreferrer">查看 Release</a></div>
@@ -52,20 +51,15 @@ const asset = (path: string) => `${import.meta.env.BASE_URL}${path}`
             <div class="preview-orbit preview-orbit-b"></div>
             <div class="preview-window">
               <div class="preview-bar"><span class="window-dots"><i></i><i></i><i></i></span><strong>GPT → Codex Terminal</strong><span>Windows / workspace</span></div>
-              <div class="preview-body">
-                <aside class="preview-rail"><span class="rail-logo">⌁</span><i class="active"></i><i></i><i></i><i></i><span class="rail-bottom">⚙</span></aside>
-                <div class="preview-terminal"><div class="preview-label">TERMINAL <span>PowerShell</span></div><div class="terminal-lines"><span># inspect workspace</span><b>&gt; git status</b><strong>On branch main</strong><b>&gt; npm run build</b><em>✓ build complete</em><b>&gt;</b><span class="cursor"></span></div></div>
-                <div class="preview-chat"><div class="chat-top"><span>当前模型</span><strong data-model-label>ChatGPT</strong></div><div class="chat-empty"><span>✦</span><p>准备开始下一项任务。</p></div><div class="chat-compose"><span>＋</span><span>询问 <b data-model-label>ChatGPT</b></span><i>↑</i></div></div>
-                <aside class="preview-control"><span>CONTROL</span><strong>手动执行</strong><small>命令先审阅，再运行</small><i>● 已连接</i></aside>
-              </div>
+              <figure class="hero-product-shot"><img src={asset('screenshots/workspace.png')} alt="GPT Web to Codex Terminal 真实工作区截图" /><figcaption><span>LIVE WORKSPACE</span><span>PowerShell · AI · SSH</span></figcaption></figure>
             </div>
-            <div class="preview-float preview-float-terminal"><span>⌘</span><strong>本机 + SSH</strong><small>独立会话</small></div>
+            <div class="preview-float preview-float-terminal"><span class="float-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 7.5h14M5 12h8M5 16.5h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /><path d="M17 11.5 20 14l-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg></span><strong>本机 + SSH</strong><small>独立会话</small></div>
             <div class="preview-float preview-float-model"><div class="model-stack" aria-hidden="true"><img src={asset('platforms/ChatGPT.svg')} alt="" /><img src={asset('platforms/DeepSeek.svg')} alt="" /><img src={asset('platforms/Claude.svg')} alt="" /><img src={asset('platforms/Gemini.svg')} alt="" /></div><strong>4 AI</strong><small>同一工作区</small></div>
           </div>
         </section>
 
         <section class="model-section" id="models" data-reveal>
-          <div class="section-lead"><div class="eyebrow">FOUR AI ROUTES</div><h2>一个工作区，<br /><em>四种选择。</em></h2><p>换模型，不换上下文。</p></div>
+          <div class="section-lead"><h2>一个工作区，<br /><em>四种选择。</em></h2><p>换模型，不换上下文。</p></div>
           <div class="model-panel">
             <div class="model-panel-head"><span class="status-dot"></span><span>MODEL ROUTER</span><b>READY</b></div>
             <div class="model-current"><small>当前入口</small><strong data-model-title>ChatGPT</strong><p data-model-caption>通用推理与任务拆解。</p></div>
@@ -80,29 +74,29 @@ const asset = (path: string) => `${import.meta.env.BASE_URL}${path}`
         </section>
 
         <section class="workspace-section" id="workspace" data-reveal>
-          <div class="workspace-copy"><div class="eyebrow">THE WORKSPACE</div><h2>对话在左，<br /><em>结果在眼前。</em></h2><p>终端、对话和控制面板放在同一窗口。模型提出命令，你决定它何时运行。</p><div class="workspace-stats"><span><strong>4</strong> AI 入口</span><span><strong>∞</strong> 独立会话</span><span><strong>1</strong> 连续上下文</span></div></div>
+          <div class="workspace-copy"><h2>对话在左，<br /><em>结果在眼前。</em></h2><p>终端、对话和控制面板放在同一窗口。模型提出命令，你决定它何时运行。</p><div class="workspace-stats"><span><strong>4</strong> AI 入口</span><span><strong>∞</strong> 独立会话</span><span><strong>1</strong> 连续上下文</span></div></div>
           <figure class="workspace-shot"><div class="shot-label"><span>WORKSPACE / 01</span><span>LIVE CONTEXT</span></div><img src={asset('screenshots/workspace.png')} alt="GPT Web to Codex Terminal 工作区截图" loading="lazy" /><figcaption>本机 PowerShell、模型入口和任务控制在同一窗口。</figcaption></figure>
         </section>
 
         <section class="capability-section" data-reveal>
-          <div class="capability-intro"><div class="eyebrow">WHAT IT CONNECTS</div><h2>从想法到<br /><em>可见结果。</em></h2></div>
+          <div class="capability-intro"><h2>从想法到<br /><em>可见结果。</em></h2></div>
           <div class="capability-grid">
-            <article class="capability-card"><span class="card-index">01</span><div class="capability-icon">⌘</div><h3>本机与 SSH</h3><p>连接你的机器，保留独立终端状态。</p></article>
-            <article class="capability-card"><span class="card-index">02</span><div class="capability-icon">↗</div><h3>命令有回路</h3><p>审阅、执行、把输出带回对话。</p></article>
-            <article class="capability-card capability-card-dark"><span class="card-index">03</span><div class="capability-icon">◇</div><h3>项目有上下文</h3><p>文件、Git、差异视图就在手边。</p></article>
+            <article class="capability-card"><span class="card-index">01</span><div class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 7.5h14M5 12h8M5 16.5h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /><path d="M17 11.5 20 14l-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg></div><h3>本机与 SSH</h3><p>连接你的机器，保留独立终端状态。</p></article>
+            <article class="capability-card"><span class="card-index">02</span><div class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4.5 12h11.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /><path d="m12.7 7.8 4.3 4.2-4.3 4.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /><path d="M4.5 5.5v13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg></div><h3>命令有回路</h3><p>审阅、执行、把输出带回对话。</p></article>
+            <article class="capability-card capability-card-dark"><span class="card-index">03</span><div class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4.5 7.5h6l1.7 2h7.3v9H4.5v-11Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><path d="m8 14 2 2 5-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg></div><h3>项目有上下文</h3><p>文件、Git、差异视图就在手边。</p></article>
           </div>
         </section>
 
         <section class="loop-section" data-reveal>
-          <div class="loop-copy"><div class="eyebrow">THE LOOP</div><h2>说清目标，<br /><em>看着它完成。</em></h2><p>每一步都能停下来检查。每一次输出都回到当前任务。</p></div>
+          <div class="loop-copy"><h2>说清目标，<br /><em>看着它完成。</em></h2><p>每一步都能停下来检查。每一次输出都回到当前任务。</p></div>
           <div class="loop-steps"><div><span>01</span><strong>描述</strong><small>告诉 AI 你要什么</small></div><i></i><div><span>02</span><strong>审阅</strong><small>确认下一条命令</small></div><i></i><div><span>03</span><strong>执行</strong><small>在目标机器上运行</small></div></div>
         </section>
 
         <section class="download-section" id="download" data-reveal>
-          <div class="download-inner"><div class="eyebrow">READY WHEN YOU ARE</div><h2>把下一个任务<br /><em>交给工作区。</em></h2><p>免费下载 Windows x64 安装包。登录你已有的模型账号，马上开始。</p><div class="download-actions"><a class="button button-primary" href={downloadUrl} data-download><span class="button-icon">↓</span><span><strong>下载 Windows 版</strong><small data-release-label>最新正式版本</small></span></a><a class="button button-outline-light" href={releasesUrl} target="_blank" rel="noreferrer">所有 Release</a></div><div class="download-notes"><span>Windows 10 / 11</span><span>64-bit</span><span>MIT License</span></div></div>
+          <div class="download-inner"><h2>把下一个任务<br /><em>交给工作区。</em></h2><p>免费下载 Windows x64 安装包。登录你已有的模型账号，马上开始。</p><div class="download-actions"><a class="button button-primary" href={downloadUrl} data-download><span class="button-icon" aria-hidden="true"></span><span><strong>下载 Windows 版</strong><small data-release-label>最新正式版本</small></span></a><a class="button button-outline-light" href={releasesUrl} target="_blank" rel="noreferrer">所有 Release</a></div><div class="download-notes"><span>Windows 10 / 11</span><span>64-bit</span><span>MIT License</span></div></div>
         </section>
 
-        <section class="faq-section" data-reveal><div class="faq-heading"><div class="eyebrow">SHORT ANSWERS</div><h2>开始之前，知道三件事。</h2></div><div class="faq-list"><details open><summary>需要 API Key 吗？<span>＋</span></summary><p>不需要。使用你已有的 ChatGPT、DeepSeek、Claude 或 Gemini 登录状态。</p></details><details><summary>换模型会丢掉当前工作吗？<span>＋</span></summary><p>不会。终端、SSH、工作目录和项目上下文会继续保留。</p></details><details><summary>安装包从哪里下载？<span>＋</span></summary><p>按钮始终指向本项目 GitHub Releases 的最新 Windows 安装包。</p></details></div></section>
+        <section class="faq-section" data-reveal><div class="faq-heading"><h2>开始之前，知道三件事。</h2></div><div class="faq-list"><details open><summary>需要 API Key 吗？<span>＋</span></summary><p>不需要。使用你已有的 ChatGPT、DeepSeek、Claude 或 Gemini 登录状态。</p></details><details><summary>换模型会丢掉当前工作吗？<span>＋</span></summary><p>不会。终端、SSH、工作目录和项目上下文会继续保留。</p></details><details><summary>安装包从哪里下载？<span>＋</span></summary><p>按钮始终指向本项目 GitHub Releases 的最新 Windows 安装包。</p></details></div></section>
       </main>
 
       <footer class="footer"><div class="footer-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span></span><div><strong>GPT <i>→</i> Codex Terminal</strong><small>AI 对话与真实执行环境的连接层</small></div></div><div class="footer-links"><a href={repoUrl} target="_blank" rel="noreferrer">GitHub</a><a href={releasesUrl} target="_blank" rel="noreferrer">Releases</a><a href={`${repoUrl}/issues`} target="_blank" rel="noreferrer">反馈问题</a></div><div class="footer-bottom"><span>© 2026 GPT Web to Codex Terminal</span><span>Built for focused work.</span></div></footer>
