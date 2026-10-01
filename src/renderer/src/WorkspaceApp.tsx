@@ -476,7 +476,7 @@ export default function WorkspaceApp(): ReactElement {
         icon="⬆"
         confirmLabel={updateLive.phase === 'downloaded' ? '重启并安装' : updateLive.phase === 'downloading' ? '下载中…' : '下载更新'}
         cancelLabel="稍后"
-        busy={updateLive.phase === 'downloading'}
+        busy={updateDownloading || updateLive.phase === 'downloading'}
         dismissOnBackdrop={false}
         dismissOnEscape={false}
         onConfirm={() => { if (updateLive.phase === 'downloaded') installUpdate(); else void downloadUpdate() }}
