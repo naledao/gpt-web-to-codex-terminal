@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-01T00:00:00.000Z",
+  "title": "Design System: GPT Web to Codex Terminal",
+  "extensions": {
+    "colorMeta": {
+      "ink": { "role": "neutral", "displayName": "Deep Ink", "canonical": "#0b1014", "tonalRamp": ["#0b1014", "#121a20", "#1b272f", "#334047", "#56615f", "#77807a", "#a5aaa0", "#f2ede2"] },
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#f2ede2", "tonalRamp": ["#0b1014", "#29302d", "#4b514c", "#6d726b", "#8e9187", "#adafa4", "#d1cfc1", "#f2ede2"] },
+      "amber": { "role": "primary", "displayName": "Sodium Amber", "canonical": "#f4b544", "tonalRamp": ["#321e06", "#62420d", "#956b16", "#c08c26", "#f4b544", "#f7c66a", "#fbd991", "#fff0c9"] },
+      "signal-blue": { "role": "secondary", "displayName": "Signal Blue", "canonical": "#88a7ff", "tonalRamp": ["#141c3e", "#243261", "#3a4b86", "#5d76c0", "#88a7ff", "#a9bfff", "#cad6ff", "#eef1ff"] },
+      "signal-mint": { "role": "secondary", "displayName": "Signal Mint", "canonical": "#91d8ae", "tonalRamp": ["#102d21", "#1b543a", "#2c7953", "#4ca374", "#91d8ae", "#afe5c3", "#c9f0d6", "#eafaf0"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Compressed Display", "purpose": "Hero and section theses only." },
+      "label": { "displayName": "Instrument Mono", "purpose": "System state, metadata, and command context." }
+    },
+    "shadows": [
+      { "name": "workspace-ambient", "value": "0 25px 90px rgba(0,0,0,.4)", "purpose": "Give the product window physical presence." },
+      { "name": "download-ambient", "value": "0 25px 80px rgba(0,0,0,.28)", "purpose": "Separate the quick-start transcript from the room." }
+    ],
+    "motion": [
+      { "name": "state-transition", "value": "200ms ease", "purpose": "Button, navigation, and feature-row feedback." },
+      { "name": "cursor-blink", "value": "1.2s steps(2, jump-none) infinite", "purpose": "The transcript caret is the page's one repeating live signal." }
+    ],
+    "breakpoints": [
+      { "name": "stack", "value": "1050px" },
+      { "name": "mobile", "value": "720px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Square amber action for the main download or start path.",
+      "html": "<button class=\"ds-btn-primary\">下载桌面版 <svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M8 2.5v7M5.25 7.75 8 10.5l2.75-2.75M3 12.5h10\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 13px; height: 48px; padding: 0 18px; border: 0; background: #f4b544; color: #0b1014; font-family: Aptos, Segoe UI, Arial, sans-serif; font-weight: 600; font-size: .86rem; transition: background-color .2s ease, transform .2s ease; } .ds-btn-primary:hover { background: #ffd479; transform: translateY(-2px); } .ds-btn-primary:focus-visible { outline: 2px solid #f2ede2; outline-offset: 4px; } .ds-btn-primary svg { width: 16px; height: 16px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Transparent outlined action for alternate paths.",
+      "html": "<button class=\"ds-btn-secondary\">查看全部平台 <svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M2.5 8h10M8.5 4l4 4-4 4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 13px; height: 48px; padding: 0 18px; border: 1px solid rgba(242,237,226,.16); background: transparent; color: #f2ede2; font-family: Aptos, Segoe UI, Arial, sans-serif; font-weight: 600; font-size: .86rem; transition: border-color .2s ease, color .2s ease, transform .2s ease; } .ds-btn-secondary:hover { border-color: #f4b544; color: #f4b544; transform: translateY(-2px); } .ds-btn-secondary:focus-visible { outline: 2px solid #f4b544; outline-offset: 4px; } .ds-btn-secondary svg { width: 16px; height: 16px; }"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "nav",
+      "description": "Quiet mono-aware navigation that turns amber only on action.",
+      "html": "<nav class=\"ds-nav\"><button>工作流</button><button>能力</button><button>下载</button></nav>",
+      "css": ".ds-nav { display: flex; align-items: center; gap: 30px; } .ds-nav button { padding: 10px 0; border: 0; background: transparent; color: #c0bcad; font-family: Aptos, Segoe UI, Arial, sans-serif; font-size: .86rem; transition: color .2s ease; } .ds-nav button:hover, .ds-nav button:focus-visible { color: #f4b544; }"
+    },
+    {
+      "name": "Workflow Window",
+      "kind": "custom",
+      "refersTo": "hero-demo",
+      "description": "The signature product proof: a visible line from model intent to terminal output.",
+      "html": "<div class=\"ds-window\"><div class=\"ds-window-label\">WORKSPACE / LIVE</div><div class=\"ds-window-command\">› npm run build -- --profile</div><div class=\"ds-window-result\">✓ built in 18.4s</div></div>",
+      "css": ".ds-window { border: 1px solid rgba(244,181,68,.5); background: #0f171b; padding: 22px; color: #f2ede2; font-family: Aptos, Segoe UI, Arial, sans-serif; } .ds-window-label { color: #878b83; font: .59rem SFMono-Regular, Cascadia Code, monospace; letter-spacing: .12em; } .ds-window-command { margin-top: 35px; padding: 11px 13px; border-left: 1px solid #f4b544; background: rgba(244,181,68,.08); color: #f4b544; font: .72rem SFMono-Regular, Cascadia Code, monospace; } .ds-window-result { margin-top: 24px; border-top: 1px solid rgba(145,216,174,.18); padding-top: 14px; color: #91d8ae; font: .72rem SFMono-Regular, Cascadia Code, monospace; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Indoor Weather Workbench",
+    "overview": "The site treats a developer session like weather moving through a large room: warm amber light marks the active line of thought, cool blue describes the interface around it, and mint green confirms that a real result has landed. The page stays dark and quiet so the working loop can carry the attention. A broad horizon, thin rings, and reflected light imply the room without turning it into decoration.\n\nThe visual language is editorial and instrument-like. Large, condensed display type establishes the thesis; small mono labels pin the work to a real state; terminal snippets keep the promise concrete. Surfaces are rectangular, lightly ruled, and mostly flat. One soft ambient shadow is reserved for the actual workspace preview and demo, giving the product window a physical presence without building a card grid.",
+    "keyCharacteristics": ["Near-black room with paper-white type and one warm amber signal.", "Conversation, command, and result shown as one visible line.", "Thin rules and mono labels create instrument precision.", "Wide compositions collapse into stacked reading order on mobile."],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "Amber marks the current action. Blue and mint explain context and outcome; they never compete with the primary line.", "section": "colors" },
+      { "name": "The Three Voices Rule", "body": "Display type carries the promise, body type carries the explanation, and mono carries the state. Do not use mono for prose or display type for metadata.", "section": "typography" },
+      { "name": "The Flat Workbench Rule", "body": "Resting surfaces stay flat and ruled. Shadow appears only where a real product window needs to separate from the room.", "section": "elevation" }
+    ],
+    "dos": ["Do show a real command and a real-looking result wherever the page makes a product promise.", "Do use amber as the active signal and reserve mint for confirmed outcomes.", "Do keep rules thin, spacing generous, and the page rhythm editorial.", "Do preserve visible focus rings and respect reduced-motion preferences."],
+    "donts": ["Don't turn the page into a grid of identical icon cards.", "Don't use gradients as text, glass blur as a default surface, or hard offset shadows.", "Don't use mono as a costume for ordinary prose.", "Don't invent customer logos, benchmarks, pricing, or security claims."]
+  }
+}
