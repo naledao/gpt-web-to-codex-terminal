@@ -57,8 +57,20 @@
   --edge: inset 0 0 0 1px rgba(32, 56, 88, 0.08);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { height: 100%; }
+/*
+ * The Electron window is still a rectangular transparent surface. Keep the root surface
+ * transparent and clip it as well as the body, otherwise the page background can paint all
+ * the way into the native window's square corners on Windows.
+ */
+html {
+  height: 100%;
+  background: transparent;
+  border-radius: 16px;
+  overflow: hidden;
+  clip-path: inset(0 round 16px);
+}
 body {
+  height: 100%;
   border-radius: 16px;
   background: radial-gradient(120% 90% at 50% -10%, var(--bg-a) 0%, var(--bg-b) 55%), var(--bg-b);
   box-shadow: var(--edge);
@@ -69,6 +81,7 @@ body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  clip-path: inset(0 round 16px);
   user-select: none;
   -webkit-user-select: none;
   -webkit-app-region: drag;
