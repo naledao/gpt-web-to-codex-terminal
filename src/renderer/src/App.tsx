@@ -475,6 +475,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const questionCount = pendingQuestion?.questions.length ?? 0
   const currentQuestion = pendingQuestion?.questions[questionPage] ?? null
   const currentQuestionDraft = questionDrafts[questionPage] ?? ''
+  const showQuestionShortcut = Boolean(pendingQuestion && currentQuestion && (questionMinimized || terminalCollapsed))
 
   const waiting = useMemo(
     () => executions.filter((record) => RUNNABLE.has(record.status) || canRetryFiles(record)),
@@ -2722,7 +2723,7 @@ ${record.command}`
         />
       </section>
 
-      <footer className="statusbar">
+      <footer className={showQuestionShortcut ? 'statusbar statusbar--question' : 'statusbar'}>
         {embed.botCheckSince !== null ? (
           /*
             A bot-check interstitial is transient — measured at ~24s on claude.ai from a cold
@@ -2759,27 +2760,25 @@ ${record.command}`
           </span>
         ) : null}
         <span className="statusbar__spacer" />
+        {showQuestionShortcut ? (
+          <button
+            type="button"
+            className="statusbar__question"
+            title="展开待回答问题"
+            aria-label={`展开待回答问题，第 ${questionPage + 1} 题，共 ${questionCount} 题`}
+            onClick={() => {
+              setTerminalCollapsed(false)
+              setQuestionMinimized(false)
+            }}
+          >
+            <span className="question-modal__icon" aria-hidden="true">?</span>
+            <span>待回答 · {questionPage + 1}/{questionCount}</span>
+          </button>
+        ) : null}
       </footer>
 
-        {pendingQuestion && currentQuestion ? (
+        {pendingQuestion && currentQuestion && !questionMinimized && !terminalCollapsed ? (
           <div className="modal modal--question" role="dialog" aria-modal="false" aria-label="需要你的回答">
-            {questionMinimized || terminalCollapsed ? (
-              <div className={terminalCollapsed ? 'question-modal question-modal--minimized question-modal--narrow' : 'question-modal question-modal--minimized'}>
-                <button
-                  type="button"
-                  className="question-modal__restore"
-                  title="展开待回答问题"
-                  aria-label="展开待回答问题"
-                  onClick={() => {
-                    setTerminalCollapsed(false)
-                    setQuestionMinimized(false)
-                  }}
-                >
-                  <span className="question-modal__icon" aria-hidden="true">?</span>
-                  <span className="question-modal__minimized-label">待回答 · {questionPage + 1}/{questionCount}</span>
-                </button>
-              </div>
-            ) : (
               <div className="question-modal">
                 <div className="question-modal__head">
                   <span className="question-modal__icon" aria-hidden="true">?</span>
@@ -2799,7 +2798,9 @@ ${record.command}`
                 </div>
                 <div className="question-modal__body">
                   <div className="question-modal__progress">第 {questionPage + 1} / {questionCount} 题</div>
-                  <div className="question-modal__question">{currentQuestion.question}</div>
+                  <div className="question-modal__question">
+                    <MDEditor.Markdown source={currentQuestion.question} wrapperElement={{ 'data-color-mode': theme }} />
+                  </div>
                   <textarea
                     key={questionPage}
                     className="question-modal__input"
@@ -2838,7 +2839,6 @@ ${record.command}`
                   </button>
                 </div>
               </div>
-            )}
           </div>
         ) : null}
 
