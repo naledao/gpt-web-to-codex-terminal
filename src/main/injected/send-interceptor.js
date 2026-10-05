@@ -7,8 +7,8 @@
  *
  * Two jobs:
  *
- *  1. OUTBOUND — intercept the moment a message is about to be sent, prepend a
- *     fixed system prompt inside the composer, and only then actually submit.
+ *  1. OUTBOUND — intercept user sends, prepend the system prompt once per task,
+ *     and keep later sends on the same confirmed user-message path.
  *
  *  2. INBOUND — watch the thread for the assistant's reply, pull the JSON
  *     command out of it, and report it to the main process so it can be run.
@@ -152,12 +152,22 @@
     awaitingReplySince: 0,
     /** Remains true across clarification turns until explicit completion or manual end. */
     taskActive: false,
+    /** Only a confirmed user send carrying the prompt consumes this task's injection. */
+    taskPromptInjected: false,
+    /** Reject late sends/configuration from a task that has already ended. */
+    taskPromptGeneration: 0,
     /** A live question pauses the command loop until an explicit user answer. */
     pendingQuestion: null,
     /** Only this draft may be replaced when retrying a failed dialog submission. */
     answerDraft: null,
     /** Dedupe for the "looked like a command but would not parse" report. */
     lastUnparsedMessageId: null
+  }
+
+  let taskPromptConfigured = false
+  const resetTaskPrompt = () => {
+    state.taskPromptGeneration += 1
+    state.taskPromptInjected = false
   }
 
   /** User-image batches stay page-side until main explicitly asks for their bytes. */
@@ -1224,7 +1234,8 @@
     deadline = 0,
     recovery = 0,
     graceUntil = 0,
-    attachmentToken = null
+    attachmentToken = null,
+    sendContext = { taskPromptGeneration: state.taskPromptGeneration, promptInjected: false }
   ) => {
     /** Which recovery action THIS pass used, so the report can name it. */
     let recoveryTried = null
@@ -1237,8 +1248,17 @@
     const replyBaselineId = lastAssistantId()
 
     const finish = (ok) => {
+      if (sendContext.taskPromptGeneration !== state.taskPromptGeneration) {
+        discardUserImageCapture(attachmentToken)
+        if (done) done('stuck')
+        return
+      }
       state.programmatic = false
       if (ok) {
+        if (!isRaw) {
+          if (sendContext.promptInjected) state.taskPromptInjected = true
+          draftRejected = false
+        }
         // Once a message actually goes out, the next assistant turn is ours.
         state.awaitingReplySince = Date.now()
         state.taskActive = true
@@ -1259,7 +1279,11 @@
         ok
           ? isRaw
             ? { event: 'sent-raw', text: text.slice(0, 200) }
-            : { event: 'sent', text: userTextOf(text).slice(0, 400) }
+            : {
+                event: 'sent', text: userTextOf(text).slice(0, 400),
+                promptInjected: sendContext.promptInjected,
+                taskPromptGeneration: sendContext.taskPromptGeneration
+              }
           : {
               event: 'send-failed',
               text: text.slice(0, 200),
@@ -1267,6 +1291,13 @@
             }
       )
       if (done) done(ok ? 'ok' : 'stuck')
+    }
+
+    // A task may end during the initial send delay, retry wait or confirmation poll.
+    // Its old submission must never click Send or re-open the task afterwards.
+    if (sendContext.taskPromptGeneration !== state.taskPromptGeneration) {
+      finish(false)
+      return
     }
 
     const button = findSendButton()
@@ -1339,7 +1370,7 @@
       // The send button only enables once the editor has committed the edit, and it can
       // disappear entirely while a reply is streaming. Both are worth waiting out.
       setTimeout(
-        () => submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil, attachmentToken),
+        () => submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil, attachmentToken, sendContext),
         80
       )
       return
@@ -1351,6 +1382,10 @@
      */
     const confirmStartedAt = Date.now()
     const confirm = () => {
+      if (sendContext.taskPromptGeneration !== state.taskPromptGeneration) {
+        finish(false)
+        return
+      }
       const box = getComposer()
       if (!box || collapse(readComposer(box)) === '') {
         finish(true)
@@ -1370,14 +1405,14 @@
        */
       if (recoveryTried !== null) {
         if (recovery + 1 < RECOVERY_ACTIONS.length) {
-          submitWithRetry(text, attempt, isRaw, done, deadline, recovery + 1, graceUntil, attachmentToken)
+          submitWithRetry(text, attempt, isRaw, done, deadline, recovery + 1, graceUntil, attachmentToken, sendContext)
         } else {
           finish(false)
         }
         return
       }
       if (Date.now() < deadline) {
-        submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil, attachmentToken)
+        submitWithRetry(text, attempt + 1, isRaw, done, deadline, recovery, graceUntil, attachmentToken, sendContext)
         return
       }
       finish(false)
@@ -1470,10 +1505,11 @@
 
     const element = getComposer()
     if (!element) return false
-    // Already injected for this draft: let the site send it normally.
-    if (hasPrefix(element)) return false
-
-    const text = collapse(readComposer(element))
+    const draft = readComposer(element)
+    // A failed submit can leave our full draft in the editor. Reuse it on a user retry,
+    // while still confirming the send and recording only the user's words.
+    const prefixedDraft = hasPrefix(element) && draft.includes(USER_TEXT_SENTINEL)
+    const text = collapse(userTextOf(draft))
     const draftHasImage = hasDraftImageAttachment()
 
     /*
@@ -1498,6 +1534,22 @@
 
     event.preventDefault()
     event.stopImmediatePropagation()
+    state.programmatic = true
+
+    const sendContext = {
+      taskPromptGeneration: state.taskPromptGeneration,
+      promptInjected: prefixedDraft || !state.taskPromptInjected
+    }
+    if (state.taskPromptInjected || prefixedDraft) {
+      // Skipping the prefix must still capture images, publish the user turn and arm
+      // the next reply. Synthetic Enter/click events bypass this handler above.
+      submitWithRetry(
+        draft, 0, false, null,
+        Date.now() + SEND_ATTEMPT_BUDGET_MS, 0,
+        Date.now() + SEND_BUTTON_GRACE_MS, attachmentToken, sendContext
+      )
+      return true
+    }
 
     /*
      * ONE write, carrying everything.
@@ -1544,7 +1596,8 @@
         Date.now() + SEND_ATTEMPT_BUDGET_MS,
         0,
         Date.now() + SEND_BUTTON_GRACE_MS,
-        attachmentToken
+        attachmentToken,
+        { ...sendContext, promptInjected: false }
       )
       return true
     }
@@ -1580,7 +1633,8 @@
           Date.now() + SEND_ATTEMPT_BUDGET_MS,
           0,
           Date.now() + SEND_BUTTON_GRACE_MS,
-          attachmentToken
+          attachmentToken,
+          sendContext
         ),
       60
     )
@@ -2111,7 +2165,10 @@
         const completed = text.trimStart().startsWith('【任务完成】')
         state.lastCommandMessageId = messageId
         state.awaitingReplySince = 0
-        if (completed) state.taskActive = false
+        if (completed) {
+          state.taskActive = false
+          resetTaskPrompt()
+        }
         // ChatGPT can remove the stop control before its Markdown renderer has
         // replaced the final plain text with <code>/<strong>/<table> nodes. Read
         // once more after that DOM pass so the database keeps the formatting.
@@ -2646,6 +2703,20 @@
       if (!config) return { ...state }
       if (typeof config.enabled === 'boolean') state.enabled = config.enabled
       if (typeof config.prefix === 'string') state.prefix = config.prefix
+      // Restore main's snapshot after a full reload, or accept a NEW task boundary.
+      // Reconfiguring the same task (environment probe, mode toggle) must not undo a
+      // prompt send that the page has confirmed before main receives its report.
+      if (Number.isSafeInteger(config.taskPromptGeneration) &&
+          config.taskPromptGeneration >= state.taskPromptGeneration &&
+          (!taskPromptConfigured || config.taskPromptGeneration > state.taskPromptGeneration)) {
+        if (config.taskPromptGeneration > state.taskPromptGeneration) {
+          state.programmatic = false
+          draftRejected = false
+        }
+        state.taskPromptGeneration = config.taskPromptGeneration
+        state.taskPromptInjected = config.taskPromptInjected === true
+        taskPromptConfigured = true
+      }
       /*
        * The site's selectors arrive with the config, because this script is injected as
        * source and cannot import anything: the main process is the only place that knows
@@ -2733,8 +2804,11 @@
       })
 
       if (stop && typeof stop.click === 'function') stop.click()
+      state.programmatic = false
       state.awaitingReplySince = 0
       state.taskActive = false
+      resetTaskPrompt()
+      draftRejected = false
       state.pendingQuestion = null
       state.answerDraft = null
       state.lastCommandMessageId = lastAssistantId()
@@ -2763,6 +2837,7 @@
       }
 
       const payload = normalizeLineEndings(text)
+      const taskPromptGeneration = state.taskPromptGeneration
 
       state.programmatic = true
       let inserted = false
@@ -2794,7 +2869,7 @@
         // a newer command result is being retried, flip programmatic=false, and
         // let the normal click interceptor prepend the system prompt to that raw result.
         timeout = setTimeout(() => {
-          state.programmatic = false
+          if (taskPromptGeneration === state.taskPromptGeneration) state.programmatic = false
           done('stuck')
         }, SEND_TIMEOUT_MS)
 

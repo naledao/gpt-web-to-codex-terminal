@@ -294,8 +294,8 @@ export class ChatGptEmbed {
   private firstLoadDone = false
 
   /**
-   * Terminal mode is ON by default: every outgoing message gets the system
-   * prompt prepended inside the composer before it is submitted.
+   * Terminal mode is ON by default: the first user send in each task carries
+   * the system prompt; later sends still use the confirmed user-message path.
    */
   private interceptor: InterceptorStatus = {
     enabled: true,
@@ -309,6 +309,9 @@ export class ChatGptEmbed {
     // setPromptParts(); see buildTerminalPrompt().
     ...buildTerminalPromptParts(FALLBACK_ENVIRONMENT)
   }
+  /** Kept per view so a full page reload preserves the current task's injection. */
+  private taskPromptInjected = false
+  private taskPromptGeneration = 0
 
   /**
    * Replace the injected prompt.
@@ -825,6 +828,7 @@ export class ChatGptEmbed {
   }
   /** Mark the current task finished and publish the interceptor state. */
   completeTask(): InterceptorStatus {
+    this.resetTaskPrompt()
     this.interceptor.pendingQuestion = null
     if (this.interceptor.taskStartedAt !== null && this.interceptor.taskFinishedAt === null) {
       this.interceptor.taskFinishedAt = Date.now()
@@ -832,6 +836,14 @@ export class ChatGptEmbed {
     const status = this.getInterceptorStatus()
     this.handlers.onInterceptor(status)
     return status
+  }
+  /** A completed task or a different conversation needs a fresh prompt on its next send. */
+  resetTaskPrompt(): void {
+    this.taskPromptInjected = false
+    this.taskPromptGeneration += 1
+    // Only update the prompt boundary: a fast next user send may already be awaiting
+    // its reply when this configuration reaches the page.
+    if (this.liveContents()) void this.installInterceptor(false)
   }
   /** Stop the page-side task loop and publish a finished task state immediately. */
   async endTask(): Promise<InterceptorStatus> {
@@ -859,16 +871,18 @@ export class ChatGptEmbed {
    * page's own React handlers use, so our capture-phase listeners see the same
    * events they do.
    */
-  async installInterceptor(): Promise<void> {
+  async installInterceptor(armBaseline = this.armBaselineOnInstall): Promise<void> {
     const contents = this.liveContents()
     if (!contents) return
 
     const config = JSON.stringify({
       enabled: this.interceptor.enabled,
       prefix: this.interceptor.prefix,
+      taskPromptInjected: this.taskPromptInjected,
+      taskPromptGeneration: this.taskPromptGeneration,
       // A full page (re)load must also suppress whatever it restores from
       // history, otherwise an old reply would look like a fresh command.
-      armBaseline: this.armBaselineOnInstall,
+      armBaseline,
       // Which site's DOM to work against. The injected script is source text, so the
       // platform cannot be imported there — this is the only route it has.
       page: this.platform.page
@@ -923,8 +937,8 @@ export class ChatGptEmbed {
 
   /**
    * Push command output into the composer and submit it, deliberately WITHOUT
-   * the system prompt: the prompt is already established by the first message of
-   * the conversation, and re-sending it every round would bloat the context.
+   * the system prompt: the prompt is already established by the first user message
+   * of the task, and re-sending it every round would bloat the context.
    *
    * `busy` means the user is typing — we must never clobber their draft.
    * `stuck` means the text went in but ChatGPT never accepted the submit.
@@ -1214,6 +1228,12 @@ export class ChatGptEmbed {
         }
         break
       case 'sent':
+        if (payload.taskPromptGeneration !== this.taskPromptGeneration) break
+        if (payload.promptInjected === true) this.taskPromptInjected = true
+        console.info(
+          `[embed:${this.platform.id}] sent promptInjected=${payload.promptInjected === true} ` +
+            `taskPromptInjected=${this.taskPromptInjected}`
+        )
         this.interceptor.pendingQuestion = null
         this.interceptor.lastSentText = payload.text ?? null
         if (this.interceptor.taskStartedAt === null || this.interceptor.taskFinishedAt !== null) {

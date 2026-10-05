@@ -966,6 +966,10 @@ export interface InterceptorPageEvent {
   phase?: 'draft' | 'sent-turn'
   enabled?: boolean
   prefixLength?: number
+  /** Present on `sent`: this confirmed user message carried the task's prompt. */
+  promptInjected?: boolean
+  /** Present on `sent`: ignore confirmations from an already-ended task. */
+  taskPromptGeneration?: number
   /**
    * Opening words of the prompt the PAGE holds, on `injected`.
    *

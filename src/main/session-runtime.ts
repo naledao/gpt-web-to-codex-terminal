@@ -406,6 +406,9 @@ export class SessionRuntime {
           const previousConversationId = entry.conversationId
           entry.conversationId = state.conversationId
           const createdNewChat = previousConversationId === null && state.conversationId !== null
+          // The first send creates its conversation id; keep that task's injection.
+          // A real conversation change starts with an unused prompt in every execution mode.
+          if (!createdNewChat) entry.embed?.resetTaskPrompt()
           /*
            * Arming the baseline on a background view would be wasted work, and skipping it
            * is safe: showing a platform again re-arms through `switchPlatform`.

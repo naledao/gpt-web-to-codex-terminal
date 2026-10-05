@@ -120,6 +120,49 @@ serializes it into the inspected page and never runs it against a browser by its
 This diagnostic is an evidence-gathering step, not a website compatibility verdict.
 The agent writes it and reads the user's log; only the user runs and drives Electron.
 
+## task-prompt-check.cjs
+
+Task-scoped prompt injection: the first confirmed user send in a task carries the
+full prompt. Follow-up messages, question answers and command output reuse it.
+Only explicit `【任务完成】`, manual task termination or a real conversation change
+resets the prompt; ordinary explanatory replies do not end the task.
+
+The user runs the offline regressions:
+
+```powershell
+node tools/diag/task-prompt-check.cjs
+```
+
+This script never starts Electron or accesses a real page, cookies or the network.
+It loads the actual interceptor functions into an in-memory editor and uses a
+deterministic timer queue. It covers both textarea and contenteditable submission,
+failed prefix writes and prepared-draft retries, multiline follow-ups, image-only
+messages, live command tracking, clarification pauses, completion/manual termination,
+configuration/mode changes, reload restoration and stale task callbacks. It also
+transpiles the real main-process embed methods with Electron stubbed out, checking
+that successful sends are restored after reload and late confirmations stay ignored.
+Logs use `fs.appendFileSync` under
+`%TEMP%\gpt-login-diag\task-prompt-check-<timestamp>.log`.
+
+For live acceptance, the user starts the application with `npm run dev` and checks
+ChatGPT and DeepSeek separately:
+
+1. Start a task that needs a command and a clarification. The injected count increases once.
+2. During that task, send a correction, a follow-up and an image. The count stays unchanged;
+   user messages/images are still recorded, and the next command can still be handled.
+3. Answer the app's question dialog and let command results return. Neither adds a prompt.
+4. After an explicit `【任务完成】`, send another task in the same conversation. The count increases once.
+5. Repeat after using the app's “结束任务”; confirm that the new task receives a prompt.
+6. Reload during a task, or update machine notes without ending it. The next follow-up
+   still skips the prompt; the updated prompt is used when the next task starts.
+
+The normal main-process log now reports `sent promptInjected=true/false` and
+`taskPromptInjected=true/false`. The first value describes that specific user message;
+the second describes the current task. To retain application logs for inspection,
+set `$env:DSH_APP_LOG = '1'` in the user's PowerShell session before `npm run dev`;
+the app prints its log path. Offline checks and a successful build do not verify
+the live third-party websites.
+
 ## google-login-probe.js
 
 **The question this run answers:** with the embedded identity patched on the wire

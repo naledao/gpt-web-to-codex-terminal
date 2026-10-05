@@ -1,0 +1,317 @@
+/** User-run offline regressions. No Electron, real browser, cookies or network access. */
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const vm = require('node:vm')
+const ts = require('typescript')
+
+const logDir = path.join(os.tmpdir(), 'gpt-login-diag')
+fs.mkdirSync(logDir, { recursive: true })
+const logFile = path.join(logDir, `task-prompt-check-${Date.now()}.log`)
+const log = text => { fs.appendFileSync(logFile, text + '\n'); console.log(text) }
+const root = path.resolve(__dirname, '../..')
+const source = fs.readFileSync(path.join(root, 'src/main/injected/send-interceptor.js'), 'utf8')
+
+function section(start, end) {
+  const at = source.indexOf(start)
+  const until = source.indexOf(end, at + start.length)
+  assert.ok(at >= 0 && until > at, `Missing source section: ${start}`)
+  return source.slice(at, until)
+}
+
+function page(kind = 'contenteditable', snapshot = {}) {
+  let now = 1000
+  let timerSerial = 0
+  let imageSerial = 0
+  let replySerial = 0
+  const timers = []
+  const events = []
+  const submissions = []
+  const composer = { tagName: kind === 'textarea' ? 'TEXTAREA' : 'DIV', text: '' }
+  const button = { disabled: false }
+  const controls = { accept: true, write: true, image: false, writes: 0, selector: true, replyId: 'old-reply', reply: '' }
+  const context = {
+    Date: class extends Date { static now() { return now } },
+    setTimeout: (run, delay) => { const id = ++timerSerial; timers.push({ id, run, at: now + delay }); return id },
+    clearTimeout: id => { const at = timers.findIndex(timer => timer.id === id); if (at >= 0) timers.splice(at, 1) },
+    getComposer: () => composer,
+    readComposer: element => element.text,
+    collapse: text => String(text || '').replace(/\s+/g, ' ').trim(),
+    insertText: (element, text) => { controls.writes++; if (!controls.write) return false; element.text = text; return true },
+    hasDraftImageAttachment: () => controls.image,
+    beginUserImageCapture: () => `capture-${++imageSerial}`,
+    discardUserImageCapture: () => {},
+    findSendButton: () => controls.selector ? button : null,
+    findStopButton: () => null,
+    lastAssistantId: () => controls.replyId,
+    scheduleScrollToBottom: () => {},
+    diagnoseSendFailure: () => ({}),
+    RECOVERY_ACTIONS: [],
+    report: event => events.push(event),
+    fileSend: null,
+    settleTimer: null,
+    queryAllAssistant: () => controls.reply ? [{ tagName: 'DIV', className: '' }] : [],
+    isAssistantTurn: () => true,
+    turnKeyOf: () => controls.replyId,
+    readReplyText: () => controls.reply,
+    readReplyMarkdown: () => controls.reply,
+    looksLikeReadFilesReply: () => false,
+    looksLikeQuestionReply: text => text.includes('"type":"questions"'),
+    extractQuestion: text => JSON.parse(text),
+    extractCommand: text => { try { const parsed = JSON.parse(text); return parsed.command ? parsed : null } catch { return null } },
+    looksLikeCommandReply: () => false,
+    balancedObjects: () => [],
+    noteScan: () => {},
+    scheduleRenderedAssistantHistory: () => {},
+    clickPrimaryWhileWaiting: () => null,
+    toolbarSnapshot: () => ({}),
+    describeControl: () => ({}),
+    normalizeLineEndings: text => text.replace(/\r\n/g, '\n'),
+    draftAttachmentEvidence: () => controls.image,
+    composerMatches: (element, text) => element.text === text,
+    window: {},
+    STATE_KEY: '__cmdTerminalInterceptor'
+  }
+  const event = () => ({ preventDefault() {}, stopImmediatePropagation() {} })
+  const submit = () => {
+    // Exercise our synthetic-event guard, rather than bypassing the interception path.
+    assert.equal(context.api.intercept(event()), false, 'Synthetic submit must not be intercepted again')
+    submissions.push(composer.text)
+    if (controls.accept) { composer.text = ''; controls.image = false; controls.replyId = `new-reply-${++replySerial}` }
+  }
+  context.pressButton = submit
+  context.pressEnter = submit
+  vm.createContext(context)
+  const publicStart = source.indexOf('    configure(config) {')
+  const rawStart = source.indexOf('    sendRaw(text, ownedDraft = null) {', publicStart)
+  const rawComment = source.lastIndexOf('    /**', rawStart)
+  const answerStart = source.indexOf('    async answerQuestion(', rawStart)
+  assert.ok(publicStart > 0 && rawComment > publicStart && answerStart > rawStart)
+  vm.runInContext([
+    section('  let PAGE =', '  // Re-injection'),
+    section('  const state =', '  /** User-image batches'),
+    section('  const hasPrefix =', '  const selectAllIn ='),
+    section('  const submitWithRetry =', '  const pressButton ='),
+    section('  const USER_TEXT_SENTINEL =', '  // Capture phase, on'),
+    section('  const checkForCommand =', '  const lastAssistantId ='),
+    section('  const armBaseline =', '  // Block ChatGPT sidebar'),
+    `const lifecycle = { ${source.slice(publicStart, rawComment)} ${source.slice(rawStart, answerStart)} };`,
+    'window[STATE_KEY] = lifecycle;',
+    'globalThis.api = { state, intercept, lifecycle, checkForCommand, armBaseline, USER_TEXT_SENTINEL };'
+  ].join('\n'), context)
+  context.api.lifecycle.configure({ enabled: true, prefix: '【角色】终端助手\n\n', taskPromptGeneration: 0, taskPromptInjected: false, ...snapshot })
+  const flush = () => {
+    let steps = 0
+    while (timers.length) {
+      assert.ok(++steps < 2000, 'Unexpected unbounded timer loop')
+      timers.sort((a, b) => a.at - b.at || a.id - b.id)
+      const timer = timers.shift()
+      now = timer.at
+      timer.run()
+    }
+  }
+  const send = text => { composer.text = text; assert.equal(context.api.intercept(event()), true); flush() }
+  const reply = text => { controls.reply = text; controls.replyId += '-reply'; context.api.checkForCommand(); flush() }
+  return { ...context.api, composer, controls, events, submissions, send, reply, flush, event }
+}
+
+function embed() {
+  const exports = {}
+  const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/main/embed.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
+  }).outputText
+  vm.runInNewContext(code, {
+    exports,
+    console: { info() {}, warn() {} },
+    require: name => {
+      if (name === 'electron') return {} // Never load or launch Electron.
+      if (name.endsWith('?raw')) return { __esModule: true, default: source }
+      if (name === '../shared/types') return {
+        FALLBACK_ENVIRONMENT: {},
+        buildTerminalPromptParts: () => ({ basePrompt: 'base', toolPrompt: '', prefix: 'prefix' })
+      }
+      if (name === './page-files' || name === '../shared/file-requests') return {}
+      throw new Error(`Unexpected dependency: ${name}`)
+    }
+  })
+  const instance = new exports.ChatGptEmbed({ id: 'fixture', homeUrl: 'https://example.invalid', page: {} }, { onInterceptor() {} })
+  const configurations = []
+  instance.view = { webContents: { isDestroyed: () => false, executeJavaScript: async script => {
+    const marker = '.configure('
+    const at = script.lastIndexOf(marker)
+    configurations.push(JSON.parse(script.slice(at + marker.length, -');true'.length)))
+    return true
+  } } }
+  return { instance, configurations }
+}
+
+async function main() {
+  new vm.Script(source)
+  for (const kind of ['contenteditable', 'textarea']) {
+    const p = page(kind)
+    p.composer.text = '修复构建'
+    assert.equal(p.intercept(p.event()), true)
+    assert.equal(p.state.taskPromptInjected, false, 'Writing a prefix is not a successful send')
+    p.flush()
+    assert.equal(p.state.taskPromptInjected, true)
+    assert.ok(p.state.awaitingReplySince > 0)
+    assert.equal(p.state.lastCommandMessageId, 'old-reply', 'Baseline must precede the new assistant placeholder')
+    assert.equal(p.submissions.length, 1)
+    assert.ok(p.submissions[0].includes(p.USER_TEXT_SENTINEL))
+    p.send('保持接口不变\n并保留注释')
+    assert.equal(p.submissions.at(-1), '保持接口不变\n并保留注释')
+    assert.equal(p.controls.writes, 1, 'Follow-ups should not rewrite the editor')
+    assert.equal(p.events.filter(e => e.event === 'injected').length, 1)
+    assert.equal(p.events.filter(e => e.event === 'user-message').length, 2)
+    assert.equal(p.events.filter(e => e.event === 'sent').at(-1).promptInjected, false)
+    p.reply('我会保留现有接口。')
+    assert.equal(p.state.taskActive, true)
+    p.send('继续修改')
+    assert.equal(p.submissions.at(-1), '继续修改')
+    p.reply('{"command":"echo ok","description":"检查"}')
+    assert.equal(p.events.filter(e => e.event === 'command').at(-1).live, true)
+    p.reply('【任务完成】构建问题已修复。')
+    assert.equal(p.state.taskPromptInjected, false)
+    assert.equal(p.state.taskActive, false)
+    p.send('增加日志导出')
+    assert.equal(p.events.filter(e => e.event === 'injected').length, 2)
+    assert.equal(p.state.taskPromptInjected, true)
+    p.lifecycle.endTask()
+    p.send('开始另一个任务')
+    assert.equal(p.events.filter(e => e.event === 'injected').length, 3)
+    log(`PASS ${kind}: one prompt per task, clean multiline follow-ups, live commands, completion and manual end`)
+  }
+
+  const failed = page()
+  failed.controls.accept = false
+  failed.send('失败后重试')
+  assert.equal(failed.state.taskPromptInjected, false)
+  assert.equal(failed.events.filter(e => e.event === 'sent').length, 0)
+  const prepared = failed.composer.text
+  assert.ok(prepared.includes(failed.USER_TEXT_SENTINEL))
+  failed.controls.accept = true
+  assert.equal(failed.intercept(failed.event()), true)
+  failed.flush()
+  assert.equal(failed.submissions.at(-1), prepared)
+  assert.equal(failed.controls.writes, 1)
+  assert.equal(failed.state.taskPromptInjected, true)
+  assert.equal(failed.events.filter(e => e.event === 'user-message').at(-1).text, '失败后重试')
+  failed.send('后续消息')
+  assert.equal(failed.submissions.at(-1), '后续消息')
+  log('PASS failed submission preserves pending injection; prepared-draft retry avoids duplicate prefixes')
+
+  const rejected = page()
+  rejected.controls.write = false
+  rejected.send('写入失败仍发送用户文字')
+  assert.equal(rejected.state.taskPromptInjected, false)
+  assert.equal(rejected.submissions.at(-1), '写入失败仍发送用户文字')
+  rejected.controls.write = true
+  rejected.send('新的草稿')
+  assert.equal(rejected.state.taskPromptInjected, true)
+  log('PASS failed prefix write does not consume injection or prevent the next draft from trying')
+
+  const image = page()
+  assert.equal(image.intercept(image.event()), false, 'Empty composer must never send a prompt-only turn')
+  image.controls.image = true
+  image.send('')
+  assert.equal(image.state.taskPromptInjected, true)
+  image.controls.image = true
+  image.send('')
+  assert.equal(image.submissions.at(-1), '')
+  assert.equal(image.events.filter(e => e.event === 'user-message').length, 2)
+  assert.ok(image.events.filter(e => e.event === 'user-message').every(e => e.attachmentToken))
+  log('PASS image-only first send and follow-up retain attachment capture; empty drafts do not send')
+
+  const config = page()
+  config.send('开始')
+  config.lifecycle.configure({ taskPromptGeneration: 0, taskPromptInjected: false, prefix: '更新后的提示词\n\n', armBaseline: true })
+  config.armBaseline()
+  assert.equal(config.state.taskPromptInjected, true)
+  config.lifecycle.configure({ enabled: false })
+  config.lifecycle.configure({ enabled: true })
+  config.send('同一任务继续')
+  assert.equal(config.submissions.at(-1), '同一任务继续')
+  config.reply('{"type":"questions","questions":[{"question":"选择哪个方案？"}]}')
+  assert.ok(config.state.pendingQuestion)
+  assert.equal(config.state.taskPromptInjected, true)
+  const answer = config.lifecycle.sendRaw('1. 选择第一个方案')
+  config.flush()
+  assert.equal(await answer, 'ok')
+  assert.equal(config.state.taskPromptInjected, true)
+  log('PASS configuration, command baseline and mode changes preserve task injection; clarification pauses retain it')
+}
+
+// Keep asynchronous raw-send checks outside an await-before-flush deadlock.
+async function remaining() {
+  const enter = page('textarea')
+  enter.controls.selector = false
+  enter.send('使用 Enter 开始')
+  enter.send('通过 Enter 继续')
+  assert.equal(enter.events.filter(e => e.event === 'injected').length, 1)
+  assert.equal(enter.submissions.at(-1), '通过 Enter 继续')
+  const raw = page('textarea')
+  raw.send('开始任务')
+  const pending = raw.lifecycle.sendRaw('命令输出')
+  raw.flush()
+  assert.equal(await pending, 'ok')
+  assert.equal(raw.events.filter(e => e.event === 'injected').length, 1)
+  raw.send('继续')
+  assert.equal(raw.submissions.at(-1), '继续')
+
+  const fresh = page('contenteditable', { taskPromptGeneration: 4, taskPromptInjected: true })
+  fresh.send('刷新后继续')
+  assert.equal(fresh.events.filter(e => e.event === 'injected').length, 0)
+  fresh.lifecycle.configure({ taskPromptGeneration: 5, taskPromptInjected: false })
+  fresh.lifecycle.configure({ taskPromptGeneration: 4, taskPromptInjected: true })
+  fresh.send('切换会话后的新任务')
+  assert.equal(fresh.events.filter(e => e.event === 'injected').length, 1)
+  log('PASS raw feedback skips injection; reload restoration and new generations preserve/reset it appropriately')
+
+  const delayed = page()
+  delayed.composer.text = '尚未提交的任务'
+  delayed.intercept(delayed.event())
+  delayed.lifecycle.endTask()
+  delayed.flush()
+  assert.equal(delayed.submissions.length, 0)
+  assert.equal(delayed.state.taskPromptInjected, false)
+  assert.equal(delayed.state.taskActive, false)
+  const confirming = page()
+  confirming.send('先建立任务')
+  confirming.composer.text = '正在确认的追问'
+  confirming.intercept(confirming.event())
+  confirming.lifecycle.endTask()
+  confirming.flush()
+  assert.equal(confirming.state.taskPromptInjected, false)
+  assert.equal(confirming.state.taskActive, false)
+  const navigated = page()
+  navigated.composer.text = '尚未发送就切换会话'
+  navigated.intercept(navigated.event())
+  navigated.lifecycle.configure({ taskPromptGeneration: 1, taskPromptInjected: false })
+  assert.equal(navigated.state.programmatic, false)
+  navigated.flush()
+  assert.equal(navigated.submissions.length, 0)
+  navigated.send('切换后的新目标')
+  assert.equal(navigated.state.taskPromptInjected, true)
+  log('PASS late submit delays and confirmations cannot send or revive an ended task')
+
+  const { instance, configurations } = embed()
+  instance.handlePageReport('[cmd-terminal] ' + JSON.stringify({ event: 'sent', text: '开始', promptInjected: true, taskPromptGeneration: 0 }))
+  instance.setBaselinePolicy(true)
+  await instance.installInterceptor()
+  assert.equal(configurations.at(-1).taskPromptInjected, true)
+  assert.equal(configurations.at(-1).armBaseline, true)
+  instance.completeTask()
+  assert.equal(configurations.at(-1).taskPromptInjected, false)
+  assert.equal(configurations.at(-1).taskPromptGeneration, 1)
+  assert.equal(configurations.at(-1).armBaseline, false)
+  instance.handlePageReport('[cmd-terminal] ' + JSON.stringify({ event: 'sent', text: '迟到的确认', promptInjected: true, taskPromptGeneration: 0 }))
+  assert.notEqual(instance.getInterceptorStatus().taskFinishedAt, null)
+  await instance.installInterceptor()
+  assert.equal(configurations.at(-1).taskPromptInjected, false)
+  log('PASS real main-process methods restore confirmed prompt state, reset tasks without baselining new replies and ignore stale confirmations')
+}
+
+log(`Log: ${logFile}`)
+main().then(remaining).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
+  .catch(error => { log(`FAIL ${error.stack || error}`); process.exitCode = 1 })
