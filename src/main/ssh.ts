@@ -366,6 +366,56 @@ export class SshManager {
   }
 
   /** List one remote directory over SFTP for the file manager. */
+  async readFileForModel(remotePath: string, expectedHostId: string, maxBytes: number, signal: AbortSignal): Promise<Buffer> {
+    signal.throwIfAborted()
+    const client = this.client
+    if (!client || this.state.status !== 'connected' || this.state.hostId !== expectedHostId) throw new Error('原 SSH 主机未连接，文件读取没有转到本机。')
+    return new Promise<Buffer>((resolve, reject) => {
+      let channel: SFTPWrapper | null = null
+      let stream: ReturnType<SFTPWrapper['createReadStream']> | null = null
+      let settled = false
+      const finish = (error?: Error, bytes?: Buffer): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        signal.removeEventListener('abort', abort)
+        stream?.destroy()
+        channel?.end()
+        if (error) reject(error)
+        else resolve(bytes ?? Buffer.alloc(0))
+      }
+      const abort = (): void => finish(new Error('文件读取已取消。'))
+      const timer = setTimeout(() => finish(new Error('SSH 文件读取超过 60 秒。')), 60000)
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) { abort(); return }
+      client.sftp((error, sftp) => {
+        if (settled) { sftp?.end(); return }
+        if (error) { finish(error); return }
+        channel = sftp
+        sftp.stat(remotePath, (statError, info) => {
+          if (settled) return
+          if (statError) { finish(statError); return }
+          if (!info.isFile()) { finish(new Error('远端路径不是普通文件。')); return }
+          if (info.size > maxBytes) { finish(new Error('远端文件超过本次读取大小上限。')); return }
+          const chunks: Buffer[] = []
+          let total = 0
+          stream = sftp.createReadStream(remotePath, { end: maxBytes })
+          stream.on('error', (readError: Error) => finish(readError))
+          stream.on('data', (chunk: Buffer) => {
+            total += chunk.length
+            if (total > maxBytes) { finish(new Error('远端文件读取超过大小上限。')); return }
+            chunks.push(chunk)
+          })
+          stream.on('end', () => {
+            if (this.client !== client || this.state.hostId !== expectedHostId) finish(new Error('读取期间 SSH 连接发生变化。'))
+            else finish(undefined, Buffer.concat(chunks))
+          })
+          stream.on('close', () => { if (!settled) finish(new Error('远端文件通道提前关闭。')) })
+        })
+      })
+    })
+  }
+
   async listFiles(remotePath: string): Promise<SshFileEntry[]> {
     const client = this.client
     if (!client || this.state.status !== 'connected') throw new Error('当前没有已连接的 SSH 会话。')

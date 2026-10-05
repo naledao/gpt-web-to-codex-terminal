@@ -403,6 +403,8 @@ const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
   taskStartedAt: null,
   taskFinishedAt: null,
   pendingQuestion: null,
+  basePrompt: '',
+  toolPrompt: '',
   prefix: ''
 }
 

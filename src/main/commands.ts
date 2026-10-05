@@ -3,6 +3,7 @@ import type {
   EnvironmentKind,
   ExecutionMode,
   ExecutionRecord,
+  FileReadingPlatform,
   ParsedCommand,
   TerminalLine,
   TerminalState
@@ -10,6 +11,11 @@ import type {
 import { ConversationShell, IDLE_TIMEOUT_MS, MAX_RUNTIME_MS } from './shell'
 import type { ExecutionShell, ShellResult } from './shell'
 import type { ConversationStore } from './db'
+import { createHash } from 'node:crypto'
+import { parseReadFilesRequest } from '../shared/file-requests'
+import type { FileReadContext, FileSendOutcome, StoredFileReadRequest } from '../shared/file-requests'
+import type { PreparedFileResult } from './file-access'
+import type { ParsedAction, ParsedReadFiles } from '../shared/types'
 
 /**
  * Commands that get a loud warning line. They still RUN in auto mode — this is an
@@ -126,6 +132,10 @@ export interface CommandRunnerDeps {
   sendRawToPage: (
     text: string
   ) => Promise<'ok' | 'busy' | 'stuck' | 'no-composer' | 'insert-failed'>
+  fileContext: () => FileReadContext
+  filePlatform: () => FileReadingPlatform | null
+  prepareFiles: (request: StoredFileReadRequest, signal: AbortSignal) => Promise<PreparedFileResult>
+  sendFilesToPage: (result: PreparedFileResult, token: string, current: () => boolean, signal: AbortSignal) => Promise<FileSendOutcome>
   /** Whether terminal mode is on. Off: commands are not detected and results are not sent back. */
   terminalModeEnabled?: () => boolean
   /**
@@ -353,6 +363,8 @@ export class CommandRunner {
   private activeRunId = 0
   /** Monotonic request id: if several commands arrive together, only the newest starts. */
   private executionRequest = 0
+  private fileAbort: AbortController | null = null
+  private readonly fileResults = new Map<string, PreparedFileResult>()
 
   private automation: AutomationState = {
     // Manual by default: nothing runs on its own until the user asks for it.
@@ -418,7 +430,7 @@ export class CommandRunner {
     const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 160)
     this.appendLine({
       kind: 'error',
-      text: `模型回复里有命令，但 JSON 无法解析（多半是引号没转义），已跳过：${snippet}`
+      text: `模型操作请求无法解析或参数无效，未执行：${snippet}`
     })
   }
 
@@ -432,7 +444,7 @@ export class CommandRunner {
 
     const newest = this.deps.store
       .listExecutions(conversationId)
-      .filter((record) => record.status === 'pending')
+      .filter((record) => record.status === 'pending' || (record.kind === 'read_files' && record.deliveryStatus === 'pending' && (record.status === 'done' || record.status === 'failed')))
       .pop()
 
     if (newest) {
@@ -454,7 +466,8 @@ export class CommandRunner {
    * It is ALWAYS stored, so the user can see it and run it by hand. Whether it
    * runs by itself depends on the mode and on `live` (see the notice below).
    */
-  handleDetected(parsed: ParsedCommand, conversationIdOverride?: string): boolean {
+  handleDetected(parsed: ParsedAction, conversationIdOverride?: string): boolean {
+    if ('type' in parsed) return this.handleReadFiles(parsed, conversationIdOverride)
     // Terminal mode off: leave replies alone. Returning true marks the command handled so nothing is deferred.
     if (!this.terminalModeOn()) {
       console.info('[cmd] terminal mode off, detected command ignored')
@@ -579,14 +592,20 @@ export class CommandRunner {
   async runExecution(messageId: string): Promise<void> {
     const record = this.deps.store.getExecution(messageId)
     if (!record) return
-    if (record.status !== 'pending' && record.status !== 'blocked') return
+    if (record.status !== 'pending' && record.status !== 'blocked' && !(record.kind === 'read_files' && ['pending', 'failed'].includes(record.deliveryStatus ?? '') && (record.status === 'done' || record.status === 'failed'))) return
     await this.execute(messageId)
   }
 
   skipExecution(messageId: string): void {
     const record = this.deps.store.getExecution(messageId)
     if (!record) return
-    if (record.status !== 'pending' && record.status !== 'blocked') return
+    if (record.status !== 'pending' && record.status !== 'blocked' && !(record.kind === 'read_files' && ['pending', 'failed'].includes(record.deliveryStatus ?? ''))) return
+    if (record.kind === 'read_files') {
+      this.deps.store.setFileDeliveryStatus(messageId, 'cancelled')
+      const result = this.fileResults.get(messageId)
+      this.fileResults.delete(messageId)
+      if (result) void result.cleanup().catch((error) => console.warn('[files] cleanup:', error.message))
+    }
     this.deps.store.setExecutionStatus(messageId, 'skipped')
     this.appendLine({ kind: 'notice', text: '已跳过该命令' })
     this.broadcastExecutions(record.conversationId)
@@ -609,7 +628,7 @@ export class CommandRunner {
       console.warn(`[cmd] not run: no execution record for ${messageId}`)
       return
     }
-    if (record.status !== 'pending' && record.status !== 'blocked') {
+    if (record.status !== 'pending' && record.status !== 'blocked' && !(record.kind === 'read_files' && ['pending', 'failed'].includes(record.deliveryStatus ?? '') && (record.status === 'done' || record.status === 'failed'))) {
       /*
        * The common one after a reconnect or a reload: the command IS stored, and its status says
        * it has already had its turn. Without this the command looks like it was swallowed.
@@ -619,12 +638,115 @@ export class CommandRunner {
     }
 
     const request = (this.executionRequest += 1)
+    this.fileAbort?.abort()
     this.inFlight.add(messageId)
 
     try {
-      await this.runRecord(record, request)
+      if (record.kind === 'read_files') await this.runFileRecord(record, request)
+      else await this.runRecord(record, request)
     } finally {
       this.inFlight.delete(messageId)
+    }
+  }
+
+  private handleReadFiles(parsed: ParsedReadFiles, conversationIdOverride?: string): boolean {
+    if (!this.terminalModeOn()) return true
+    const conversationId = conversationIdOverride ?? this.deps.currentConversationId()
+    if (!conversationId) return false
+    const validated = parseReadFilesRequest(parsed)
+    if (!validated) { this.noteParseFailure('read_files 参数无效'); return true }
+    let context: FileReadContext
+    try { context = this.deps.fileContext() } catch (error) {
+      this.appendLine({ kind: 'error', text: (error as Error).message })
+      return true
+    }
+    const key = parsed.messageId.trim() || `files:${createHash('sha256').update(conversationId + JSON.stringify(validated)).digest('hex')}`
+    const created = this.deps.store.createExecution({ messageId: key, conversationId, command: `读取文件：\n${validated.files.map((file) => file.path).join('\n')}`, description: validated.description, timeoutSeconds: 180, status: 'pending', createdAt: Date.now(), fileRequest: { ...validated, context } })
+    if (!created) return true
+    this.appendLine({ kind: 'notice', text: `检测到文件读取请求（${validated.files.length} 个文件，${context.scope === 'ssh' ? 'SSH' : '本机'}）` })
+    this.broadcastExecutions(conversationId)
+    // Restored history must never silently upload files to a third-party page.
+    if (parsed.live && this.automation.mode === 'auto' && !this.automation.paused) void this.execute(key)
+    return true
+  }
+
+  private async runFileRecord(record: ExecutionRecord, requestId: number): Promise<void> {
+    const stored = record.fileRequest
+    if (!stored) {
+      this.deps.store.finishExecution(record.messageId, { status: 'failed', exitCode: null, output: '文件请求记录无效。', finishedAt: Date.now() })
+      this.deps.store.setFileDeliveryStatus(record.messageId, 'cancelled')
+      this.broadcastExecutions(record.conversationId)
+      return
+    }
+    const controller = new AbortController()
+    this.fileAbort = controller
+    const platform = this.deps.filePlatform()
+    const current = (): boolean => {
+      if (!platform || this.deps.filePlatform()?.id !== platform.id || controller.signal.aborted || requestId !== this.executionRequest || this.deps.currentConversationId() !== record.conversationId || !this.terminalModeOn() || this.automation.paused) return false
+      try {
+        const context = this.deps.fileContext()
+        return context.scope === stored.context.scope && context.hostId === stored.context.hostId
+      } catch { return false }
+    }
+    const token = `files-${createHash('sha256').update(record.conversationId + record.messageId).digest('hex').slice(0, 24)}`
+    const timeout = setTimeout(() => controller.abort(), 180000)
+    let result = this.fileResults.get(record.messageId)
+    try {
+      if (!platform || !current()) {
+        this.appendLine({ kind: 'error', text: '文件读取未执行：原会话／主机已切换，或任务已暂停。' })
+        return
+      }
+      if (this.activeShell?.running) await this.activeShell.interrupt()
+      if (!current()) return
+      this.deps.store.setExecutionStatus(record.messageId, 'running')
+      this.appendLine({ kind: 'notice', text: result ? '正在重试文件结果回传…' : record.command })
+      this.broadcastExecutions(record.conversationId)
+      if (!result) {
+        result = await this.deps.prepareFiles(stored, controller.signal)
+        this.fileResults.set(record.messageId, result)
+      }
+      this.deps.store.finishExecution(record.messageId, { status: result.failed ? 'failed' : 'done', exitCode: null, output: result.text, finishedAt: Date.now() })
+      this.appendLine({ kind: 'output', text: result.text })
+      if (!result.attachments.length) {
+        this.deps.store.setFileDeliveryStatus(record.messageId, 'cancelled')
+        this.appendLine({ kind: 'error', text: '没有可发送的附件。读取错误已保留在本地执行记录。' })
+        this.fileResults.delete(record.messageId)
+        try { await result.cleanup() } catch (error) { console.warn('[files] staging cleanup:', (error as Error).message) }
+        return
+      }
+      this.deps.store.setFileDeliveryStatus(record.messageId, 'pending')
+      this.broadcastExecutions(record.conversationId)
+      if (this.sendDelaySeconds) await new Promise<void>((resolve) => setTimeout(resolve, this.sendDelaySeconds * 1000))
+      if (!current()) { this.appendLine({ kind: 'notice', text: '文件已读取，结果暂未回传。恢复后可重试回传。' }); return }
+      this.deps.store.setFileDeliveryStatus(record.messageId, 'uploading')
+      this.broadcastExecutions(record.conversationId)
+      this.appendLine({ kind: 'notice', text: `正在向 ${platform.label} 上传 ${result.attachments.length} 个附件…` })
+      const outcome = await this.deps.sendFilesToPage(result, token, current, controller.signal)
+      const pausedDelivery = outcome === 'cancelled' && this.automation.paused && !controller.signal.aborted && requestId === this.executionRequest
+      const delivery = outcome === 'ok' ? 'sent' : outcome === 'unknown' || outcome === 'stuck' ? 'unknown' : pausedDelivery || outcome === 'busy' ? 'pending' : outcome === 'cancelled' ? 'cancelled' : 'failed'
+      this.deps.store.setFileDeliveryStatus(record.messageId, delivery)
+      if (delivery === 'sent') {
+        try {
+          this.deps.store.appendConversationMessage(record.conversationId, 'user', result.summary, `read-files:${record.messageId}`, Date.now(), result.images)
+        } catch (error) {
+          this.appendLine({ kind: 'error', text: `已发送，但本地附件归档失败：${(error as Error).message}` })
+        }
+        this.appendLine({ kind: 'notice', text: `文件附件已发送给 ${platform.label}。` })
+        this.fileResults.delete(record.messageId)
+        try { await result.cleanup() } catch (error) { console.warn('[files] staging cleanup:', (error as Error).message) }
+      } else {
+        const reason = delivery === 'unknown' ? '提交结果待确认。请检查网页；为避免重复发送，不会自动重试。' : outcome === 'busy' ? '输入框或附件草稿已被占用，未覆盖。清理草稿后可重试回传。' : outcome === 'cancelled' ? '回传已取消。' : outcome === 'unsupported-file-type' ? `${platform.label} 的附件入口不接受本次文件类型，尚未上传。诊断日志位于 %TEMP%\\gpt-login-diag\\${platform.id}-file-send-*.log。` : `附件入口、上传状态或发送未确认。可重试回传；诊断日志位于 %TEMP%\\gpt-login-diag\\${platform.id}-file-send-*.log。`
+        this.appendLine({ kind: 'error', text: reason })
+      }
+    } catch (error) {
+      this.deps.store.finishExecution(record.messageId, { status: controller.signal.aborted ? 'interrupted' : 'failed', exitCode: null, output: (error as Error).message, finishedAt: Date.now() })
+      this.deps.store.setFileDeliveryStatus(record.messageId, 'cancelled')
+      this.appendLine({ kind: 'error', text: `文件操作结束：${(error as Error).message}` })
+    } finally {
+      clearTimeout(timeout)
+      if (this.fileAbort === controller) this.fileAbort = null
+      this.broadcastExecutions(record.conversationId)
+      this.flushTerminal()
     }
   }
 
@@ -869,6 +991,12 @@ export class CommandRunner {
   /** End the whole model-driven task: invalidate queued work and stop the active command. */
   async endTask(): Promise<void> {
     this.executionRequest += 1
+    this.fileAbort?.abort()
+    for (const [id, result] of this.fileResults) {
+      this.deps.store.setFileDeliveryStatus(id, 'cancelled')
+      void result.cleanup().catch((error) => console.warn('[files] cleanup:', error.message))
+    }
+    this.fileResults.clear()
 
     const conversationId = this.deps.currentConversationId()
     if (conversationId) {
@@ -888,6 +1016,7 @@ export class CommandRunner {
   }
   /** Stop the current command without clearing the transcript. */
   async interruptTerminal(): Promise<void> {
+    if (this.fileAbort) { this.fileAbort.abort(); return }
     const shell = this.activeShell
     /*
      * Both branches are logged. The first is the one where 中断 visibly does nothing except
@@ -925,6 +1054,9 @@ export class CommandRunner {
   }
 
   disposeAll(): void {
+    this.fileAbort?.abort()
+    for (const result of this.fileResults.values()) void result.cleanup().catch((error) => console.warn('[files] cleanup:', error.message))
+    this.fileResults.clear()
     const shell = this.localShell
     this.localShell = null
     shell?.dispose()

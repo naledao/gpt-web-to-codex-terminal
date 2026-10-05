@@ -103,6 +103,22 @@ const STATUS_LABEL: Record<ExecutionStatus, string> = {
 /** Statuses where a click can still start the command. */
 const RUNNABLE: ReadonlySet<ExecutionStatus> = new Set<ExecutionStatus>(['pending', 'blocked'])
 
+function canRetryFiles(record: ExecutionRecord): boolean {
+  return record.kind === 'read_files' && (record.status === 'done' || record.status === 'failed') && (record.deliveryStatus === 'pending' || record.deliveryStatus === 'failed')
+}
+
+function executionLabel(record: ExecutionRecord): string {
+  if (record.kind !== 'read_files') return STATUS_LABEL[record.status]
+  if (record.status === 'running') return '读取中'
+  const delivery = record.deliveryStatus
+  if (delivery === 'uploading') return '发送中'
+  if (delivery === 'sent') return record.status === 'failed' ? '部分读取失败，已回传' : '已发送'
+  if (delivery === 'unknown') return '提交待确认'
+  if (delivery === 'cancelled') return '已取消回传'
+  if (canRetryFiles(record)) return delivery === 'failed' ? '回传失败' : '等待回传'
+  return STATUS_LABEL[record.status]
+}
+
 /**
  * Colour a status badge by what it means rather than by which status it is.
  *
@@ -364,10 +380,16 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const [notesDraft, setNotesDraft] = useState('')
   const [notesSaving, setNotesSaving] = useState(false)
   const [notesPreview, setNotesPreview] = useState(false)
-  /** 注入提示词查看弹框。 */
   /** The Git 管理 dialog opened from the toolbox. */
   const [gitDialogOpen, setGitDialogOpen] = useState(false)
-  const [promptOpen, setPromptOpen] = useState(false)
+  /** One viewer with separate base-prompt and tool-prompt content. */
+  const [promptView, setPromptView] = useState<'base' | 'tools' | null>(null)
+  const promptOpen = promptView !== null
+  const promptTitle = promptView === 'tools' ? '注入的工具提示词' : '注入的系统提示词'
+  const promptSource = (promptView === 'tools' ? interceptor?.toolPrompt : interceptor?.basePrompt)?.trim() ?? ''
+  const promptEmptyText = interceptor === null
+    ? '正在加载提示词…'
+    : promptView === 'tools' ? '当前平台暂无注入的工具提示词。' : '（暂无注入内容）'
   const [promptSearchOpen, setPromptSearchOpen] = useState(false)
   const [promptSearch, setPromptSearch] = useState('')
   const [promptCopied, setPromptCopied] = useState(false)
@@ -428,6 +450,8 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const terminalOutputRef = useRef<HTMLDivElement>(null)
   const promptBodyRef = useRef<HTMLDivElement>(null)
   const promptMatchIndexRef = useRef(-1)
+  const promptCopyTimerRef = useRef<number | null>(null)
+  const promptCopyGenerationRef = useRef(0)
   /** scope:hostId of the note currently loaded into the editor. */
   const notesOwnerRef = useRef('')
 
@@ -453,7 +477,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const currentQuestionDraft = questionDrafts[questionPage] ?? ''
 
   const waiting = useMemo(
-    () => executions.filter((record) => RUNNABLE.has(record.status)),
+    () => executions.filter((record) => RUNNABLE.has(record.status) || canRetryFiles(record)),
     [executions]
   )
 
@@ -1515,6 +1539,25 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     window.getSelection()?.removeAllRanges()
   }, [])
 
+  // Each section starts with fresh find/copy state, including after a platform change.
+  useEffect(() => {
+    if (promptView === null) return
+    setPromptSearchOpen(false)
+    setPromptSearch('')
+    setPromptCopied(false)
+    promptMatchIndexRef.current = -1
+    if (promptBodyRef.current) promptBodyRef.current.scrollTop = 0
+    clearPromptHighlights()
+    return () => {
+      promptCopyGenerationRef.current += 1
+      if (promptCopyTimerRef.current !== null) {
+        window.clearTimeout(promptCopyTimerRef.current)
+        promptCopyTimerRef.current = null
+      }
+      clearPromptHighlights()
+    }
+  }, [promptView, promptSource, clearPromptHighlights])
+
   const findInPrompt = useCallback((query: string, backwards: boolean): void => {
     const body = promptBodyRef.current
     const needle = query.trim().toLocaleLowerCase()
@@ -1583,7 +1626,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
           promptMatchIndexRef.current = -1
           clearPromptHighlights()
         } else {
-          setPromptOpen(false)
+          setPromptView(null)
         }
       }
     }
@@ -2022,9 +2065,18 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
             <button
               type="button"
               className="terminal__prompt-link"
-              onClick={() => setPromptOpen(true)}
+              aria-haspopup="dialog"
+              onClick={() => setPromptView('base')}
             >
-              查看注入的提示词
+              查看注入的系统提示词
+            </button>
+            <button
+              type="button"
+              className="terminal__prompt-link"
+              aria-haspopup="dialog"
+              onClick={() => setPromptView('tools')}
+            >
+              查看注入的工具提示词
             </button>
           </div>
         </div>
@@ -2552,7 +2604,7 @@ ${conversation.url}`}
               <div className="current">
                 <div className="current__head">
                   <span className={statusTone(currentExecution.status)}>
-                    {STATUS_LABEL[currentExecution.status]}
+                    {executionLabel(currentExecution)}
                   </span>
                   <span
                     className="current__desc"
@@ -2560,7 +2612,7 @@ ${conversation.url}`}
                   >
                     {currentExecution.description || '（模型没有给出说明）'}
                   </span>
-                  <span className="current__code">超时 {currentExecution.timeoutSeconds}s</span>
+                  <span className="current__code">{currentExecution.kind === 'read_files' ? '文件读取' : `超时 ${currentExecution.timeoutSeconds}s`}</span>
                   {currentExecution.exitCode !== null ? (
                     <span className="current__code">退出码 {currentExecution.exitCode}</span>
                   ) : null}
@@ -2574,7 +2626,7 @@ ${conversation.url}`}
                 {waiting.map((record) => (
                   <div key={record.messageId} className="pending__item">
                     <span className={record.status === 'blocked' ? 'badge badge--warn' : 'badge'}>
-                      {STATUS_LABEL[record.status]}
+                      {executionLabel(record)}
                     </span>
                     <code
                       className="pending__command"
@@ -2594,7 +2646,7 @@ ${record.command}`
                       className="panel__sync"
                       onClick={() => void runExecution(record.messageId)}
                     >
-                      运行
+                      {canRetryFiles(record) ? '重试回传' : record.kind === 'read_files' ? '读取' : '运行'}
                     </button>
                     <button
                       type="button"
@@ -2790,15 +2842,15 @@ ${record.command}`
           </div>
         ) : null}
 
-        {/* Injected prompt viewer. Rendered as Markdown. */}
+        {/* Separate injected-prompt sections, using the same Markdown viewer. */}
         {promptOpen ? (
           <div
             className="modal modal--prompt"
             role="dialog"
             aria-modal="true"
-            aria-label="注入的提示词"
+            aria-label={promptTitle}
             onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setPromptOpen(false)
+              if (event.target === event.currentTarget) setPromptView(null)
             }}
           >
             <div className="prompt-modal" data-color-mode={theme}>
@@ -2806,17 +2858,25 @@ ${record.command}`
                 <span className="prompt-modal__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" width="20" height="20"><path d="M7 3.75h7.7L19 8.05v12.2H7z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><path d="M14.5 3.9v4.4h4.35M10 12h6M10 15.5h6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
                 </span>
-                <span className="prompt-modal__title">注入的提示词</span>
+                <span className="prompt-modal__title">{promptTitle}</span>
                 <span className="prompt-modal__readonly">只读</span>
                 <span className="panel__spacer" />
                 <button
                   type="button"
                   className={promptCopied ? 'prompt-modal__action prompt-modal__action--success' : 'prompt-modal__action'}
+                  disabled={!promptSource}
+                  aria-label={`复制全部${promptTitle}`}
                   onClick={() => {
-                    void navigator.clipboard.writeText(interceptor?.prefix.trim() || '').then(() => {
+                    const generation = promptCopyGenerationRef.current
+                    void navigator.clipboard.writeText(promptSource).then(() => {
+                      if (generation !== promptCopyGenerationRef.current) return
+                      if (promptCopyTimerRef.current !== null) window.clearTimeout(promptCopyTimerRef.current)
                       setPromptCopied(true)
-                      window.setTimeout(() => setPromptCopied(false), 1600)
-                    })
+                      promptCopyTimerRef.current = window.setTimeout(() => {
+                        setPromptCopied(false)
+                        promptCopyTimerRef.current = null
+                      }, 1600)
+                    }).catch((error) => console.warn('[prompt] Copy failed:', error))
                   }}
                 >
                   <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="8" y="8" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.8"/><path d="M15 8V6.5A1.5 1.5 0 0 0 13.5 5h-7A1.5 1.5 0 0 0 5 6.5v7A1.5 1.5 0 0 0 6.5 15H8" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>
@@ -2825,12 +2885,14 @@ ${record.command}`
                 <button
                   type="button"
                   className={promptSearchOpen ? 'prompt-modal__action prompt-modal__action--active' : 'prompt-modal__action'}
+                  disabled={!promptSource}
+                  aria-label={`查找${promptTitle}`}
                   onClick={() => setPromptSearchOpen((value) => !value)}
                 >
                   <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.8"/><path d="m15 15 4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
                   查找
                 </button>
-                <button type="button" className="prompt-modal__close" aria-label="关闭" onClick={() => setPromptOpen(false)}>×</button>
+                <button type="button" className="prompt-modal__close" aria-label="关闭" onClick={() => setPromptView(null)}>×</button>
               </div>
 
               {promptSearchOpen ? (
@@ -2839,8 +2901,8 @@ ${record.command}`
                   <input
                     autoFocus
                     value={promptSearch}
-                    placeholder="在注入的提示词中查找…"
-                    aria-label="查找注入的提示词"
+                    placeholder={`在${promptTitle}中查找…`}
+                    aria-label={`查找${promptTitle}`}
                     onChange={(event) => {
                       const value = event.target.value
                       setPromptSearch(value)
@@ -2858,9 +2920,9 @@ ${record.command}`
               ) : null}
 
               <div ref={promptBodyRef} className="prompt-modal__body">
-                <MDEditor.Markdown source={interceptor?.prefix.trim() || '（暂无注入内容）'} wrapperElement={{ 'data-color-mode': theme }} />
+                <MDEditor.Markdown source={promptSource || promptEmptyText} wrapperElement={{ 'data-color-mode': theme }} />
               </div>
-              <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div>
+              {promptSource ? <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div> : null}
             </div>
           </div>
         ) : null}      {settingsOpen ? (

@@ -631,6 +631,48 @@ const ASK_USER_SECTION = [
   '删除、覆盖、格式化、改权限、发布、发消息、付费等不可逆动作，范围不明先询问；目标明确的代码修改、构建、测试可直接做。用户回答会发回并恢复循环。'
 ].join('\n')
 
+export interface FileReadingPlatform {
+  id: 'chatgpt' | 'deepseek'
+  label: string
+}
+
+/** Shared gate for prompt injection, request handling and attachment delivery. */
+export function fileReadingPlatform(platformId: string): FileReadingPlatform | null {
+  if (platformId === 'chatgpt') return { id: 'chatgpt', label: 'ChatGPT' }
+  if (platformId === 'deepseek') return { id: 'deepseek', label: 'DeepSeek' }
+  return null
+}
+
+/** Tool descriptions live alongside the system prompt, with a separate preview. */
+const readFilesToolPrompt = (platformLabel: string): string => [
+  `【工具：read_files（${platformLabel}）】`,
+  `将当前终端对应机器上的文件，作为完整附件上传到当前 ${platformLabel} 会话。支持文本、源码、图片及文档；保留文件原始内容，不修改源文件。`,
+  '',
+  '调用格式：单个 JSON 代码块。type 固定为 read_files，files 为 1–5 个文件对象的数组，description 为非空说明字符串；与 command、questions 互斥。',
+  '',
+  '```json',
+  '{',
+  '  "type": "read_files",',
+  '  "files": [{"path": "path/to/file"}],',
+  '  "description": "上传文件供分析"',
+  '}',
+  '```',
+  '',
+  '文件参数：',
+  '',
+  '- path：必填文件路径；支持绝对路径或相对当前终端工作目录的路径。本机会话对应本机文件，SSH 会话对应绑定主机的文件。',
+  '',
+  '返回：文件将以附件形式发送到当前会话。',
+  '',
+  '限制：每次 1–5 个非空普通文件，单个最多 20 MiB，附件合计最多 25 MiB。'
+].join('\n')
+
+/** Only expose tools that the selected platform can execute. */
+export function toolPromptForPlatform(platformId: string): string {
+  const platform = fileReadingPlatform(platformId)
+  return platform ? readFilesToolPrompt(platform.label) : ''
+}
+
 /** The parts of the prompt only true of a Windows PowerShell session. */
 function buildWindowsPrompt(env: EnvironmentInfo): string {
   const osName = env.osCaption.trim() === '' ? 'Windows' : env.osCaption.trim()
@@ -703,8 +745,7 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
     ...fileIoSection,
     '',
     '【优先使用】',
-    '- 系统/硬件用 Get-CimInstance，不用 wmic；结构化数据用 ConvertTo-Json/ConvertFrom-Json。',
-    ...notesSection(env.extraNotes)
+    '- 系统/硬件用 Get-CimInstance，不用 wmic；结构化数据用 ConvertTo-Json/ConvertFrom-Json。'
   ].join('\n')
 }
 
@@ -771,8 +812,7 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
     '',
     '【优先使用】',
     '- 这是 Linux，禁用 PowerShell/cmd 语法（Get-ChildItem、Get-CimInstance、$env:、dir /s、Remove-Item）；用 ls/cat/grep/find/sed/awk。',
-    '- 包管理按发行版用 apt-get、dnf/yum 或 apk；结构化数据用 jq 或 python3。',
-    ...notesSection(env.extraNotes)
+    '- 包管理按发行版用 apt-get、dnf/yum 或 apk；结构化数据用 jq 或 python3。'
   ].join('\n')
 }
 
@@ -781,9 +821,14 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
  *
  * It is rebuilt whenever that answer changes — at startup, after the working
  * directory moves, and when an SSH session takes over or releases the terminal.
+ * Platform capabilities precede the user's notes, which remain the final section.
  */
-export function buildTerminalPrompt(env: EnvironmentInfo): string {
-  return env.kind === 'posix' ? buildPosixPrompt(env) : buildWindowsPrompt(env)
+export function buildTerminalPrompt(env: EnvironmentInfo, toolPrompt = ''): string {
+  return [
+    env.kind === 'posix' ? buildPosixPrompt(env) : buildWindowsPrompt(env),
+    ...(toolPrompt.trim() === '' ? [] : ['', toolPrompt.trim()]),
+    ...notesSection(env.extraNotes)
+  ].join('\n')
 }
 
 /**
@@ -818,12 +863,31 @@ function notesSection(notes: string): string[] {
 /** Blank line separating the injected prompt from what the user typed. */
 export const TERMINAL_PROMPT_SEPARATOR = '\n\n'
 
-export function buildTerminalPrefix(env: EnvironmentInfo): string {
-  return buildTerminalPrompt(env) + TERMINAL_PROMPT_SEPARATOR
+export function buildTerminalPrefix(env: EnvironmentInfo, toolPrompt = ''): string {
+  return buildTerminalPrompt(env, toolPrompt) + TERMINAL_PROMPT_SEPARATOR
+}
+
+/** Preview sections and the complete prefix share the same source. */
+export interface TerminalPromptParts {
+  /** Terminal instructions, environment and user notes, excluding tool descriptions. */
+  basePrompt: string
+  /** Tool descriptions enabled for the current platform. */
+  toolPrompt: string
+  /** Complete injection; tool descriptions still precede the user notes. */
+  prefix: string
+}
+
+export function buildTerminalPromptParts(env: EnvironmentInfo, toolPrompt = ''): TerminalPromptParts {
+  const tools = toolPrompt.trim()
+  return {
+    basePrompt: buildTerminalPrompt(env),
+    toolPrompt: tools,
+    prefix: buildTerminalPrefix(env, tools)
+  }
 }
 
 /** Aggregated interceptor state kept by the main process. */
-export interface InterceptorStatus {
+export interface InterceptorStatus extends TerminalPromptParts {
   enabled: boolean
   /** True once the injected script has installed itself in the page. */
   installed: boolean
@@ -835,7 +899,6 @@ export interface InterceptorStatus {
   taskFinishedAt: number | null
   /** A live clarification request waiting for the user's answers. */
   pendingQuestion: PendingQuestion | null
-  prefix: string
 }
 
 /** One item in a clarification request lifted out of a live assistant reply. */
@@ -888,6 +951,7 @@ export interface InterceptorPageEvent {
     | 'end-task'
     | 'inject-failed'
     | 'command'
+    | 'read-files'
     | 'parse-failed'
     | 'scan'
     | 'sent-raw'
@@ -914,6 +978,7 @@ export interface InterceptorPageEvent {
   /** Present on `command` events. */
   messageId?: string
   command?: string
+  files?: import('./file-requests').ReadFileSpec[]
   description?: string
   /** Present on `question` events. */
   question?: string
@@ -1049,6 +1114,9 @@ export interface ExecutionRecord {
   messageId: string
   conversationId: string
   command: string
+  kind: 'command' | 'read_files'
+  fileRequest: import('./file-requests').StoredFileReadRequest | null
+  deliveryStatus: import('./file-requests').FileDeliveryStatus | null
   description: string
   /** Absolute runtime limit selected for this command, in seconds. */
   timeoutSeconds: number
@@ -1077,6 +1145,13 @@ export interface ParsedCommand {
    */
   live: boolean
 }
+
+export type ParsedReadFiles = import('./file-requests').ReadFilesRequest & {
+  messageId: string
+  live: boolean
+}
+
+export type ParsedAction = ParsedCommand | ParsedReadFiles
 
 /**
  * How detected commands are handled.

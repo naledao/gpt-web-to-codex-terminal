@@ -967,6 +967,9 @@ body {
 }
 
 .terminal__details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   margin-top: 7px;
   font-size: 11.5px;
   color: var(--text-muted);
@@ -4573,6 +4576,7 @@ body {
 }
 
 .terminal__prompt-link:hover { color: var(--text); }
+.terminal__prompt-link:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 
 /* Model clarification widget. It stays in the DOM terminal column so the native chat page remains usable. */
 .modal--question {
@@ -4854,6 +4858,7 @@ body {
 }
 
 .prompt-modal__title {
+  min-width: 0;
   color: #102a4f;
   font-size: 23px;
   font-weight: 800;
@@ -4909,6 +4914,7 @@ body {
   cursor: pointer;
 }
 .prompt-modal__close:hover { color: #101f38; }
+.prompt-modal__action:disabled { opacity: .45; cursor: default; }
 
 .prompt-modal__search {
   display: flex;

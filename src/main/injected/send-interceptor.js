@@ -62,7 +62,14 @@
     assistantSelectors: ['[data-chatgpt-selection-message-id]'],
     assistantReplySelectors: ['[data-markdown-text-style="assistant-message"]'],
     messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
-    messageIdAttr: 'data-chatgpt-selection-message-id'
+    messageIdAttr: 'data-chatgpt-selection-message-id',
+    disabledControlSelectors: [],
+    fileTurnPositionAttr: '',
+    fileAssistantSelectors: [],
+    fileUserTurnSelector: '[class~="group/user-message"][data-chatgpt-search-unit-key]',
+    fileUserTurnFallbackSelector: '[data-content-search-unit-key$=":user"]',
+    fileUserTurnKeyAttr: 'data-chatgpt-search-unit-key',
+    fileImagesMayUseNames: false
   }
 
   /**
@@ -783,6 +790,8 @@
   }
 
   const rememberDraftFiles = (fileList) => {
+    // Automatic read_files uploads are archived by main, never by the next human send.
+    if (fileSend) return
     const files = [...(fileList || [])]
       .filter((file) => String(file?.type || '').toLowerCase().startsWith('image/'))
     if (files.length === 0) return
@@ -802,13 +811,25 @@
   // the file input or drop target.
   document.addEventListener('change', (event) => {
     const target = event.target
-    if (target instanceof HTMLInputElement && target.type === 'file') rememberDraftFiles(target.files)
+    if (target instanceof HTMLInputElement && target.type === 'file') {
+      if (fileSend && event.isTrusted) {
+        const picked = [...(target.files || [])]
+        if (fileSend.selected || picked.length !== fileSend.files.length || picked.some((file, index) => file.name !== fileSend.files[index].fileName || file.size !== fileSend.files[index].sizeBytes)) fileSend.edited = true
+      }
+      rememberDraftFiles(target.files)
+    }
   }, true)
   document.addEventListener('paste', (event) => {
+    if (fileSend && event.isTrusted && event.clipboardData?.files?.length) fileSend.edited = true
     rememberDraftFiles(event.clipboardData?.files)
   }, true)
   document.addEventListener('drop', (event) => {
+    if (fileSend && event.isTrusted && event.dataTransfer?.files?.length) fileSend.edited = true
     rememberDraftFiles(event.dataTransfer?.files)
+  }, true)
+  document.addEventListener('beforeinput', (event) => {
+    const composer = getComposer()
+    if (fileSend && event.isTrusted && composer && (event.target === composer || composer.contains(event.target))) fileSend.edited = true
   }, true)
 
   const cachedDraftAttachments = () => {
@@ -1006,7 +1027,8 @@
   const insertText = (element, text) => writeComposer(element, text)
 
   const controlDisabled = (el) =>
-    el.disabled === true || el.getAttribute('aria-disabled') === 'true'
+    el.disabled === true || el.getAttribute('aria-disabled') === 'true' ||
+    (PAGE.disabledControlSelectors || []).some((selector) => el.matches(selector))
 
   /**
    * The composer's own toolbar controls — the first ancestor holding more than one button.
@@ -1787,6 +1809,28 @@
     return null
   }
 
+  const looksLikeReadFilesReply = (text) => /"type"\s*:\s*"read_files"/.test(String(text || ''))
+  const extractReadFiles = (text) => {
+    const candidates = balancedObjects(String(text || '').replace(/```[a-zA-Z0-9_-]*/g, '\n'))
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      let request
+      try { request = JSON.parse(candidates[i]) } catch (_) { continue }
+      if (!request || request.type !== 'read_files' || 'command' in request || 'questions' in request) continue
+      if (!Array.isArray(request.files) || request.files.length < 1 || request.files.length > 5) return null
+      if (typeof request.description !== 'string' || !request.description.trim() || request.description.length > 2000) return null
+      const files = []
+      for (const item of request.files) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+        if (typeof item.path !== 'string' || !item.path.trim() || item.path.length > 4096 || /[\u0000-\u001f]/.test(item.path)) return null
+        // Match the main-process parser, including older replies: always upload
+        // the complete file; legacy text/range/encoding options are discarded.
+        files.push({ path: item.path.trim() })
+      }
+      return { files, description: request.description.trim() }
+    }
+    return null
+  }
+
   // Questions have their own discriminator. Never send a question-shaped object
   // through the lenient command parser, even if it also contains a command field.
   const looksLikeQuestionReply = (text) => /"type"\s*:\s*"questions?"/.test(String(text || ''))
@@ -1826,7 +1870,7 @@
    * reliable safety net in that case; the main process also applies the same guard at insert
    * time for pages that report an assistant turn through another path.
    */
-  const looksLikeCommandReply = (text) => /\{\s*["']command["']\s*:\s*["']/s.test(String(text || ''))
+  const looksLikeCommandReply = (text) => /\{\s*["']command["']\s*:\s*["']/s.test(String(text || '')) || looksLikeReadFilesReply(text)
 
   // Older transcript rows were saved before the page's inline-code marker was
   // understood. Refresh only turns with a stable page id: the main process updates
@@ -1885,6 +1929,11 @@
    * once — the main process does the durable deduplication against SQLite.
    */
   const checkForCommand = () => {
+    // Confirm our submitted user turn before accepting a fast next assistant action.
+    if (fileSend?.submitted) {
+      fileSendStatus(fileSend.token)
+      if (fileSend?.submitted) return
+    }
     const nodes = queryAllAssistant()
     if (nodes.length === 0) {
       noteScan('', 'no-turns', { selectors: PAGE.assistantSelectors })
@@ -1955,6 +2004,20 @@
      * command the model never issued to us.
      */
     const text = readReplyText(node)
+    if (looksLikeReadFilesReply(text)) {
+      if (findStopButton()) return
+      const parsed = extractReadFiles(text)
+      if (!parsed) {
+        if (state.lastUnparsedMessageId !== messageId) {
+          state.lastUnparsedMessageId = messageId
+          report({ event: 'parse-failed', reason: 'invalid-read-files', text: text.slice(0, 2000) })
+        }
+        return
+      }
+      state.lastCommandMessageId = messageId
+      if (state.enabled) report({ event: 'read-files', messageId, ...parsed, live: state.awaitingReplySince !== 0 })
+      return
+    }
     if (looksLikeQuestionReply(text)) {
       if (findStopButton()) {
         noteScan(messageId, 'question-still-generating')
@@ -2280,7 +2343,305 @@
    * Public surface used by the main process
    * ------------------------------------------------------------------ */
 
+  // Attachment discovery is structural: no guessed attachment card class names.
+  // The user-driven attachment probe reports this same snapshot.
+  const attachmentRoot = () => {
+    const composer = getComposer()
+    if (!composer) return null
+    const form = composer.closest('form')
+    if (form) return form
+    let candidate = null
+    let root = composer.parentElement
+    for (let depth = 0; root && root !== document.body && depth < 8; depth += 1, root = root.parentElement) {
+      // DeepSeek puts the file cards above the toolbar. The first ancestor with
+      // two controls can contain only the toolbar and miss the uploaded files.
+      // Stay within the composer branch; never include conversation messages.
+      if (PAGE.messageSelectors.some((selector) => root.matches(selector) || root.querySelector(selector))) break
+      if (root.querySelectorAll(CONTROL_SELECTOR).length >= 2) candidate = root
+    }
+    return candidate
+  }
+  const attachmentSnapshot = () => {
+    const root = attachmentRoot()
+    if (!root) return { rootFound: false, text: '', images: 0, uploading: false, error: false, inputFiles: 0 }
+    const clone = root.cloneNode(true)
+    // Attachment cards can themselves be clickable controls. Keep their text;
+    // remove only editable values and native inputs, which are not previews.
+    clone.querySelectorAll('textarea, [contenteditable], input').forEach((node) => node.remove())
+    const images = [...root.querySelectorAll('img')].filter((img) => /^(blob:|data:)/.test(img.currentSrc || img.src || '') || (img.naturalWidth >= 40 && img.naturalHeight >= 40))
+    const imageLabels = images.map((img) => [img.alt, img.title, img.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+    const cardLabels = [...clone.querySelectorAll('[title], [aria-label]')].map((node) => [node.getAttribute('title'), node.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+    return {
+      rootFound: true,
+      text: collapse(clone.textContent || '') + ' ' + cardLabels + ' ' + imageLabels,
+      images: images.length,
+      uploading: !!root.querySelector('[role="progressbar"], [aria-busy="true"]'),
+      error: !!root.querySelector('[role="alert"], [aria-invalid="true"]'),
+      inputFiles: [...document.querySelectorAll('input[type="file"]')].reduce((sum, input) => sum + (input.files?.length || 0), 0)
+    }
+  }
+  const draftAttachmentEvidence = () => {
+    const snapshot = attachmentSnapshot()
+    return snapshot.inputFiles > 0 || snapshot.images > 0 || snapshot.uploading || /[^\s]+\.[a-z0-9]{1,10}(?:\s|$)/i.test(snapshot.text)
+  }
+  // ChatGPT exposes separate media/image inputs alongside a general attachment
+  // input. A picture matches all three; prefer the unique unrestricted input.
+  const chooseAttachmentInput = (files, nearbyInputs, allInputs) => {
+    const rulesFor = (input) => String(input.accept || '').toLowerCase().split(',').map((item) => item.trim()).filter(Boolean)
+    const accepts = (input) => {
+      const rules = rulesFor(input)
+      return files.every((file) => !rules.length || rules.some((rule) => rule.startsWith('.') ? file.fileName.toLowerCase().endsWith(rule) : rule.endsWith('/*') ? file.mimeType.startsWith(rule.slice(0, -1)) : file.mimeType === rule))
+    }
+    const eligible = (input) => !input.disabled && (files.length === 1 || input.multiple) && accepts(input)
+    const nearby = nearbyInputs.filter(eligible)
+    const candidates = nearby.length ? nearby : allInputs.filter(eligible)
+    const unrestricted = candidates.filter((input) => !rulesFor(input).length)
+    if (unrestricted.length === 1) return unrestricted[0]
+    return candidates.length === 1 ? candidates[0] : null
+  }
+  const findAttachmentInput = (files) => {
+    const root = attachmentRoot()
+    return chooseAttachmentInput(files, root ? [...root.querySelectorAll('input[type="file"]')] : [], [...document.querySelectorAll('input[type="file"]')])
+  }
+  const fileUserTurnRoot = (node) => PAGE.fileUserTurnSelector
+    ? node?.closest?.(PAGE.fileUserTurnSelector) || (PAGE.fileUserTurnFallbackSelector ? node?.closest?.(PAGE.fileUserTurnFallbackSelector) : null) || node : node
+  const fileUserTurns = () => [...new Set([
+    // Attachment-only messages can have no text unit during send. Find their
+    // measured outer wrappers directly instead of waiting for text to hydrate.
+    ...(PAGE.fileUserTurnSelector ? [...document.querySelectorAll(PAGE.fileUserTurnSelector)] : []),
+    ...userTurns()
+  ].map(fileUserTurnRoot))].filter((node) => {
+    // An assistant placeholder can precede its answer marker. A known role
+    // suffix is sufficient to exclude it from attachment acknowledgements.
+    const roleNode = PAGE.fileUserTurnSelector ? node?.closest?.('[data-content-search-unit-key]') || node : node
+    if (PAGE.fileUserTurnSelector && /:assistant$/.test(String(roleNode?.getAttribute('data-content-search-unit-key') || ''))) return false
+    return !(PAGE.fileAssistantSelectors || []).some((selector) => node.matches?.(selector) || node.querySelector?.(selector))
+  })
+  const fileTurnBoundary = (parent, unit) => ({
+    hasOtherMessages: [...PAGE.messageSelectors, ...(PAGE.fileUserTurnSelector ? [PAGE.fileUserTurnSelector] : [])].some((selector) => parent.matches(selector) || [...parent.querySelectorAll(selector)].some((message) => message !== unit && !unit.contains(message))),
+    hasAssistant: PAGE.assistantReplySelectors.some((selector) => parent.matches(selector) || parent.querySelector(selector)),
+    hasComposer: !!getComposer() && parent.contains(getComposer())
+  })
+  const fileAttachmentRoot = (node) => {
+    if (!node || !PAGE.fileUserTurnSelector) return node
+    const unit = fileUserTurnRoot(node)
+    // The measured full user wrapper already contains the card and text. It
+    // needs no ancestor widening, even when it has no text marker at all.
+    if (unit.matches?.(PAGE.fileUserTurnSelector)) return unit
+    let root = unit
+    // File cards may be siblings of the selectable text. Widen only inside
+    // this user message, stopping before any other message or the composer.
+    for (let parent = unit.parentElement, depth = 0; parent && parent !== document.body && depth < 6; parent = parent.parentElement, depth++) {
+      const boundary = fileTurnBoundary(parent, unit)
+      if (boundary.hasOtherMessages || boundary.hasAssistant || boundary.hasComposer) break
+      root = parent
+    }
+    return root
+  }
+  const fileTurnText = (root) => String(root.textContent || root.innerText || '') + ' ' +
+    [root, ...(root.querySelectorAll?.('[title], [aria-label]') || [])].map((node) =>
+      [node.getAttribute('title'), node.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+  const fileUserTurnKey = (node) => (PAGE.fileUserTurnKeyAttr ? node?.getAttribute(PAGE.fileUserTurnKeyAttr) : '') ||
+    node?.getAttribute('data-content-search-unit-key') || messageIdOf(node) ||
+    (PAGE.fileTurnPositionAttr ? String(node?.getAttribute(PAGE.fileTurnPositionAttr) || '').trim() : '')
+  // DeepSeek's row key is useful only for the short interval around a send.
+  // It must never become the persistent identity used to deduplicate commands.
+  const fileUserTurnPosition = (node) => {
+    const value = PAGE.fileTurnPositionAttr ? node?.getAttribute(PAGE.fileTurnPositionAttr) : null
+    return value != null && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null
+  }
+  const isNewFileUserTurn = (newest, turns, baseline) => {
+    if (!newest) return false
+    if (PAGE.fileTurnPositionAttr) {
+      const position = fileUserTurnPosition(newest)
+      // Recycling the same DOM node is allowed, re-rendering the same row is not.
+      if (position !== null && baseline.maxPosition !== null) return position > baseline.maxPosition
+      // Final message keys need not be numeric, even when placeholder keys are.
+      // Snapshot the opaque keys too; never assume every row is a list index.
+      const key = fileUserTurnKey(newest)
+      return !!key && !baseline.keys.has(key)
+    }
+    const key = fileUserTurnKey(newest)
+    return key ? !baseline.keys.has(key) : newest !== baseline.node && turns.length > baseline.count
+  }
+  const turnShowsFiles = (node, files) => {
+    if (!node || !files.length) return false
+    const root = fileAttachmentRoot(node)
+    const images = collectImages(root).filter(imageLooksLikeAttachment)
+    const labels = images.map((image) => [image.alt, image.title, image.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+    const text = fileTurnText(root) + ' ' + labels
+    const imagesExpected = files.filter((file) => file.mimeType.startsWith('image/')).length
+    if (PAGE.fileImagesMayUseNames && files.every((file) => text.includes(file.fileName))) return true
+    return images.length >= imagesExpected && files.filter((file) => !file.mimeType.startsWith('image/')).every((file) => text.includes(file.fileName))
+  }
+  let fileSend = null
+  const confirmedFileSends = new Set()
+  const fileSendStatus = (token) => {
+    if (confirmedFileSends.has(token)) return { status: 'sent' }
+    if (!fileSend || fileSend.token !== token) return { status: 'stale' }
+    const composer = getComposer()
+    if (!composer) return { status: 'no-composer' }
+    const snapshot = attachmentSnapshot()
+    if (fileSend.submitted) {
+      const turns = fileUserTurns()
+      // Prefer the new user row carrying the attachments, not a nested text
+      // node or an assistant placeholder without an answer marker yet.
+      const newest = turns.find((turn) => isNewFileUserTurn(turn, turns, fileSend.baselineUser) && turnShowsFiles(turn, fileSend.files)) ||
+        turns.find((turn) => isNewFileUserTurn(turn, turns, fileSend.baselineUser)) || turns.at(-1)
+      fileSend.lastCheckedTurn = newest
+      // Keep correlation in local state; never add a marker or status text to the message.
+      const draftCleared = composerMatches(composer, '') && !draftAttachmentEvidence()
+      const newTurnSeen = isNewFileUserTurn(newest, turns, fileSend.baselineUser)
+      const turnFilesSeen = turnShowsFiles(newest, fileSend.files)
+      const sent = !fileSend.edited && draftCleared && newTurnSeen && turnFilesSeen
+      if (sent) {
+        confirmedFileSends.add(token)
+        if (confirmedFileSends.size > 8) confirmedFileSends.delete(confirmedFileSends.values().next().value)
+        state.programmatic = false
+        lastDraftImageAttachments = []
+        lastDraftImageCapturedAt = 0
+        lastDraftImagePromise = Promise.resolve([])
+        fileSend = null
+        report({ event: 'sent-raw', text: '[read_files attachments]' })
+        if (state.enabled && state.awaitingReplySince !== 0) scheduleCheck()
+        scheduleScrollToBottom()
+        return { status: 'sent' }
+      }
+      return {
+        status: 'confirming', draftCleared, newTurnSeen, turnFilesSeen, edited: fileSend.edited,
+        turnPosition: fileUserTurnPosition(newest), baselinePosition: fileSend.baselineUser.maxPosition,
+        turnKeyPresent: !!fileUserTurnKey(newest), turnKeyKnown: fileSend.baselineUser.keys.has(fileUserTurnKey(newest)),
+        baselineKeyCount: fileSend.baselineUser.keys.size, userTurnCount: turns.length,
+        baselinePositionAvailable: fileSend.baselineUser.maxPosition !== null
+      }
+    }
+    if (fileSend.edited || !composerMatches(composer, '')) return { status: 'busy' }
+    if (snapshot.error) return { status: 'upload-failed', ...snapshot }
+    const imagesExpected = fileSend.files.filter((item) => item.mimeType.startsWith('image/')).length
+    const namesSeen = fileSend.files.every((item) => snapshot.text.includes(item.fileName) || (item.mimeType.startsWith('image/') && snapshot.images >= imagesExpected))
+    const button = findSendButton()
+    const sendDisabled = button ? controlDisabled(button) : null
+    const stopFound = !!findStopButton()
+    return {
+      status: fileSend.selected && snapshot.rootFound && namesSeen && !snapshot.uploading && button && !sendDisabled && !stopFound ? 'ready' : 'uploading',
+      ...snapshot, imagesExpected, namesSeen, sendFound: !!button, sendDisabled, stopFound
+    }
+  }
+
   window[STATE_KEY] = {
+    beginFileSend(token, files) {
+      if (!files.length) return 'no-files'
+      const composer = getComposer()
+      if (!composer) return 'no-composer'
+      if (fileSend?.token === token && !fileSend.submitted && composerMatches(composer, '')) {
+        if (fileSend.edited) return 'busy'
+        state.programmatic = true
+        const snapshot = attachmentSnapshot()
+        if (fileSend.files.length && !snapshot.images && !snapshot.inputFiles && !snapshot.uploading && fileSend.files.every((item) => !snapshot.text.includes(item.fileName))) fileSend.selected = false
+        return fileSend.selected ? 'resume' : 'ok'
+      }
+      if (state.programmatic || findStopButton() || collapse(readComposer(composer)) !== '' || draftAttachmentEvidence()) return 'busy'
+      if (!attachmentRoot()) return 'no-composer'
+      const input = files.length ? findAttachmentInput(files) : null
+      if (files.length && !input) {
+        const candidates = [...document.querySelectorAll('input[type="file"]')].filter((item) => !item.disabled && (files.length === 1 || item.multiple))
+        if (candidates.length && candidates.every((item) => !chooseAttachmentInput(files, [item], [item]))) return 'unsupported-file-type'
+        return 'no-file-input'
+      }
+      input?.setAttribute('data-codex-file-input', token)
+      state.programmatic = true
+      fileSend = { token, files, input, selected: false, edited: false, submitted: false, baselineUser: null, baselineAssistant: null }
+      return 'ok'
+    },
+    fileSendStatus,
+    fileSelectionApplied(token) {
+      if (fileSend?.token === token) fileSend.selected = true
+    },
+    refreshFileInput(token) {
+      if (!fileSend || fileSend.token !== token || fileSend.selected || !composerMatches(getComposer(), '')) return false
+      const input = findAttachmentInput(fileSend.files)
+      if (!input) return false
+      fileSend.input?.removeAttribute('data-codex-file-input')
+      fileSend.input = input
+      input.setAttribute('data-codex-file-input', token)
+      return true
+    },
+    attachmentDiagnostics: () => {
+      const composer = getComposer()
+      const root = attachmentRoot()
+      const send = findSendButton()
+      return {
+        ...attachmentSnapshot(), composerFound: !!composer,
+        sendFound: !!send, sendDisabled: send ? controlDisabled(send) : null,
+        draftEmpty: composer ? collapse(readComposer(composer)) === '' : null, stopFound: !!findStopButton(),
+        // Counts only: diagnostics never return file-card or conversation text.
+        attachmentAncestors: (() => {
+          const ancestors = []
+          const files = fileSend?.files || []
+          for (let node = composer?.parentElement, depth = 0; node && node !== document.body && depth < 8; node = node.parentElement, depth++) {
+            const hasMessages = PAGE.messageSelectors.some((selector) => node.matches(selector) || node.querySelector(selector))
+            if (hasMessages) { ancestors.push({ depth, hasMessages: true }); break }
+            const labels = [...node.querySelectorAll('[title], [aria-label]')].map((item) => [item.getAttribute('title'), item.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+            ancestors.push({
+              depth, hasMessages: false, selectedRoot: node === root,
+              controls: node.querySelectorAll(CONTROL_SELECTOR).length,
+              images: node.querySelectorAll('img').length,
+              textNameMatches: files.filter((file) => String(node.textContent || '').includes(file.fileName)).length,
+              labelNameMatches: files.filter((file) => labels.includes(file.fileName)).length
+            })
+          }
+          return ancestors
+        })(),
+        userAttachmentAncestors: (() => {
+          const unit = fileUserTurnRoot(fileSend?.lastCheckedTurn)
+          if (!unit) return []
+          const root = fileAttachmentRoot(unit)
+          const files = fileSend.files
+          const ancestors = []
+          for (let node = unit, depth = 0; node && node !== document.body && depth < 7; node = node.parentElement, depth++) {
+            const boundary = node === unit ? { hasOtherMessages: false, hasAssistant: false, hasComposer: false } : fileTurnBoundary(node, unit)
+            // Report the boundary itself without reading another message's text.
+            if (boundary.hasOtherMessages || boundary.hasAssistant || boundary.hasComposer) { ancestors.push({ depth, selectedRoot: false, ...boundary }); break }
+            const text = fileTurnText(node)
+            ancestors.push({ depth, selectedRoot: node === root, ...boundary, images: collectImages(node).filter(imageLooksLikeAttachment).length, filenameMatches: files.filter((file) => text.includes(file.fileName)).length })
+          }
+          return ancestors
+        })(),
+        fileInputs: [...document.querySelectorAll('input[type="file"]')].map((input) => ({
+          accept: input.accept, multiple: input.multiple, disabled: input.disabled, nearComposer: !!root?.contains(input)
+        }))
+      }
+    },
+    submitFileSend(token) {
+      if (fileSendStatus(token).status !== 'ready') return false
+      const button = findSendButton()
+      const turns = fileUserTurns()
+      const positions = turns.map(fileUserTurnPosition).filter((position) => position !== null)
+      fileSend.baselineUser = {
+        node: turns.at(-1) || null, count: turns.length, keys: new Set(turns.map(fileUserTurnKey).filter(Boolean)),
+        maxPosition: positions.length ? Math.max(...positions) : turns.length ? null : -1
+      }
+      fileSend.baselineAssistant = lastAssistantId()
+      fileSend.submitted = true
+      // Mark the reply before clicking: a synchronous new assistant turn must not be baselined.
+      state.awaitingReplySince = Date.now()
+      state.taskActive = true
+      state.lastCommandMessageId = fileSend.baselineAssistant
+      pressButton(button)
+      return true
+    },
+    releaseFileSend(token) {
+      if (fileSend?.token === token) {
+        state.programmatic = false
+        if (fileSend.submitted) {
+          // Preserve the main-process 'unknown' outcome and never click again,
+          // but don't let an expired acknowledgement block all future replies.
+          fileSend = null
+          if (state.enabled && state.awaitingReplySince !== 0) scheduleCheck()
+        }
+      }
+      return true
+    },
     configure(config) {
       if (!config) return { ...state }
       if (typeof config.enabled === 'boolean') state.enabled = config.enabled
@@ -2296,7 +2657,7 @@
         // read/write path decides from the ELEMENT (see readComposer), so a site that
         // changes its composer still works without a descriptor update.
         const { composerKind: _kind, ...selectors } = config.page
-        PAGE = { ...PAGE, ...selectors }
+        PAGE = { ...PAGE, disabledControlSelectors: [], fileTurnPositionAttr: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, ...selectors }
       }
       // A freshly (re)loaded page has no message of ours outstanding, so nothing
       // it renders can be a reply to us.
@@ -2317,6 +2678,10 @@
 
     /** Manually terminate the current task, including an in-progress model reply. */
     endTask() {
+      if (fileSend) {
+        state.programmatic = false
+        fileSend = null
+      }
       if (settleTimer) {
         clearTimeout(settleTimer)
         settleTimer = null
@@ -2390,6 +2755,7 @@
       const element = getComposer()
       if (!element) return Promise.resolve('no-composer')
       if (state.programmatic || findStopButton()) return Promise.resolve('busy')
+      if (hasDraftImageAttachment() || draftAttachmentEvidence()) return Promise.resolve('busy')
       // Never clobber something the user is in the middle of typing.
       const existing = readComposer(element)
       if (collapse(existing) !== '') {

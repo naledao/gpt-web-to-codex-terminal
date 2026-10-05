@@ -4,6 +4,122 @@ Small, throwaway probes for problems that only reproduce against live third-part
 pages inside the user's real session. Per `AGENTS.md`, **the user runs and drives
 them; the agent reads the log file.**
 
+## attachments-probe.js / read-files-check.cjs
+
+Attachment observation and offline checks for AI-selected file uploads. See
+[AI file reading](../../docs/ai-file-reading.md) for the protocol and acceptance steps.
+
+The user runs `node tools/diag/read-files-check.cjs` for offline checks. It never
+starts Electron or accesses the network; fixtures and logs are created under `%TEMP%`.
+It covers original file bytes (including text/source files), upload limits, SSH routing,
+and both platforms' CDP file-selection path with a fake page. DeepSeek checks cover
+custom disabled buttons, filename cards, old-row rerenders and recycled virtual rows.
+They also cover numeric/opaque key mixtures, reasoning-only rows and the actual
+command scanner after confirmation succeeds or expires. Release must preserve
+command deduplication, allow only one next-command report, retain pre-submit drafts,
+and avoid scheduling resumed scans for disabled terminal mode or restored history.
+It also exercises the actual attachment scope/text extraction for file cards above
+the toolbar, clickable cards and full filenames in labels, excluding editor text
+and conversation history.
+ChatGPT checks normalize nested selectable text to the user unit, inspect sibling
+document/image cards and title/aria-label filenames, and exercise an extensionless
+`hosts` attachment. They reject matching names in previous messages, assistant
+claims and the composer by using the actual bounded attachment-root helpers.
+The 2026-10-05 user-driven structure capture additionally established the full
+`group/user-message` wrapper with `data-chatgpt-search-unit-key`: its attachment
+card survives while the inner content-search text unit is removed/recreated.
+Regression fixtures now exercise direct full-wrapper discovery without any text
+unit, text hydration without duplicate messages, old-wrapper rerenders, wrapper
+DOM reuse and the website's `hosts(1)` filename suffix. Full-wrapper keys are used
+only during attachment acknowledgement; command selectors and persistent IDs stay
+unchanged.
+DeepSeek checks also cover extensionless UTF-8 text snapshots (including .gitconfig),
+the .txt transport filename without byte changes, original ChatGPT names, SSH routing,
+binary/non-UTF-8 rejection and the distinction between missing inputs and unsupported types.
+The real injected picker is also
+checked against the three-input layout observed in the attachment send log; these
+checks do not verify the live website.
+
+Normal application attachment sends also append a small phase log automatically to
+`%TEMP%\gpt-login-diag\<platform>-file-send-<timestamp>-<pid>.log`, without `DSH_APP_LOG`.
+The prefix is `chatgpt` or `deepseek`, and each platform has its own log file.
+Look for `begin-result`, `page-diagnostics`, `cdp-start` / `cdp-done`, `upload-state`, `confirm-state`, `release-result`,
+and the final `finish` stage/reason. Only structural state and upload metadata are
+recorded; message text, file contents, image bytes and cookies are excluded.
+Each attachment's `textNameAlias` flag records whether an extensionless UTF-8 text
+snapshot used DeepSeek's .txt filename compatibility; it does not record source contents.
+When filename recognition stalls, `page-diagnostics` additionally records composer
+ancestor depths, the selected scope, control/image counts and filename-match counts
+in text or labels. It never records the matching text or labels themselves.
+Confirmation diagnostics include key presence, whether a key was already in the
+baseline, baseline key count, numeric-baseline availability and user-turn count.
+The keys themselves are not recorded. If the new user message appears but its
+files are not recognized, `confirmation-diagnostics` records `userAttachmentAncestors`:
+depth, selected scope, image/filename-match counts and boundaries at another message,
+an assistant answer or the composer. It excludes text and label values.
+`release-result` records the page release
+call after the send finishes, including an unconfirmed submission; that outcome
+does not trigger another submission, and future command scanning can continue.
+The app sends only attachments. Read results/errors stay in the local execution record,
+and the request token is used only for local correlation. Offline checks include an
+attachment-only send with an empty composer and old-message rerender protection.
+
+For live DOM evidence, close the app, then run:
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\attachments-probe.js deepseek
+```
+
+Manually open the attachment menu, select a harmless image, wait for upload,
+send it, and repeat with a PDF or text file. The probe does not select, upload,
+or send files. It records changes in file inputs, preview counts, progress
+semantics and send-button state. Cookies are logged as names and lengths only;
+file contents, image bytes and conversation text are not logged.
+
+Omit `deepseek` to observe ChatGPT; the old `chatgpt-attachments-probe.js` entry point
+also still works. The probe loads the app's adapter instead of duplicating selectors.
+It also records composer ancestor structure, numeric row positions, key type/length
+and reasoning markers without opaque keys or turn text.
+
+Log: `%TEMP%\gpt-login-diag\<platform>-attachments-<timestamp>.log`.
+The proxy defaults to `http://127.0.0.1:7897`; `PROBE_PROXY`, `PROBE_USER_DATA` and
+`PROBE_PARTITION` override the probe process only. Use application testing to
+confirm the CDP upload path; an observed file input is not proof of a successful upload.
+
+### Attachment-only messages missing from the turn selectors
+
+When the website shows a sent card but the application still says "submission
+unconfirmed", close the normal app and run this user-driven capture:
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\attachments-probe.js --file-name hosts
+```
+
+Open the conversation that already contains the failed `hosts` / `hosts(1)` card,
+wait ten seconds, then optionally upload and send the harmless sample whose absolute
+path the probe prints. Wait for the reply to finish, wait ten more seconds, and close
+the probe window. The sample is created with an exclusive filename under `%TEMP%`;
+it has no extension for ChatGPT, matching the observed `hosts` case. DeepSeek's
+sample has a `.txt` suffix. The probe never chooses, uploads or sends it.
+
+`--file-name` can be repeated for existing attachment names. The capture uses a
+filename match to find the visible card independently of the application's turn
+selectors, including website-added suffixes such as `(1)`. Native file selections
+are observed by one capture-phase change listener before the page clears FileList.
+
+The new `messageStructure` snapshot records selector hit counts, matching leaf
+elements, their ancestors and a bounded nearby DOM tree. Each element includes its
+tag, classes, attribute **names and lengths**, role markers, key aliases, matching
+filename indices and counts. No message text, file contents, href/src values,
+title/aria-label values, or raw message identifiers are returned. Node and key aliases
+are stable during one page load, so the log can distinguish a new message from a
+rerender and show whether its card ever acquires the app's expected message marker.
+`attachment-structure.cjs` contains this browser-only read function; the observer
+serializes it into the inspected page and never runs it against a browser by itself.
+
+This diagnostic is an evidence-gathering step, not a website compatibility verdict.
+The agent writes it and reads the user's log; only the user runs and drives Electron.
+
 ## google-login-probe.js
 
 **The question this run answers:** with the embedded identity patched on the wire

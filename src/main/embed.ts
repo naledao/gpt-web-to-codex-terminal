@@ -1,7 +1,11 @@
 import { BrowserWindow, WebContentsView, session, shell } from 'electron'
 import interceptorSource from './injected/send-interceptor.js?raw'
 import themeSource from './injected/theme.js?raw'
-import { FALLBACK_ENVIRONMENT, buildTerminalPrefix, isConversationId } from '../shared/types'
+import { sendPageFiles } from './page-files'
+import { parseReadFilesRequest } from '../shared/file-requests'
+import type { FileSendOutcome } from '../shared/file-requests'
+import type { PreparedFileResult } from './file-access'
+import { FALLBACK_ENVIRONMENT, buildTerminalPromptParts, fileReadingPlatform, isConversationId } from '../shared/types'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
   AppTheme,
@@ -11,8 +15,9 @@ import type {
   EmbedState,
   InterceptorPageEvent,
   InterceptorStatus,
+  TerminalPromptParts,
   PendingQuestionItem,
-  ParsedCommand,
+  ParsedAction,
   ScrapedConversation
 } from '../shared/types'
 
@@ -247,7 +252,7 @@ export interface EmbedHandlers {
   /** Re-read Markdown for an already stored assistant turn in restored history. */
   onAssistantHistoryMarkdown(messageId: string, text: string): void
   /** The model's reply contained a command. */
-  onCommand(command: ParsedCommand): void
+  onCommand(command: ParsedAction): void
   /** An explicitly marked plain-text reply reports that the task is complete. */
   onTaskCompleted(): void
   /**
@@ -301,8 +306,8 @@ export class ChatGptEmbed {
     taskFinishedAt: null,
     pendingQuestion: null,
     // A safe default until main has probed the machine and calls
-    // setPromptPrefix(); see buildTerminalPrompt().
-    prefix: buildTerminalPrefix(FALLBACK_ENVIRONMENT)
+    // setPromptParts(); see buildTerminalPrompt().
+    ...buildTerminalPromptParts(FALLBACK_ENVIRONMENT)
   }
 
   /**
@@ -312,9 +317,12 @@ export class ChatGptEmbed {
    * so it cannot be a compile-time constant. Re-installs into a live page so the
    * change takes effect on the next send rather than the next reload.
    */
-  setPromptPrefix(prefix: string): void {
-    if (this.interceptor.prefix === prefix) return
-    this.interceptor.prefix = prefix
+  setPromptParts(parts: TerminalPromptParts): void {
+    if (this.interceptor.prefix === parts.prefix &&
+        this.interceptor.basePrompt === parts.basePrompt &&
+        this.interceptor.toolPrompt === parts.toolPrompt) return
+    Object.assign(this.interceptor, parts)
+    this.handlers.onInterceptor(this.getInterceptorStatus())
     if (this.liveContents()) void this.installInterceptor()
   }
 
@@ -949,6 +957,18 @@ export class ChatGptEmbed {
     }
   }
 
+  async sendFileResult(result: PreparedFileResult, token: string, current: () => boolean, signal: AbortSignal): Promise<FileSendOutcome> {
+    const contents = this.liveContents()
+    const platform = fileReadingPlatform(this.platform.id)
+    if (!contents || !platform) return 'no-composer'
+    const guard = (): boolean => {
+      if (!current() || contents.isDestroyed()) return false
+      try { return new URL(contents.getURL()).origin === new URL(this.platform.homeUrl).origin } catch { return false }
+    }
+    if (!guard()) return 'cancelled'
+    return sendPageFiles(contents, platform.id, result.attachments, token, guard, signal)
+  }
+
   /**
    * Tell the page to treat everything currently rendered — and whatever renders
    * next — as pre-existing.
@@ -1280,6 +1300,13 @@ export class ChatGptEmbed {
           })
         }
         break
+      case 'read-files': {
+        const request = parseReadFilesRequest({ type: 'read_files', files: payload.files, description: payload.description })
+        if (fileReadingPlatform(this.platform.id) && request && typeof payload.messageId === 'string' && payload.messageId) {
+          this.handlers.onCommand({ ...request, messageId: payload.messageId, live: payload.live === true })
+        }
+        break
+      }
       case 'parse-failed':
         console.warn(`[embed:${this.platform.id}] parse-failed ${JSON.stringify(payload)}`)
         this.handlers.onParseFailed(payload.text ?? '')

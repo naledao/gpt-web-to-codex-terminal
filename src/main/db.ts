@@ -3,6 +3,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, extname, join } from 'node:path'
 import { nativeImage } from 'electron'
+import { parseReadFilesRequest } from '../shared/file-requests'
+import type { StoredFileReadRequest, FileDeliveryStatus } from '../shared/file-requests'
 import type {
   Conversation,
   ConversationImageAttachmentInput,
@@ -82,6 +84,9 @@ CREATE TABLE IF NOT EXISTS executions (
   message_id      TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
   command         TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'command',
+  file_request    TEXT,
+  delivery_status TEXT,
   description     TEXT NOT NULL DEFAULT '',
   timeout_seconds INTEGER NOT NULL DEFAULT 120,
   status          TEXT NOT NULL,
@@ -186,13 +191,16 @@ interface MessageAttachmentRow {
  * The command protocol is deliberately narrow: a JSON object with a string `command` field.
  */
 function isAssistantCommandReply(content: string): boolean {
-  return /\{\s*["']command["']\s*:\s*["']/s.test(String(content || ''))
+  return /\{\s*["']command["']\s*:\s*["']/s.test(String(content || '')) || /"type"\s*:\s*"read_files"/.test(content)
 }
 
 interface ExecutionRow {
   message_id: string
   conversation_id: string
   command: string
+  kind: string
+  file_request: string | null
+  delivery_status: string | null
   description: string
   timeout_seconds: number
   status: string
@@ -222,10 +230,21 @@ export interface ManagedSessionRecord {
 
 /** Map a raw SQLite row onto the shared shape. */
 function toExecutionRecord(row: ExecutionRow): ExecutionRecord {
+  let fileRequest: StoredFileReadRequest | null = null
+  try {
+    const raw = row.file_request ? JSON.parse(row.file_request) : null
+    const parsed = parseReadFilesRequest(raw)
+    if (parsed && raw.context && (raw.context.scope === 'local' || raw.context.scope === 'ssh') && typeof raw.context.cwd === 'string' && typeof raw.context.hostId === 'string') {
+      fileRequest = { ...parsed, context: raw.context }
+    }
+  } catch { /* A malformed stored request must never become a shell command. */ }
   return {
     messageId: row.message_id,
     conversationId: row.conversation_id,
     command: row.command,
+    kind: row.kind === 'read_files' ? 'read_files' : 'command',
+    fileRequest,
+    deliveryStatus: row.delivery_status as FileDeliveryStatus | null,
     description: row.description,
     timeoutSeconds: row.timeout_seconds,
     status: row.status as ExecutionStatus,
@@ -301,6 +320,13 @@ export class ConversationStore {
     if (!executionColumns.some((column) => column.name === 'timeout_seconds')) {
       this.db.exec('ALTER TABLE executions ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 120')
     }
+    for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'command'"], ['file_request', 'TEXT'], ['delivery_status', 'TEXT']]) {
+      if (!executionColumns.some((column) => column.name === name)) this.db.exec(`ALTER TABLE executions ADD COLUMN ${name} ${definition}`)
+    }
+    // A crashed process cannot prove whether an in-progress upload was submitted.
+    this.db.exec("UPDATE executions SET status = 'interrupted', delivery_status = CASE WHEN delivery_status = 'uploading' THEN 'unknown' ELSE 'cancelled' END WHERE kind = 'read_files' AND status = 'running'")
+    this.db.exec("UPDATE executions SET delivery_status = 'unknown' WHERE kind = 'read_files' AND delivery_status = 'uploading'")
+    this.db.exec("UPDATE executions SET delivery_status = 'cancelled' WHERE kind = 'read_files' AND status IN ('done', 'failed') AND delivery_status IN ('pending', 'failed')")
     const conversationColumns = this.db
       .prepare('PRAGMA table_info(conversations)')
       .all() as unknown as Array<{ name: string }>
@@ -633,6 +659,7 @@ export class ConversationStore {
     messageId: string
     conversationId: string
     command: string
+    fileRequest?: StoredFileReadRequest
     description: string
     timeoutSeconds: number
     status: ExecutionStatus
@@ -646,8 +673,8 @@ export class ConversationStore {
     this.db
       .prepare(
         `INSERT INTO executions
-           (message_id, conversation_id, command, description, timeout_seconds, status, output, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, '', ?)`
+           (message_id, conversation_id, command, description, timeout_seconds, status, output, created_at, kind, file_request, delivery_status)
+         VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`
       )
       .run(
         record.messageId,
@@ -656,7 +683,10 @@ export class ConversationStore {
         record.description,
         record.timeoutSeconds,
         record.status,
-        record.createdAt
+        record.createdAt,
+        record.fileRequest ? 'read_files' : 'command',
+        record.fileRequest ? JSON.stringify(record.fileRequest) : null,
+        record.fileRequest ? 'pending' : null
       )
     return true
   }
@@ -838,6 +868,10 @@ export class ConversationStore {
       return
     }
     this.db.prepare('UPDATE executions SET status = ? WHERE message_id = ?').run(status, messageId)
+  }
+
+  setFileDeliveryStatus(messageId: string, status: FileDeliveryStatus): void {
+    this.db.prepare('UPDATE executions SET delivery_status = ? WHERE message_id = ? AND kind = ?').run(status, messageId, 'read_files')
   }
 
   getExecution(messageId: string): ExecutionRecord | null {

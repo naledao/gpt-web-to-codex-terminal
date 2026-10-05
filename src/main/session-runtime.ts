@@ -3,9 +3,14 @@ import { BrowserWindow, Notification, safeStorage } from 'electron'
 import {
   FALLBACK_ENVIRONMENT,
   IpcChannels,
-  buildTerminalPrefix
+  buildTerminalPromptParts,
+  toolPromptForPlatform,
+  fileReadingPlatform
 } from '../shared/types'
 import { CHAT_PLATFORMS, DEEPSEEK_PLATFORM } from '../shared/platforms'
+import type { FileReadContext } from '../shared/file-requests'
+import { prepareFiles } from './file-access'
+import { homedir } from 'node:os'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
   AppTheme,
@@ -17,7 +22,7 @@ import type {
   EnvironmentInfo,
   ExecutionMode,
   ManagedSessionSummary,
-  ParsedCommand,
+  ParsedAction,
   SshHost,
   SshHostDraft,
   SshState,
@@ -227,7 +232,7 @@ export class SessionRuntime {
    * keeps that from depending on a second renderer round-trip.
    */
   private lastBounds: EmbedBounds | null = null
-  private readonly deferredCommands = new Map<string, ParsedCommand>()
+  private readonly deferredCommands = new Map<string, ParsedAction>()
   /**
    * The last thing the user asked for, held until the conversation has an id.
    *
@@ -280,6 +285,10 @@ export class SessionRuntime {
       store: options.store,
       currentConversationId: () => this.embed.getState().conversationId,
       sendRawToPage: (text) => this.embed.sendRaw(text),
+      fileContext: () => this.fileReadContext(),
+      filePlatform: () => fileReadingPlatform(this.activePlatform.id),
+      prepareFiles: (request, signal) => prepareFiles(request, signal, (path, limit, abort) => this.ssh.readFileForModel(path, request.context.hostId, limit, abort), fileReadingPlatform(this.activePlatform.id)?.id),
+      sendFilesToPage: (result, token, current, signal) => this.embed.sendFileResult(result, token, current, signal),
       terminalModeEnabled: () => this.embed.getInterceptorStatus().enabled,
       remoteShell: () => this.remoteShell,
       onRemoteLine: (line) => this.ssh.pushModelLine(line),
@@ -474,7 +483,7 @@ export class SessionRuntime {
           console.warn(
             `[session] command DROPPED, this session is not the visible one ${JSON.stringify({
               messageId: command.messageId,
-              command: command.command
+              command: 'command' in command ? command.command : command.files.map((file) => file.path)
             })}`
           )
           return
@@ -532,12 +541,12 @@ export class SessionRuntime {
      * into it here.
      *
      * `ChatGptEmbed` holds the prefix per view, and every other call site pushes it to the
-     * ACTIVE view (`this.embed.setPromptPrefix(...)`). A view created later therefore keeps the
+     * ACTIVE view (`this.embed.setPromptParts(...)`). A view created later therefore keeps the
      * generic fallback â€” which does not describe this machine â€” and switching to it would
      * inject the wrong prompt, or (when the fallback is identical to what the page already has)
      * look like nothing was injected at all.
      */
-    entry.embed.setPromptPrefix(buildTerminalPrefix(this.environment))
+    entry.embed.setPromptParts(buildTerminalPromptParts(this.environment, toolPromptForPlatform(entry.platform.id)))
     /*
      * Same reasoning as the prompt above, one line down: the theme lives per VIEW, so a view
      * created after the last theme change would otherwise come up wearing the old one — and
@@ -611,7 +620,8 @@ export class SessionRuntime {
      * the last environment probe or SSH handover, in which case its copy of the prompt is stale
      * and the page would inject a description of the wrong machine.
      */
-    embed.setPromptPrefix(buildTerminalPrefix(this.environment))
+    const prompts = buildTerminalPromptParts(this.environment, toolPromptForPlatform(entry.platform.id))
+    embed.setPromptParts(prompts)
     this.applyVisibility()
     void embed.armCommandBaseline()
     /*
@@ -623,7 +633,7 @@ export class SessionRuntime {
      * `detected` is what separates a probed machine from `FALLBACK_ENVIRONMENT`; the length
      * alone does not, because the two can coincide.
      */
-    const prefix = buildTerminalPrefix(this.environment)
+    const prefix = prompts.prefix
     console.info(
       `[session] ${this.id.slice(0, 8)} switched to ${entry.platform.label} ` +
         `(prompt=${prefix.length} detected=${this.environment.detected} ` +
@@ -781,7 +791,7 @@ export class SessionRuntime {
     return status
   }
 
-  private handleDetectedCommand(command: ParsedCommand): void {
+  private handleDetectedCommand(command: ParsedAction): void {
     if (this.runner.handleDetected(command)) return
 
     // New chats navigate from '/' to /c/<id> asynchronously. A fast assistant
@@ -797,6 +807,15 @@ export class SessionRuntime {
       `[session] command DEFERRED until a conversation id exists ` +
         `${JSON.stringify({ messageId: command.messageId, waiting: this.deferredCommands.size })}`
     )
+  }
+
+  private fileReadContext(): FileReadContext {
+    if (!fileReadingPlatform(this.activePlatform.id)) throw new Error('当前平台尚未适配 read_files。')
+    const ssh = this.ssh.getState()
+    if (ssh.attached) {
+      return { scope: 'ssh', hostId: ssh.hostId ?? '', cwd: this.remoteShell?.cwd || this.sshCwd }
+    }
+    return { scope: 'local', hostId: '', cwd: this.runner.getTerminalState().cwd || homedir() }
   }
 
   private flushDeferredCommands(conversationId: string): void {
@@ -951,7 +970,7 @@ export class SessionRuntime {
       this.options.store.setSetting(SETTING_LOCAL_NOTES, text)
     }
     this.environment = { ...this.environment, extraNotes: text }
-    this.embed.setPromptPrefix(buildTerminalPrefix(this.environment))
+    this.embed.setPromptParts(buildTerminalPromptParts(this.environment, toolPromptForPlatform(this.activePlatform.id)))
     this.send(IpcChannels.terminalNotesChanged, this.currentNotes())
     this.send(IpcChannels.environmentChanged, { ...this.environment })
     return this.currentNotes()
@@ -1043,7 +1062,7 @@ export class SessionRuntime {
 
       info.extraNotes = this.readNotes()
       this.environment = info
-      this.embed.setPromptPrefix(buildTerminalPrefix(info))
+      this.embed.setPromptParts(buildTerminalPromptParts(info, toolPromptForPlatform(this.activePlatform.id)))
       this.send(IpcChannels.environmentChanged, { ...this.environment })
       this.send(IpcChannels.terminalNotesChanged, this.currentNotes())
       this.broadcastConversations()

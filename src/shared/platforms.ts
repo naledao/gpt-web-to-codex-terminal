@@ -135,6 +135,20 @@ export interface PageAdapter {
    * on this site", which is a real limitation to surface rather than paper over.
    */
   messageIdAttr: string
+  /** Additional disabled states used by custom controls instead of native buttons. */
+  disabledControlSelectors?: string[]
+  /** Attachment acknowledgements only; never used as command message identities. */
+  fileTurnPositionAttr?: string
+  /** Exclude reasoning-only assistant rows from attachment acknowledgements. */
+  fileAssistantSelectors?: string[]
+  /** Normalize nested attachment message nodes to this user-only wrapper. */
+  fileUserTurnSelector?: string
+  /** Older text-only wrappers, used only when the full user wrapper is absent. */
+  fileUserTurnFallbackSelector?: string
+  /** Opaque full-user-wrapper identity for a single attachment acknowledgement. */
+  fileUserTurnKeyAttr?: string
+  /** A site may render uploaded images as filename cards rather than thumbnails. */
+  fileImagesMayUseNames?: boolean
   /** How this site's page is told which theme to render. See `PageThemeRules`. */
   theme: PageThemeRules
 }
@@ -480,6 +494,11 @@ export const CHATGPT_PAGE: PageAdapter = {
    */
   messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
   messageIdAttr: 'data-chatgpt-selection-message-id',
+  // 2026-10-05 attachment probe: cards are siblings of the empty text unit.
+  // The text unit disappears during send; this outer user wrapper remains.
+  fileUserTurnSelector: '[class~="group/user-message"][data-chatgpt-search-unit-key]',
+  fileUserTurnFallbackSelector: '[data-content-search-unit-key$=":user"]',
+  fileUserTurnKeyAttr: 'data-chatgpt-search-unit-key',
   // Not measured yet; DeepSeek is the platform the theme probe runs against first.
   theme: THEME_UNMEASURED
 }
@@ -532,6 +551,11 @@ export const CHATGPT_PLATFORM: ChatPlatform = {
 export const DEEPSEEK_PAGE: PageAdapter = {
   composerKind: 'textarea',
   composerSelectors: ['textarea[placeholder]', 'textarea'],
+  disabledControlSelectors: ['.ds-button--disabled'],
+  // Virtual row keys (numeric or opaque) are used only across this one send.
+  fileTurnPositionAttr: 'data-virtual-list-item-key',
+  fileAssistantSelectors: ['.ds-think-content'],
+  fileImagesMayUseNames: true,
   /*
    * From the earlier DOM capture, where the composer was empty and the control read
    * `ds-button ds-button--primary ds-button--filled ds-button--circle … ds-button--disabled`.
