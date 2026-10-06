@@ -4,6 +4,8 @@
  * so it can be imported from every process.
  */
 
+import { MAX_READ_FILES } from './file-requests'
+
 export const IpcChannels = {
   getAppInfo: 'app:get-info',
   embedSetBounds: 'embed:set-bounds',
@@ -646,11 +648,11 @@ export function fileReadingPlatform(platformId: string): FileReadingPlatform | n
 }
 
 /** Tool descriptions live alongside the system prompt, with a separate preview. */
-const readFilesToolPrompt = (platformLabel: string): string => [
-  `【工具：read_files（${platformLabel}）】`,
-  `将当前终端对应机器上的文件，作为完整附件上传到当前 ${platformLabel} 会话。支持文本、源码、图片及文档；保留文件原始内容，不修改源文件。`,
+const readFilesToolPrompt = [
+  '【工具：read_files】',
+  '将当前终端对应机器上的文件，作为完整附件上传到当前会话。支持文本、源码、图片及文档；保留文件原始内容，不修改源文件。',
   '',
-  '调用格式：单个 JSON 代码块。type 固定为 read_files，files 为 1–5 个文件对象的数组，description 为非空说明字符串；与 command、questions 互斥。',
+  `调用格式：单个 JSON 代码块。type 固定为 read_files，files 为 1–${MAX_READ_FILES} 个文件对象的数组，description 为非空说明字符串；与 command、questions 互斥。`,
   '',
   '```json',
   '{',
@@ -666,13 +668,13 @@ const readFilesToolPrompt = (platformLabel: string): string => [
   '',
   '返回：文件将以附件形式发送到当前会话。',
   '',
-  '限制：每次 1–5 个非空普通文件，单个最多 20 MiB，附件合计最多 25 MiB。'
+  `限制：每次 1–${MAX_READ_FILES} 个非空普通文件，单个最多 20 MiB，附件合计最多 25 MiB。超出数量上限时需分次调用。`
 ].join('\n')
 
 /** Only expose tools that the selected platform can execute. */
 export function toolPromptForPlatform(platformId: string): string {
   const platform = fileReadingPlatform(platformId)
-  return platform ? readFilesToolPrompt(platform.label) : ''
+  return platform ? readFilesToolPrompt : ''
 }
 
 /** The parts of the prompt only true of a Windows PowerShell session. */

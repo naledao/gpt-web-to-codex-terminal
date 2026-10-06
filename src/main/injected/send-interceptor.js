@@ -1870,7 +1870,7 @@
       let request
       try { request = JSON.parse(candidates[i]) } catch (_) { continue }
       if (!request || request.type !== 'read_files' || 'command' in request || 'questions' in request) continue
-      if (!Array.isArray(request.files) || request.files.length < 1 || request.files.length > 5) return null
+      if (!Array.isArray(request.files) || request.files.length < 1 || request.files.length > 3) return null
       if (typeof request.description !== 'string' || !request.description.trim() || request.description.length > 2000) return null
       const files = []
       for (const item of request.files) {

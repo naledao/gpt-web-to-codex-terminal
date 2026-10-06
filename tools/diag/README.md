@@ -55,7 +55,14 @@ Attachment observation and offline checks for AI-selected file uploads. See
 The user runs `node tools/diag/read-files-check.cjs` for offline checks. It never
 starts Electron or accesses the network; fixtures and logs are created under `%TEMP%`.
 It covers original file bytes (including text/source files), upload limits, SSH routing,
-and both platforms' CDP file-selection path with a fake page. DeepSeek checks cover
+and both platforms' CDP file-selection path with a fake page.
+
+The tool allows 1–3 files per call. Boundary checks exercise the real injected and
+main-process request parsers, both platform prompts, and rejection of oversized
+stored requests before any file is read. Larger byte-preservation fixture sets
+are read in separate calls of at most three files.
+
+DeepSeek checks cover
 custom disabled buttons, filename cards, old-row rerenders and recycled virtual rows.
 They also cover numeric/opaque key mixtures, reasoning-only rows and the actual
 command scanner after confirmation succeeds or expires. Release must preserve
@@ -64,7 +71,8 @@ and avoid scheduling resumed scans for disabled terminal mode or restored histor
 It also exercises the actual attachment scope/text extraction for file cards above
 the toolbar, clickable cards and full filenames in labels, excluding editor text
 and conversation history.
-Composer-scope fixtures also model a nested native form with a five-file batch:
+Composer-scope fixtures also model a nested native form with a historical five-file
+batch (attachment detection only; this does not bypass the three-file tool limit):
 cards relocate outside the form after upload, one long filename is shortened,
 and empty-text attachment history must still stop ancestor expansion. Finding a
 form does not end discovery; a form that contains history must not be selected.

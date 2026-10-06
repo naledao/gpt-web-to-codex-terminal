@@ -33,9 +33,13 @@ const logFile = path.join(logDir, `read-files-check-${Date.now()}.log`)
 const log = text => { fs.appendFileSync(logFile, text + '\n'); console.log(text) }
 
 async function main() {
-  assert.match(toolPromptForPlatform('chatgpt'), /read_files（ChatGPT）/)
-  assert.match(toolPromptForPlatform('deepseek'), /read_files（DeepSeek）/)
-  assert.doesNotMatch(toolPromptForPlatform('deepseek'), /ChatGPT/)
+  assert.equal(toolPromptForPlatform('chatgpt'), toolPromptForPlatform('deepseek'))
+  for (const platform of ['chatgpt', 'deepseek']) {
+    assert.match(toolPromptForPlatform(platform), /^【工具：read_files】/)
+    assert.doesNotMatch(toolPromptForPlatform(platform), /ChatGPT|DeepSeek/)
+    assert.match(toolPromptForPlatform(platform), /files 为 1–3 个/)
+    assert.match(toolPromptForPlatform(platform), /每次 1–3 个非空普通文件/)
+  }
   assert.equal(toolPromptForPlatform('unadapted'), '')
   assert.equal(fileReadingPlatform('unadapted'), null)
   const injectedSource = fs.readFileSync(path.resolve(__dirname, '../../src/main/injected/send-interceptor.js'), 'utf8')
@@ -533,13 +537,37 @@ async function main() {
   assert.equal(fileApi.beginFileSend('deepseek-missing-input', [image]), 'no-file-input')
   log('PASS DeepSeek prompt gating, custom disabled controls, filename cards, old-row rejection and recycled row confirmation')
   const base = { type: 'read_files', files: [{ path: 'sample.txt' }], description: '读取样例' }
+  const scannerStart = injectedSource.indexOf('  const balancedObjects =')
+  const scannerEnd = injectedSource.indexOf('  const readJsonishString =', scannerStart)
+  const parserStart = injectedSource.indexOf('  const looksLikeReadFilesReply =')
+  const parserEnd = injectedSource.indexOf('  // Questions have their own discriminator.', parserStart)
+  assert.ok(scannerStart >= 0 && scannerEnd > scannerStart && parserStart >= 0 && parserEnd > parserStart)
+  const extractFiles = vm.runInNewContext(injectedSource.slice(scannerStart, scannerEnd) + '\n' +
+    injectedSource.slice(parserStart, parserEnd) + '\nextractReadFiles')
+  for (const count of [0, 1, 2, 3, 4, 5, 6]) {
+    const request = { ...base, files: Array.from({ length: count }, (_, index) => ({ path: `sample-${index}.txt` })) }
+    const accepted = count >= 1 && count <= 3
+    assert.equal(parseReadFilesRequest(request) !== null, accepted, `Main-process ${count}-file boundary`)
+    assert.equal(extractFiles(JSON.stringify(request)) !== null, accepted, `Injected ${count}-file boundary`)
+  }
+  for (const count of [0, 4, 5]) {
+    let reads = 0
+    const request = { ...base, files: Array.from({ length: count }, (_, index) => ({ path: `sample-${index}.txt` })),
+      context: { scope: 'ssh', hostId: 'fixture', cwd: '/srv' } }
+    await assert.rejects(prepareFiles(request, new AbortController().signal, async () => {
+      reads++
+      return Buffer.from('must not read')
+    }), /最多读取 3 个文件/)
+    assert.equal(reads, 0, 'Oversized stored requests must fail before reading any file')
+  }
+  log('PASS three-file limit in both request parsers, platform prompts and stored-request preparation')
   const valid = parseReadFilesRequest(base)
   assert.deepEqual(valid.files, [{ path: 'sample.txt' }])
   const legacy = parseReadFilesRequest({ ...base, files: [{ path: ' sample.txt ', mode: 'text', start_line: 2, max_lines: 1, encoding: 'gb18030' }] })
   assert.deepEqual(legacy, valid)
   for (const invalid of [
     { ...base, command: 'echo x' }, { ...base, questions: [] }, { ...base, description: ' ' },
-    { ...base, files: [] }, { ...base, files: Array(6).fill({ path: 'x' }) },
+    { ...base, files: [] }, { ...base, files: Array(4).fill({ path: 'x' }) },
     { ...base, files: [{ path: 'x\0y' }] }, { ...base, files: [{ path: ' ' }] },
     { ...base, files: [{ path: 42 }] }, { ...base, files: [{ path: 'x'.repeat(4097) }] }
   ]) assert.equal(parseReadFilesRequest(invalid), null)
@@ -610,6 +638,20 @@ async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gpt-read-files-check-'))
   const prepared = []
   try {
+    // Larger fixture sets use separate legal calls; the tool itself does not
+    // silently split or truncate an oversized request.
+    async function prepareFixtureBatches(request, platform) {
+      const batches = []
+      for (let offset = 0; offset < request.files.length; offset += 3) {
+        const result = await prepareFiles({ ...request, files: request.files.slice(offset, offset + 3) },
+          new AbortController().signal, undefined, platform)
+        prepared.push(result)
+        batches.push(result)
+      }
+      return { failed: batches.some(result => result.failed),
+        attachments: batches.flatMap(result => result.attachments),
+        text: batches.map(result => result.text).join('\n') }
+    }
     fs.writeFileSync(path.join(root, 'sample.txt'), 'source content\r\nsecond line\r\n')
     fs.writeFileSync(path.join(root, 'sample.ts'), 'export const value = 42\r\n')
     fs.writeFileSync(path.join(root, 'utf16.txt'), Buffer.concat([Buffer.from([255, 254]), Buffer.from('原始编码\r\n', 'utf16le')]))
@@ -637,8 +679,7 @@ async function main() {
     await result.cleanup()
     assert.equal(fs.existsSync(path.join(root, 'sample.png')), true)
     assert.equal(fs.readFileSync(path.join(root, 'sample.txt'), 'utf8'), 'source content\r\nsecond line\r\n')
-    const originals = await prepareFiles({ ...legacy, files: [{ path: 'sample.ts' }, { path: 'utf16.txt', mode: 'text', start_line: 2, max_lines: 1, encoding: 'gb18030' }, { path: 'sample.bin' }, { path: 'large.txt' }], context: request.context }, new AbortController().signal)
-    prepared.push(originals)
+    const originals = await prepareFixtureBatches({ ...legacy, files: [{ path: 'sample.ts' }, { path: 'utf16.txt', mode: 'text', start_line: 2, max_lines: 1, encoding: 'gb18030' }, { path: 'sample.bin' }, { path: 'large.txt' }], context: request.context })
     assert.equal(originals.failed, false)
     assert.equal(originals.attachments.length, 4)
     assert.equal(originals.attachments[0].mimeType, 'text/plain')
@@ -652,9 +693,8 @@ async function main() {
     fs.writeFileSync(path.join(root, 'rawbinary'), Buffer.from([0, 1, 2, 3]))
     fs.writeFileSync(path.join(root, 'nonutf8'), Buffer.from([0xff, 0xfe, 65, 0]))
     const configRequest = { ...valid, files: ['.gitconfig', 'Makefile', 'rawbinary', 'nonutf8', 'sample.ts'].map(file => ({ path: file })), context: request.context }
-    const nativeConfigs = await prepareFiles(configRequest, new AbortController().signal, undefined, 'chatgpt')
-    const deepseekConfigs = await prepareFiles(configRequest, new AbortController().signal, undefined, 'deepseek')
-    prepared.push(nativeConfigs, deepseekConfigs)
+    const nativeConfigs = await prepareFixtureBatches(configRequest, 'chatgpt')
+    const deepseekConfigs = await prepareFixtureBatches(configRequest, 'deepseek')
     assert.equal(deepseekConfigs.failed, false)
     assert.deepEqual(deepseekConfigs.attachments.map(file => file.fileName), ['.gitconfig.txt', 'Makefile.txt', 'rawbinary', 'nonutf8', 'sample.ts'])
     assert.equal(deepseekConfigs.attachments[0].mimeType, 'text/plain')

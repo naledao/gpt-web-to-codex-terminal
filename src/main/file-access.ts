@@ -2,7 +2,7 @@ import { open, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, posix, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
-import type { StoredFileReadRequest } from '../shared/file-requests'
+import { MAX_READ_FILES, type StoredFileReadRequest } from '../shared/file-requests'
 import type { ConversationImageAttachmentInput, FileReadingPlatform } from '../shared/types'
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -90,6 +90,9 @@ async function readLocalFile(path: string, maxBytes: number, signal: AbortSignal
 
 /** Read snapshots; staging never modifies the user's source files. */
 export async function prepareFiles(request: StoredFileReadRequest, signal: AbortSignal, remoteRead?: RemoteFileReader, platformId?: FileReadingPlatform['id']): Promise<PreparedFileResult> {
+  if (request.files.length < 1 || request.files.length > MAX_READ_FILES) {
+    throw new Error(`每次最多读取 ${MAX_READ_FILES} 个文件，请分批调用。`)
+  }
   const attachments: PreparedAttachment[] = []
   const images: ConversationImageAttachmentInput[] = []
   const sections: string[] = []

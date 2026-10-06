@@ -1,4 +1,6 @@
 /** This contract is also validated in the injected script, which cannot import TS. */
+export const MAX_READ_FILES = 3
+
 export interface ReadFileSpec {
   path: string
 }
@@ -26,7 +28,7 @@ export function parseReadFilesRequest(value: unknown): ReadFilesRequest | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const request = value as Record<string, unknown>
   if (request.type !== 'read_files' || 'command' in request || 'questions' in request) return null
-  if (!Array.isArray(request.files) || request.files.length < 1 || request.files.length > 5) return null
+  if (!Array.isArray(request.files) || request.files.length < 1 || request.files.length > MAX_READ_FILES) return null
   if (typeof request.description !== 'string' || !request.description.trim() || request.description.length > 2000) return null
   const files: ReadFileSpec[] = []
   for (const raw of request.files) {
