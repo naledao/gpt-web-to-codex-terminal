@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: Web2TermBack
+
+  # Spring Cloud Alibaba 2025.1.x 使用 spring.config.import 从 Nacos 配置中心加载配置
+  config:
+    import:
+      - optional:nacos:Web2TermBack.yml?group=kangnasi&refreshEnabled=true
+
+  cloud:
+    nacos:
+      server-addr: 192.168.108.26:8848
+      username: nacos
+      password: "241964Zq!"
+      # 服务注册与发现配置
+      discovery:
+        namespace: kangnasi
+        group: kangnasi
+      # 配置中心配置，namespace 应填写 Nacos 命名空间 ID
+      config:
+        namespace: kangnasi
+        group: kangnasi
+
+  datasource:
+    url: jdbc:mysql://192.168.108.26:8088/terminal_relay?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: kangnasi
+    password: "241964Zq!"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: Web2TermHikariPool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      validation-timeout: 5000
+
+mybatis:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
