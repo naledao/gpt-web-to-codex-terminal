@@ -42,7 +42,9 @@ import type {
   SshFileEntry,
   SshState,
   TerminalNotes,
+  TerminalNotesOwner,
   TerminalState,
+  MysqlConnection,
   UpdateStatus
 } from '../shared/types'
 import { embedAuthState, importCookieSet, importSessionToken, previewSessionImport } from './session-import'
@@ -400,6 +402,7 @@ const EMPTY_EMBED_STATE: EmbedState = {
 
 const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
   enabled: false,
+  promptInjectionEnabled: true,
   installed: false,
   injectedCount: 0,
   lastSentText: null,
@@ -413,7 +416,8 @@ const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
 
 const FALLBACK_AUTOMATION: AutomationState = { mode: 'manual', paused: true }
 const FALLBACK_TERMINAL_STATE: TerminalState = { alive: false, cwd: '', lines: [], sendDelaySeconds: 0 }
-const EMPTY_NOTES: TerminalNotes = { scope: 'local', hostId: '', label: '', text: '' }
+const EMPTY_NOTES: TerminalNotes = { scope: 'local', hostId: '', directoryKey: '', directory: '', label: '', text: '', legacyText: '' }
+const EMPTY_MYSQL: MysqlConnection = { scope: 'local', hostId: '', label: '', host: '', port: 3306, username: '', password: '', database: '' }
 
 function normalizeProxy(raw: string): string {
   const trimmed = raw.trim()
@@ -637,6 +641,7 @@ function createSession(
     initialUrl: restored?.url || undefined,
     initialConversationId: restored?.conversationId ?? null,
     initialPaused: restored?.paused ?? false,
+    initialPromptInjectionEnabled: restored?.promptInjectionEnabled ?? true,
     initialLocalCwd: restored?.localCwd ?? '',
     initialSshHostId: restored?.sshHostId ?? '',
     initialSshAttached: restored?.sshAttached ?? false,
@@ -652,6 +657,9 @@ function createSession(
       broadcastManagedSessions()
     },
     onTransfersChanged: broadcastSshTransfers,
+    onTerminalNotesSaved: (owner) => {
+      for (const other of runtimes.values()) other.refreshTerminalNotesForOwner(owner)
+    },
     onActivate: (id) => { selectSession(id) },
     /*
      * Ends the startup splash. Only the session the user is actually shown reports here,
@@ -996,6 +1004,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannels.interceptorGetState, (event): InterceptorStatus => runtimeForEvent(event)?.embed.getInterceptorStatus() ?? FALLBACK_INTERCEPTOR_STATE)
   ipcMain.handle(IpcChannels.interceptorSetEnabled, (event, enabled: boolean): InterceptorStatus => runtimeForEvent(event)?.embed.setInterceptorEnabled(Boolean(enabled)) ?? FALLBACK_INTERCEPTOR_STATE)
+  ipcMain.handle(IpcChannels.interceptorSetPromptInjectionEnabled, (event, enabled: boolean): InterceptorStatus => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime || typeof enabled !== 'boolean') throw new Error('当前会话不可用。')
+    return runtime.setPromptInjectionEnabled(enabled)
+  })
   ipcMain.handle(IpcChannels.interceptorAnswerQuestion, async (event, messageId: string, answer: string): Promise<InterceptorStatus> => {
     const runtime = runtimeForEvent(event)
     if (!runtime || typeof messageId !== 'string' || typeof answer !== 'string') throw new Error('当前会话不可用。')
@@ -1098,7 +1111,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.terminalSetSendDelay, (event, seconds: number): TerminalState => runtimeForEvent(event)?.setTerminalSendDelay(Number(seconds ?? 0)) ?? FALLBACK_TERMINAL_STATE)
   ipcMain.handle(IpcChannels.environmentGet, (event) => ({ ...(runtimeForEvent(event)?.environment ?? FALLBACK_ENVIRONMENT) }))
   ipcMain.handle(IpcChannels.terminalNotesGet, (event): TerminalNotes => runtimeForEvent(event)?.currentNotes() ?? EMPTY_NOTES)
-  ipcMain.handle(IpcChannels.terminalNotesSet, (event, text: string): TerminalNotes => runtimeForEvent(event)?.applyTerminalNotes(String(text ?? '')) ?? EMPTY_NOTES)
+  ipcMain.handle(IpcChannels.terminalNotesSet, (event, text: string, owner: TerminalNotesOwner): TerminalNotes => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime || typeof text !== 'string') throw new Error('当前会话不可用。')
+    return runtime.applyTerminalNotes(text, owner)
+  })
+  ipcMain.handle(IpcChannels.mysqlConnGet, (event): MysqlConnection => runtimeForEvent(event)?.currentMysqlConnection() ?? EMPTY_MYSQL)
+  ipcMain.handle(IpcChannels.mysqlConnSet, (event, connection: MysqlConnection): MysqlConnection => runtimeForEvent(event)?.applyMysqlConnection(connection) ?? EMPTY_MYSQL)
 
   ipcMain.handle(IpcChannels.sshGetState, (event): SshState => runtimeForEvent(event)?.ssh.getState() ?? { ...EMPTY_SSH_STATE })
   ipcMain.handle(IpcChannels.sshListHosts, (event): SshHost[] => runtimeForEvent(event)?.listSshHosts() ?? [])

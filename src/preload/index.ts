@@ -20,6 +20,7 @@ import type {
   GitFileDiff,
   GitLogResult,
   ManagedSessionSummary,
+  MysqlConnection,
   WorkspaceState,
   SessionImportDraft,
   SessionImportResult,
@@ -168,6 +169,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
 
   setInterceptorEnabled: (enabled: boolean): Promise<InterceptorStatus> =>
     ipcRenderer.invoke(IpcChannels.interceptorSetEnabled, enabled),
+
+  setPromptInjectionEnabled: (enabled: boolean): Promise<InterceptorStatus> =>
+    ipcRenderer.invoke(IpcChannels.interceptorSetPromptInjectionEnabled, enabled),
 
   answerQuestion: (messageId: string, answer: string): Promise<InterceptorStatus> =>
     ipcRenderer.invoke(IpcChannels.interceptorAnswerQuestion, messageId, answer),
@@ -324,14 +328,27 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   getTerminalNotes: (): Promise<TerminalNotes> =>
     ipcRenderer.invoke(IpcChannels.terminalNotesGet),
 
-  setTerminalNotes: (text: string): Promise<TerminalNotes> =>
-    ipcRenderer.invoke(IpcChannels.terminalNotesSet, text),
+  setTerminalNotes: (text, owner): Promise<TerminalNotes> =>
+    ipcRenderer.invoke(IpcChannels.terminalNotesSet, text, owner),
 
   onTerminalNotesChanged: (listener: (notes: TerminalNotes) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, notes: TerminalNotes): void => listener(notes)
     ipcRenderer.on(IpcChannels.terminalNotesChanged, handler)
     return () => {
       ipcRenderer.removeListener(IpcChannels.terminalNotesChanged, handler)
+    }
+  },
+  getMysqlConnection: (): Promise<MysqlConnection> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnGet),
+
+  setMysqlConnection: (connection: MysqlConnection): Promise<MysqlConnection> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnSet, connection),
+
+  onMysqlConnectionChanged: (listener: (connection: MysqlConnection) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, connection: MysqlConnection): void => listener(connection)
+    ipcRenderer.on(IpcChannels.mysqlConnChanged, handler)
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.mysqlConnChanged, handler)
     }
   },
 

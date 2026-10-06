@@ -36,6 +36,7 @@ export const IpcChannels = {
   conversationsChanged: 'conversations:changed',
   interceptorGetState: 'interceptor:get-state',
   interceptorSetEnabled: 'interceptor:set-enabled',
+  interceptorSetPromptInjectionEnabled: 'interceptor:set-prompt-injection-enabled',
   interceptorAnswerQuestion: 'interceptor:answer-question',
   interceptorCancelQuestion: 'interceptor:cancel-question',
   interceptorEndTask: 'interceptor:end-task',
@@ -103,7 +104,10 @@ export const IpcChannels = {
   updateInstall: 'update:install',
   updateChanged: 'update:changed',
   gitLog: 'git:log',
-  gitDiff: 'git:diff'
+  gitDiff: 'git:diff',
+  mysqlConnGet: 'mysql-conn:get',
+  mysqlConnSet: 'mysql-conn:set',
+  mysqlConnChanged: 'mysql-conn:changed'
 } as const
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels]
@@ -862,7 +866,7 @@ function notesSection(notes: string): string[] {
   return [
     '',
     '【用户补充】',
-    '与通用约定冲突时，以这台机器的补充说明为准：',
+    '与通用约定冲突时，以这台机器当前目录的补充说明为准：',
     text
   ]
 }
@@ -896,6 +900,8 @@ export function buildTerminalPromptParts(env: EnvironmentInfo, toolPrompt = ''):
 /** Aggregated interceptor state kept by the main process. */
 export interface InterceptorStatus extends TerminalPromptParts {
   enabled: boolean
+  /** This workspace session may append its system and tool prompts to user sends. */
+  promptInjectionEnabled: boolean
   /** True once the injected script has installed itself in the page. */
   installed: boolean
   injectedCount: number
@@ -973,6 +979,7 @@ export interface InterceptorPageEvent {
   /** Capture diagnostics: where the image was found and how many were read. */
   phase?: 'draft' | 'sent-turn'
   enabled?: boolean
+  promptInjectionEnabled?: boolean
   prefixLength?: number
   /** Present on `sent`: this confirmed user message carried the task's prompt. */
   promptInjected?: boolean
@@ -1384,27 +1391,52 @@ export interface SshState {
 }
 
 /* ------------------------------------------------------------------ *
- * Per-machine notes
+ * Per-directory notes on one machine
  * ------------------------------------------------------------------ */
 
 /**
- * Free-form text the user attaches to ONE machine, appended to that machine's
- * system prompt.
+ * Free-form text for ONE working directory on ONE machine, appended to its system prompt.
  *
- * Scoped to the machine rather than to the app because the content that makes
- * this worth having is machine-specific — "the project lives in /srv/app", "do
- * not touch /data", "use the internal npm registry". Carrying it to a different
- * host would be worse than having no note at all.
+ * Multiple sessions in the same machine/directory share these project conventions.
+ * A different directory or host has its own notes, without parent-directory inheritance.
  */
-export interface TerminalNotes {
+export interface TerminalNotesOwner {
   /** Which kind of machine owns this note. */
   scope: 'local' | 'ssh'
-  /** The saved host id when `scope` is 'ssh'; '' for the local machine. */
+  /** Saved SSH host id, or the installation's local machine id. */
   hostId: string
+  /** Normalized absolute cwd; empty until the shell establishes its directory. */
+  directoryKey: string
+}
+
+export function terminalNotesOwnerKey(owner: TerminalNotesOwner): string {
+  return JSON.stringify([owner.scope, owner.hostId, owner.directoryKey])
+}
+
+export interface TerminalNotes extends TerminalNotesOwner {
   /** Who it belongs to, for the editor's title. */
   label: string
+  /** Current shell cwd, in the spelling shown to the user. */
+  directory: string
   /** The note itself. '' when nothing has been written. */
   text: string
+  /** Retained old machine-level note, offered for explicit import into an unset directory. */
+  legacyText: string
+}
+
+export interface MysqlConnection {
+  /** Which machine this connection belongs to. */
+  scope: 'local' | 'ssh'
+  /** The saved host id when scope is ssh; empty for the local machine. */
+  hostId: string
+  /** Who it belongs to, for the dialog title. */
+  label: string
+  host: string
+  port: number
+  username: string
+  /** Stored encrypted, like the SSH password. Never logged. */
+  password: string
+  database: string
 }
 
 /* ------------------------------------------------------------------ *
@@ -1527,6 +1559,8 @@ export interface AppApi {
   /** Terminal-mode send interceptor. */
   getInterceptorStatus(): Promise<InterceptorStatus>
   setInterceptorEnabled(enabled: boolean): Promise<InterceptorStatus>
+  /** Save prompt injection for the current workspace session only. */
+  setPromptInjectionEnabled(enabled: boolean): Promise<InterceptorStatus>
   /** Send the user's collected answers without re-injecting the prompt. */
   answerQuestion(messageId: string, answer: string): Promise<InterceptorStatus>
   /** Dismiss the current question locally, preserving the task and sending no message. */
@@ -1600,8 +1634,13 @@ export interface AppApi {
    * built from.
    */
   getTerminalNotes(): Promise<TerminalNotes>
-  setTerminalNotes(text: string): Promise<TerminalNotes>
+  setTerminalNotes(text: string, owner: TerminalNotesOwner): Promise<TerminalNotes>
   onTerminalNotesChanged(listener: (notes: TerminalNotes) => void): () => void
+
+  /** The saved MySQL connection for whichever machine the terminal is driving. */
+  getMysqlConnection(): Promise<MysqlConnection>
+  setMysqlConnection(connection: MysqlConnection): Promise<MysqlConnection>
+  onMysqlConnectionChanged(listener: (connection: MysqlConnection) => void): () => void
 
   /** Saved SSH targets, newest first. */
   listSshHosts(): Promise<SshHost[]>

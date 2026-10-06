@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { dirname, extname, join } from 'node:path'
 import { nativeImage } from 'electron'
 import { parseReadFilesRequest } from '../shared/file-requests'
+import { normalizeTerminalNotesDirectory } from './terminal-notes'
 import type { StoredFileReadRequest, FileDeliveryStatus } from '../shared/file-requests'
 import type {
   Conversation,
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS managed_sessions (
   conversation_id TEXT,
   platform_id     TEXT NOT NULL DEFAULT 'chatgpt',
   paused          INTEGER NOT NULL DEFAULT 0,
+  prompt_injection_enabled INTEGER NOT NULL DEFAULT 1,
   local_cwd       TEXT NOT NULL DEFAULT '',
   ssh_host_id     TEXT NOT NULL DEFAULT '',
   ssh_attached    INTEGER NOT NULL DEFAULT 0,
@@ -130,9 +132,7 @@ CREATE TABLE IF NOT EXISTS settings (
 -- holds base64 of Electron's safeStorage ciphertext (DPAPI-backed on Windows),
 -- or an empty string when no password is stored.
 --
--- 'note' is the user's own description of this machine, appended to the prompt
--- whenever this host is the one driving the terminal. It lives here rather than
--- in a table of its own so that deleting a host takes its note with it.
+-- 'note' retains the legacy machine-level description for explicit directory import.
 CREATE TABLE IF NOT EXISTS ssh_hosts (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
@@ -144,6 +144,31 @@ CREATE TABLE IF NOT EXISTS ssh_hosts (
   note       TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+-- Directory conventions are shared by sessions using the same machine and exact cwd.
+CREATE TABLE IF NOT EXISTS terminal_directory_notes (
+  machine_scope TEXT NOT NULL CHECK(machine_scope IN ('local', 'ssh')),
+  host_id       TEXT NOT NULL,
+  directory_key TEXT NOT NULL,
+  note          TEXT NOT NULL DEFAULT '',
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY (machine_scope, host_id, directory_key)
+);
+
+-- One saved MySQL connection PER MACHINE, mirroring how ssh_hosts carries a note.
+-- The password is never stored in the clear: secret holds base64 of Electron safeStorage
+-- ciphertext (DPAPI-backed on Windows), or empty when none is set.
+CREATE TABLE IF NOT EXISTS mysql_connections (
+  machine_scope TEXT NOT NULL,
+  host_id       TEXT NOT NULL DEFAULT '',
+  host          TEXT NOT NULL DEFAULT '',
+  port          INTEGER NOT NULL DEFAULT 3306,
+  username      TEXT NOT NULL DEFAULT '',
+  secret        TEXT NOT NULL DEFAULT '',
+  database      TEXT NOT NULL DEFAULT '',
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY (machine_scope, host_id)
 );
 `
 
@@ -218,6 +243,7 @@ export interface ManagedSessionRecord {
   /** Which chat site this session drives. See `ManagedSessionSummary.platformId`. */
   platformId: string
   paused: boolean
+  promptInjectionEnabled: boolean
   localCwd: string
   sshHostId: string
   sshAttached: boolean
@@ -298,6 +324,7 @@ export class ConversationStore {
       .all() as unknown as Array<{ name: string }>
     const managedSessionMigrations: Array<[string, string]> = [
       ['paused', 'INTEGER NOT NULL DEFAULT 0'],
+      ['prompt_injection_enabled', 'INTEGER NOT NULL DEFAULT 1'],
       ['local_cwd', "TEXT NOT NULL DEFAULT ''"],
       ['ssh_host_id', "TEXT NOT NULL DEFAULT ''"],
       ['ssh_attached', 'INTEGER NOT NULL DEFAULT 0'],
@@ -972,7 +999,26 @@ export class ConversationStore {
   }
 
   removeSshHost(id: string): void {
+    this.db.prepare("DELETE FROM terminal_directory_notes WHERE machine_scope = 'ssh' AND host_id = ?").run(id)
     this.db.prepare('DELETE FROM ssh_hosts WHERE id = ?').run(id)
+  }
+
+  /** Null identifies an unset directory; an explicitly cleared note remains an empty row. */
+  getDirectoryNote(scope: 'local' | 'ssh', hostId: string, directory: string): string | null {
+    const key = normalizeTerminalNotesDirectory(scope, directory)
+    if (!hostId || !key) return null
+    const row = this.db.prepare('SELECT note FROM terminal_directory_notes WHERE machine_scope = ? AND host_id = ? AND directory_key = ?')
+      .get(scope, hostId, key) as { note: string } | undefined
+    return row?.note ?? null
+  }
+
+  setDirectoryNote(scope: 'local' | 'ssh', hostId: string, directory: string, note: string): void {
+    const key = normalizeTerminalNotesDirectory(scope, directory)
+    if (!hostId || !key) throw new Error('当前机器或工作目录尚未确定，无法保存说明。')
+    this.db.prepare(`INSERT INTO terminal_directory_notes (machine_scope, host_id, directory_key, note, updated_at)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_scope, host_id, directory_key)
+      DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at`)
+      .run(scope, hostId, key, note, Date.now())
   }
 
   /**
@@ -993,12 +1039,60 @@ export class ConversationStore {
     this.db.prepare('UPDATE ssh_hosts SET note = ? WHERE id = ?').run(note, id)
   }
 
-  /* ---------------- managed sessions ---------------- */
+  /* ---------------- mysql connections ---------------- */
+
+  /**
+   * The stored connection for one machine, or empty fields when none.
+   *
+   * `secret` is the ciphertext only. It is decrypted in the session runtime, so the
+   * raw value never travels further than it has to.
+   */
+  readMysqlConnection(scope: string, hostId: string): { host: string; port: number; username: string; secret: string; database: string } {
+    const row = this.db
+      .prepare('SELECT host, port, username, secret, database FROM mysql_connections WHERE machine_scope = ? AND host_id = ?')
+      .get(scope, hostId) as { host: string; port: number; username: string; secret: string; database: string } | undefined
+    return row ?? { host: '', port: 3306, username: '', secret: '', database: '' }
+  }
+
+  /**
+   * Write the connection for one machine.
+   *
+   * An empty incoming secret means: keep what is already stored, exactly like
+   * ssh_hosts. Reopening the dialog without retyping the password must not erase it.
+   */
+  upsertMysqlConnection(record: {
+    scope: string
+    hostId: string
+    host: string
+    port: number
+    username: string
+    secret: string
+    database: string
+  }): void {
+    const now = Date.now()
+    this.db
+      .prepare(
+        `INSERT INTO mysql_connections (machine_scope, host_id, host, port, username, secret, database, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(machine_scope, host_id) DO UPDATE SET
+           host = excluded.host,
+           port = excluded.port,
+           username = excluded.username,
+           secret = CASE WHEN excluded.secret = '' THEN mysql_connections.secret ELSE excluded.secret END,
+           database = excluded.database,
+           updated_at = excluded.updated_at`
+      )
+      .run(record.scope, record.hostId, record.host, record.port, record.username, record.secret, record.database, now)
+  }
+
+  removeMysqlConnection(scope: string, hostId: string): void {
+    this.db.prepare('DELETE FROM mysql_connections WHERE machine_scope = ? AND host_id = ?').run(scope, hostId)
+  }
 
   listManagedSessions(): ManagedSessionRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT id, title, url, conversation_id, platform_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, send_delay_seconds, created_at, updated_at
+        `SELECT id, title, url, conversation_id, platform_id, paused, prompt_injection_enabled, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, send_delay_seconds, created_at, updated_at
            FROM managed_sessions ORDER BY created_at ASC`
       )
       .all() as unknown as Array<{
@@ -1008,6 +1102,7 @@ export class ConversationStore {
       conversation_id: string | null
       platform_id: string
       paused: number
+      prompt_injection_enabled: number
       local_cwd: string
       ssh_host_id: string
       ssh_attached: number
@@ -1025,6 +1120,7 @@ export class ConversationStore {
       conversationId: row.conversation_id,
       platformId: row.platform_id,
       paused: row.paused !== 0,
+      promptInjectionEnabled: row.prompt_injection_enabled !== 0,
       localCwd: row.local_cwd,
       sshHostId: row.ssh_host_id,
       sshAttached: row.ssh_attached !== 0,
@@ -1040,14 +1136,15 @@ export class ConversationStore {
     const now = Date.now()
     this.db
       .prepare(
-        `INSERT INTO managed_sessions (id, title, url, conversation_id, platform_id, paused, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, send_delay_seconds, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO managed_sessions (id, title, url, conversation_id, platform_id, paused, prompt_injection_enabled, local_cwd, ssh_host_id, ssh_attached, ssh_reconnect, ssh_cwd, send_delay_seconds, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            url = excluded.url,
            conversation_id = excluded.conversation_id,
            platform_id = excluded.platform_id,
            paused = excluded.paused,
+           prompt_injection_enabled = excluded.prompt_injection_enabled,
            local_cwd = excluded.local_cwd,
            ssh_host_id = excluded.ssh_host_id,
            ssh_attached = excluded.ssh_attached,
@@ -1063,6 +1160,7 @@ export class ConversationStore {
         record.conversationId,
         record.platformId,
         record.paused ? 1 : 0,
+        record.promptInjectionEnabled ? 1 : 0,
         record.localCwd,
         record.sshHostId,
         record.sshAttached ? 1 : 0,

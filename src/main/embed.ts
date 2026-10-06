@@ -301,6 +301,7 @@ export class ChatGptEmbed {
    */
   private interceptor: InterceptorStatus = {
     enabled: true,
+    promptInjectionEnabled: true,
     installed: false,
     injectedCount: 0,
     lastSentText: null,
@@ -854,6 +855,15 @@ export class ChatGptEmbed {
     this.handlers.onInterceptor(status)
     return status
   }
+  /** Prompt injection is independent of terminal execution and the active task. */
+  setPromptInjectionEnabled(enabled: boolean): InterceptorStatus {
+    if (this.interceptor.promptInjectionEnabled === enabled) return this.getInterceptorStatus()
+    this.interceptor.promptInjectionEnabled = enabled
+    void this.installInterceptor(false)
+    const status = this.getInterceptorStatus()
+    this.handlers.onInterceptor(status)
+    return status
+  }
   /** Mark the current task finished and publish the interceptor state. */
   completeTask(): InterceptorStatus {
     this.resetTaskPrompt()
@@ -905,6 +915,7 @@ export class ChatGptEmbed {
 
     const config = JSON.stringify({
       enabled: this.interceptor.enabled,
+      promptInjectionEnabled: this.interceptor.promptInjectionEnabled,
       prefix: this.interceptor.prefix,
       taskPromptInjected: this.taskPromptInjected,
       taskPromptGeneration: this.taskPromptGeneration,

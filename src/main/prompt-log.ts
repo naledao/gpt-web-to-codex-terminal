@@ -30,7 +30,7 @@ export function writePromptDiagnostic(
     if (Number.isSafeInteger(value) && Number(value) >= 0) details[key] = Number(value)
   }
   for (const key of [
-    'enabled', 'programmatic', 'promptInjected', 'taskPromptInjected', 'composerFound',
+    'enabled', 'promptInjectionEnabled', 'programmatic', 'promptInjected', 'taskPromptInjected', 'composerFound',
     'targetMatchesComposer', 'defaultPrevented', 'isComposing', 'sendButtonFound',
     'sendButtonDisabled', 'sendButtonVisible', 'sendButtonInComposer', 'stopButtonFound'
   ] as const) {

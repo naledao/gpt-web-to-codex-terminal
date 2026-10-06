@@ -5,7 +5,8 @@ import {
   IpcChannels,
   buildTerminalPromptParts,
   toolPromptForPlatform,
-  fileReadingPlatform
+  fileReadingPlatform,
+  terminalNotesOwnerKey
 } from '../shared/types'
 import { CHAT_PLATFORMS, DEEPSEEK_PLATFORM } from '../shared/platforms'
 import type { FileReadContext } from '../shared/file-requests'
@@ -21,12 +22,15 @@ import type {
   EmbedCommand,
   EnvironmentInfo,
   ExecutionMode,
+  InterceptorStatus,
   ManagedSessionSummary,
+  MysqlConnection,
   ParsedAction,
   SshHost,
   SshHostDraft,
   SshState,
   TerminalNotes,
+  TerminalNotesOwner,
   TerminalState
 } from '../shared/types'
 import { CommandRunner } from './commands'
@@ -37,6 +41,7 @@ import { parseRemoteEnvironment, parseWindowsEnvironment } from './environment'
 import { resolvePowerShell } from './shell'
 import { SshManager } from './ssh'
 import type { RemoteShell } from './remote-shell'
+import { normalizeTerminalNotesDirectory } from './terminal-notes'
 
 const SETTING_EXECUTION_MODE = 'executionMode'
 const SETTING_LOCAL_NOTES = 'localTerminalNotes'
@@ -124,6 +129,7 @@ export interface SessionRuntimeOptions {
   initialUrl?: string
   initialConversationId?: string | null
   initialPaused?: boolean
+  initialPromptInjectionEnabled?: boolean
   initialLocalCwd?: string
   initialSshHostId?: string
   initialSshAttached?: boolean
@@ -144,6 +150,7 @@ export interface SessionRuntimeOptions {
   settings: () => { embedProxy: Record<string, string>; sshProxy: string; theme: AppTheme }
   onSummaryChanged: () => void
   onTransfersChanged: () => void
+  onTerminalNotesSaved: (owner: TerminalNotesOwner) => void
   onActivate: (id: string) => void
   /**
    * The ACTIVE platform's view loaded its page for the first time.
@@ -215,10 +222,12 @@ export class SessionRuntime {
   private readonly embeds = new Map<string, PlatformEmbed>()
   private activePlatformId: string
   private preferredSendDelaySeconds: number
+  private promptInjectionEnabled: boolean
   private remoteShell: RemoteShell | null = null
   private customTitle: string
   private sshCwd: string
   private lastPersistedLocalCwd: string
+  private lastDirectoryNotes: TerminalNotes | null = null
   private disposed = false
   private active = false
   private lastSummaryTaskRunning = false
@@ -261,6 +270,7 @@ export class SessionRuntime {
     this.lastPersistedLocalCwd = options.initialLocalCwd?.trim() ?? ''
     this.activePlatformId = options.platform.id
     this.preferredSendDelaySeconds = options.initialSendDelaySeconds ?? 0
+    this.promptInjectionEnabled = options.initialPromptInjectionEnabled ?? true
 
     for (const platform of CHAT_PLATFORMS) {
       /*
@@ -296,6 +306,7 @@ export class SessionRuntime {
       onExecutionChanged: (records) => this.send(IpcChannels.executionChanged, records),
       onTerminalChanged: (state) => {
         this.send(IpcChannels.terminalChanged, state)
+        this.refreshDirectoryNotes()
         if (state.cwd !== this.lastPersistedLocalCwd) {
           this.lastPersistedLocalCwd = state.cwd
           this.options.onSummaryChanged()
@@ -321,9 +332,13 @@ export class SessionRuntime {
       if (next !== this.remoteShell) {
         const previous = this.remoteShell
         this.remoteShell = next
+        this.refreshDirectoryNotes()
         if (previous === null || next === null) void this.probeEnvironment()
       } else if (next === null && state.status === 'error') {
+        this.refreshDirectoryNotes()
         void this.probeEnvironment()
+      } else {
+        this.refreshDirectoryNotes()
       }
     }, (downloads) => {
       this.send(IpcChannels.sshDownloadsChanged, downloads)
@@ -333,6 +348,7 @@ export class SessionRuntime {
       this.options.onTransfersChanged()
     })
 
+    this.refreshDirectoryNotes()
     const restoredHostId = options.initialSshHostId?.trim() ?? ''
     if (options.initialSshAttached && restoredHostId !== '') {
       const host = options.store.listSshHosts().find((item) => item.id === restoredHostId)
@@ -532,6 +548,7 @@ export class SessionRuntime {
       this.embedHandlers(entry.platform),
       entry.url || entry.platform.homeUrl
     )
+    entry.embed.setPromptInjectionEnabled(this.promptInjectionEnabled)
     if (this.window && !this.window.isDestroyed()) {
       entry.embed.attach(this.window)
       entry.embed.setVisible(false)
@@ -690,6 +707,7 @@ export class SessionRuntime {
     conversationId: string | null
     platformId: string
     paused: boolean
+    promptInjectionEnabled: boolean
     localCwd: string
     sshHostId: string
     sshAttached: boolean
@@ -715,6 +733,7 @@ export class SessionRuntime {
       conversationId: active.conversationId,
       platformId: active.platform.id,
       paused: automation.paused,
+      promptInjectionEnabled: this.promptInjectionEnabled,
       localCwd: terminal.cwd,
       sshHostId: sshState.hostId,
       sshAttached: sshState.attached,
@@ -933,6 +952,14 @@ export class SessionRuntime {
     return state
   }
 
+  /** Apply to this session's current/cached platforms, and persist with its row. */
+  setPromptInjectionEnabled(enabled: boolean): InterceptorStatus {
+    this.promptInjectionEnabled = enabled
+    for (const entry of this.embeds.values()) entry.embed?.setPromptInjectionEnabled(enabled)
+    this.options.onSummaryChanged()
+    return this.embed.getInterceptorStatus()
+  }
+
   async setTerminalCwd(path: string): Promise<TerminalState> {
     const target = path.trim()
     const remote = this.remoteShell
@@ -961,22 +988,104 @@ export class SessionRuntime {
     return state
   }
 
-  currentNotes(): TerminalNotes {
-    return { ...this.environmentScope, text: this.readNotes() }
+  /** The live command shell determines the owner, rather than a stale environment probe. */
+  private notesTarget(): Omit<TerminalNotes, 'text' | 'legacyText'> {
+    const ssh = this.ssh?.getState()
+    if (ssh?.attached) {
+      const directory = this.remoteShell?.alive ? this.remoteShell.cwd || ssh.modelCwd : ''
+      return {
+        scope: 'ssh', hostId: ssh.hostId ?? '', label: ssh.name || ssh.target || '远端主机',
+        directory, directoryKey: normalizeTerminalNotesDirectory('ssh', directory)
+      }
+    }
+    const directory = this.runner?.getTerminalState().cwd ?? this.lastPersistedLocalCwd
+    return {
+      scope: 'local', hostId: this.options.localMachineId, label: '本机',
+      directory, directoryKey: normalizeTerminalNotesDirectory('local', directory)
+    }
   }
 
-  applyTerminalNotes(raw: string): TerminalNotes {
-    const text = raw.trim() === '' ? '' : raw
-    if (this.environmentScope.scope === 'ssh' && this.environmentScope.hostId !== '') {
-      this.options.store.setSshNote(this.environmentScope.hostId, text)
-    } else {
-      this.options.store.setSetting(SETTING_LOCAL_NOTES, text)
+  currentNotes(): TerminalNotes {
+    const target = this.notesTarget()
+    const saved = this.options.store.getDirectoryNote(target.scope, target.hostId, target.directoryKey)
+    const legacyText = saved === null
+      ? target.scope === 'ssh' ? this.options.store.getSshNote(target.hostId) : this.options.store.getSetting(SETTING_LOCAL_NOTES) ?? ''
+      : ''
+    return { ...target, text: saved ?? '', legacyText }
+  }
+
+  /** Called after cwd changes and after another session saves this same directory. */
+  private refreshDirectoryNotes(force = false): void {
+    if (this.disposed) return
+    const notes = this.currentNotes()
+    const previous = this.lastDirectoryNotes
+    if (!force && previous && terminalNotesOwnerKey(previous) === terminalNotesOwnerKey(notes)
+      && previous.text === notes.text && previous.legacyText === notes.legacyText
+      && previous.directory === notes.directory && previous.label === notes.label) return
+    this.lastDirectoryNotes = notes
+    this.environment = { ...this.environment, workingDirectory: notes.directory, extraNotes: notes.text }
+    for (const entry of this.embeds.values()) {
+      entry.embed?.setPromptParts(buildTerminalPromptParts(this.environment, toolPromptForPlatform(entry.platform.id)))
     }
-    this.environment = { ...this.environment, extraNotes: text }
-    this.embed.setPromptParts(buildTerminalPromptParts(this.environment, toolPromptForPlatform(this.activePlatform.id)))
-    this.send(IpcChannels.terminalNotesChanged, this.currentNotes())
+    this.send(IpcChannels.terminalNotesChanged, notes)
     this.send(IpcChannels.environmentChanged, { ...this.environment })
+  }
+
+  refreshTerminalNotesForOwner(owner: TerminalNotesOwner): void {
+    if (!this.disposed && terminalNotesOwnerKey(this.notesTarget()) === terminalNotesOwnerKey(owner)) this.refreshDirectoryNotes()
+  }
+
+  applyTerminalNotes(raw: string, expectedOwner: TerminalNotesOwner): TerminalNotes {
+    const target = this.notesTarget()
+    if (!target.directoryKey || !target.hostId) throw new Error('当前机器或工作目录尚未确定，无法保存说明。')
+    if (!expectedOwner || terminalNotesOwnerKey(expectedOwner) !== terminalNotesOwnerKey(target)) {
+      throw new Error('工作目录已变化，请确认当前目录后重新保存说明。')
+    }
+    const text = raw.trim() === '' ? '' : raw
+    this.options.store.setDirectoryNote(target.scope, target.hostId, target.directoryKey, text)
+    this.refreshDirectoryNotes()
+    this.options.onTerminalNotesSaved(target)
     return this.currentNotes()
+  }
+
+  /**
+   * The saved MySQL connection for whichever machine the terminal is driving.
+   *
+   * A connection describes ONE database on ONE machine. The password is decrypted
+   * here so the dialog can show it back; it
+   * never leaves this process except on its way into that dialog.
+   */
+  currentMysqlConnection(): MysqlConnection {
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const row = this.options.store.readMysqlConnection(this.environmentScope.scope, machineKey)
+    return {
+      scope: this.environmentScope.scope,
+      hostId: machineKey,
+      label: this.environmentScope.label,
+      host: row.host,
+      port: row.port,
+      username: row.username,
+      password: row.secret === '' ? '' : decryptSecret(row.secret),
+      database: row.database
+    }
+  }
+
+  /** Persist the connection for the machine in charge, keeping the stored password when none is typed. */
+  applyMysqlConnection(connection: MysqlConnection): MysqlConnection {
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const typed = String(connection.password ?? '')
+    this.options.store.upsertMysqlConnection({
+      scope: this.environmentScope.scope,
+      hostId: machineKey,
+      host: String(connection.host ?? '').trim(),
+      port: Number.isFinite(Number(connection.port)) ? Math.max(1, Math.min(65535, Math.trunc(Number(connection.port)))) : 3306,
+      username: String(connection.username ?? '').trim(),
+      secret: typed === '' ? '' : encryptSecret(typed),
+      database: String(connection.database ?? '').trim()
+    })
+    const next = this.currentMysqlConnection()
+    this.send(IpcChannels.mysqlConnChanged, next)
+    return next
   }
 
   listSshHosts(): SshHost[] {
@@ -1042,9 +1151,10 @@ export class SessionRuntime {
   }
 
   async probeEnvironment(): Promise<EnvironmentInfo> {
+    const backend = this.remoteShell
     try {
       const { kind, result } = await this.runner.runEnvironmentProbe()
-      if (result.rejected || result.interrupted || result.timedOut || result.sessionLost) {
+      if (this.disposed || backend !== this.remoteShell || result.rejected || result.interrupted || result.timedOut || result.sessionLost) {
         return { ...this.environment }
       }
 
@@ -1063,14 +1173,11 @@ export class SessionRuntime {
             }
           : { scope: 'local', hostId: '', label: '本机' }
 
-      info.extraNotes = this.readNotes()
       this.environment = info
-      this.embed.setPromptParts(buildTerminalPromptParts(info, toolPromptForPlatform(this.activePlatform.id)))
-      this.send(IpcChannels.environmentChanged, { ...this.environment })
-      this.send(IpcChannels.terminalNotesChanged, this.currentNotes())
+      this.refreshDirectoryNotes(true)
       this.broadcastConversations()
       this.options.onSummaryChanged()
-      return info
+      return { ...this.environment }
     } catch (error) {
       console.warn(`[env:${this.id}] probe failed:`, (error as Error).message)
       return { ...this.environment }
@@ -1098,12 +1205,6 @@ export class SessionRuntime {
     this.window = null
     this.remoteShell = null
     this.runner.disposeAll()
-  }
-
-  private readNotes(): string {
-    return this.environmentScope.scope === 'ssh' && this.environmentScope.hostId !== ''
-      ? this.options.store.getSshNote(this.environmentScope.hostId)
-      : (this.options.store.getSetting(SETTING_LOCAL_NOTES) ?? '')
   }
 
   private currentConversationProject(): {

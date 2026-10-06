@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, Willow } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
@@ -8,10 +8,14 @@ import AvatarEditor from 'react-avatar-editor'
 import type { AvatarEditorRef } from 'react-avatar-editor'
 import GitDialog from './components/GitDialog'
 import SshDirectoryPicker from './components/SshDirectoryPicker'
+import MysqlDialog from './components/MysqlDialog'
+import ConversationTranscript from './components/ConversationTranscript'
+import { conversationScrollKey } from './conversation-scroll'
 import brandIcon from './assets/brand-icon.png'
 import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { SESSION_COOKIE_NAME } from '@shared/types'
+import { SESSION_COOKIE_NAME, terminalNotesOwnerKey } from '@shared/types'
+import './assets/terminal-notes.css'
 import { CHAT_PLATFORMS } from '@shared/platforms'
 import type {
   AppTheme,
@@ -208,6 +212,7 @@ function conversationMessagesEqual(left: ConversationMessage[], right: Conversat
 
 
 interface AppProps {
+  sessionId: string
   initialSshDialogOpen?: boolean
   /** Which chat platform this session is showing, from the main process's session list. */
   platformId?: string
@@ -289,7 +294,7 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
     </>
   )
 }
-export default function App({ initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
+export default function App({ sessionId, initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   /*
    * The site this session is actually showing.
@@ -307,9 +312,12 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     : ''
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [interceptor, setInterceptor] = useState<InterceptorStatus | null>(null)
+  const [savingPromptInjection, setSavingPromptInjection] = useState(false)
+  const [promptInjectionError, setPromptInjectionError] = useState('')
   const [automation, setAutomation] = useState<AutomationState | null>(null)
   const [executions, setExecutions] = useState<ExecutionRecord[]>([])
-  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([])
+  const [conversationTranscript, setConversationTranscript] = useState<{ ownerKey: string | null; messages: ConversationMessage[] }>({ ownerKey: null, messages: [] })
+  const conversationRequestRef = useRef(0)
   const [terminal, setTerminal] = useState<TerminalState | null>(null)
   const [durationNow, setDurationNow] = useState(() => Date.now())
   const [address, setAddress] = useState('')
@@ -375,22 +383,25 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const [sendDelayDraft, setSendDelayDraft] = useState<string | null>(null)
   const [ssh, setSsh] = useState<SshState | null>(null)
   const [sshHosts, setSshHosts] = useState<SshHost[]>([])
-  /** The per-machine note editor, shown inside the terminal pane. */
+  /** Notes for the current machine and working directory. */
   const [notesOpen, setNotesOpen] = useState(false)
   const [notes, setNotes] = useState<TerminalNotes | null>(null)
   const [notesDraft, setNotesDraft] = useState('')
   const [notesSaving, setNotesSaving] = useState(false)
+  const [notesError, setNotesError] = useState('')
   const [notesPreview, setNotesPreview] = useState(false)
   /** The Git 管理 dialog opened from the toolbox. */
   const [gitDialogOpen, setGitDialogOpen] = useState(false)
+  /** The MySQL connection dialog opened from the toolbox. */
+  const [mysqlDialogOpen, setMysqlDialogOpen] = useState(false)
   /** One viewer with separate base-prompt and tool-prompt content. */
   const [promptView, setPromptView] = useState<'base' | 'tools' | null>(null)
   const promptOpen = promptView !== null
-  const promptTitle = promptView === 'tools' ? '注入的工具提示词' : '注入的系统提示词'
+  const promptTitle = promptView === 'tools' ? '工具提示词' : '系统提示词'
   const promptSource = (promptView === 'tools' ? interceptor?.toolPrompt : interceptor?.basePrompt)?.trim() ?? ''
   const promptEmptyText = interceptor === null
     ? '正在加载提示词…'
-    : promptView === 'tools' ? '当前平台暂无注入的工具提示词。' : '（暂无注入内容）'
+    : promptView === 'tools' ? '当前平台暂无工具提示词。' : '（暂无提示词内容）'
   const [promptSearchOpen, setPromptSearchOpen] = useState(false)
   const [promptSearch, setPromptSearch] = useState('')
   const [promptCopied, setPromptCopied] = useState(false)
@@ -437,12 +448,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   /** True when the machine in charge has a note; the marker on the 说明 button. */
   const notesSet = (notes?.text ?? '').trim() !== ''
   const slotRef = useRef<HTMLDivElement>(null)
-  const conversationTranscriptRef = useRef<HTMLDivElement>(null)
-  /** Whether the user has left the backup transcript pinned to its bottom edge. */
-  const conversationStickToBottomRef = useRef(true)
-  /** Ignore scroll events caused by our own scroll-to-bottom writes. */
-  const conversationAutoScrollingRef = useRef(false)
-  const conversationAutoScrollReleaseRef = useRef<number | null>(null)
   const placeholderCloseTimerRef = useRef<number | null>(null)
   const userAvatarInputRef = useRef<HTMLInputElement>(null)
   const userAvatarEditorRef = useRef<AvatarEditorRef>(null)
@@ -453,8 +458,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const promptMatchIndexRef = useRef(-1)
   const promptCopyTimerRef = useRef<number | null>(null)
   const promptCopyGenerationRef = useRef(0)
-  /** scope:hostId of the note currently loaded into the editor. */
-  const notesOwnerRef = useRef('')
+  const notesSnapshotRef = useRef<TerminalNotes | null>(null)
 
   // Persist the layout sizes: switching sessions remounts App (WorkspaceApp keys it
   // by session id), so without this the terminal width would snap back to default.
@@ -470,6 +474,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   }, [terminalWidth, terminalCollapsed, panelWidth, panelCollapsed])
 
   const conversationId = embed.conversationId
+  const transcriptScrollKey = conversationScrollKey(sessionId, platformId, conversationId)
+  const conversationMessagesReady = conversationTranscript.ownerKey === transcriptScrollKey
+  const conversationMessages = conversationMessagesReady ? conversationTranscript.messages : []
   const isAuto = automation?.mode === 'auto'
   const taskRunning = interceptor?.taskStartedAt != null && interceptor.taskFinishedAt == null
   const pendingQuestion = interceptor?.pendingQuestion ?? null
@@ -635,20 +642,25 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   }, [])
 
   const refreshConversationMessages = useCallback(async (): Promise<void> => {
+    const request = ++conversationRequestRef.current
     if (!conversationId) {
-      setConversationMessages([])
+      setConversationTranscript({ ownerKey: transcriptScrollKey, messages: [] })
       return
     }
     try {
       const next = await window.api.listConversationMessages(conversationId)
-      setConversationMessages((current) => (conversationMessagesEqual(current, next) ? current : next))
+      if (request !== conversationRequestRef.current) return
+      setConversationTranscript((current) => (current.ownerKey === transcriptScrollKey && conversationMessagesEqual(current.messages, next)
+        ? current : { ownerKey: transcriptScrollKey, messages: next }))
     } catch {
       /* leave the previous transcript in place */
     }
-  }, [conversationId])
+  }, [conversationId, transcriptScrollKey])
 
   useEffect(() => {
     void refreshConversationMessages()
+    // A late response must not render another conversation or restore against its heights.
+    return () => { conversationRequestRef.current++ }
   }, [refreshConversationMessages])
 
   useEffect(
@@ -686,64 +698,6 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     const element = terminalOutputRef.current
     if (element) element.scrollTop = element.scrollHeight
   }, [terminal?.lines, ssh?.lines])
-
-  const trackConversationScroll = useCallback(() => {
-    const element = conversationTranscriptRef.current
-    if (!element || conversationAutoScrollingRef.current) return
-    const distanceFromBottom = element.scrollHeight - element.clientHeight - element.scrollTop
-    conversationStickToBottomRef.current = distanceFromBottom <= 24
-  }, [])
-
-  // Entering the backup view must start at the newest message before the first paint.
-  // The normal effect below then keeps it pinned while late layout (for example images) settles.
-  useLayoutEffect(() => {
-    if (!placeholderToggle) return
-    conversationStickToBottomRef.current = true
-    const element = conversationTranscriptRef.current
-    if (element) element.scrollTop = element.scrollHeight
-  }, [placeholderToggle])
-
-  // Keep the newest message visible while the transcript finishes rendering.
-  useEffect(() => {
-    if (!placeholderToggle) return
-    const element = conversationTranscriptRef.current
-    if (!element) return
-
-    const scroll = (): void => {
-      if (!conversationStickToBottomRef.current) return
-      conversationAutoScrollingRef.current = true
-      element.scrollTop = element.scrollHeight
-      if (conversationAutoScrollReleaseRef.current !== null) {
-        window.cancelAnimationFrame(conversationAutoScrollReleaseRef.current)
-      }
-      conversationAutoScrollReleaseRef.current = window.requestAnimationFrame(() => {
-        element.scrollTop = element.scrollHeight
-        conversationAutoScrollReleaseRef.current = window.requestAnimationFrame(() => {
-          conversationAutoScrollingRef.current = false
-          conversationAutoScrollReleaseRef.current = null
-        })
-      })
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(scroll)
-    })
-
-    const observer = new ResizeObserver(() => {
-      window.requestAnimationFrame(scroll)
-    })
-    for (const child of Array.from(element.children)) observer.observe(child)
-
-    return () => {
-      window.cancelAnimationFrame(frame)
-      if (conversationAutoScrollReleaseRef.current !== null) {
-        window.cancelAnimationFrame(conversationAutoScrollReleaseRef.current)
-        conversationAutoScrollReleaseRef.current = null
-      }
-      conversationAutoScrollingRef.current = false
-      observer.disconnect()
-    }
-  }, [placeholderToggle, conversationMessages.length])
 
   /**
    * The embedded page is a NATIVE view, not a DOM node, so it cannot be
@@ -941,6 +895,19 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
       /* leave the previous state in place */
     }
   }, [interceptor])
+
+  const togglePromptInjection = useCallback(async (): Promise<void> => {
+    if (!interceptor || savingPromptInjection) return
+    setSavingPromptInjection(true)
+    setPromptInjectionError('')
+    try {
+      setInterceptor(await window.api.setPromptInjectionEnabled(!interceptor.promptInjectionEnabled))
+    } catch {
+      setPromptInjectionError('设置未保存，请重试。')
+    } finally {
+      setSavingPromptInjection(false)
+    }
+  }, [interceptor, savingPromptInjection])
 
   const setMode = useCallback(async (mode: ExecutionMode): Promise<void> => {
     try {
@@ -1473,9 +1440,9 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
    * lives in the terminal column and must leave the chat page usable underneath.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen)
+    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && !mysqlDialogOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen])
+  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, mysqlDialogOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -1503,24 +1470,30 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
    * otherwise a routine broadcast would wipe whatever is being typed.
    */
   const applyNotes = useCallback((value: TerminalNotes): void => {
-    const owner = `${value.scope}:${value.hostId}`
-    if (owner !== notesOwnerRef.current) {
-      notesOwnerRef.current = owner
-      setNotesDraft(value.text)
-    }
+    const previous = notesSnapshotRef.current
+    const ownerChanged = !previous || terminalNotesOwnerKey(previous) !== terminalNotesOwnerKey(value)
+    // Shared saves update a clean editor, while routine pushes preserve unsaved typing.
+    setNotesDraft((draft) => ownerChanged || draft === previous?.text ? value.text : draft)
+    notesSnapshotRef.current = value
     setNotes(value)
+    setNotesError('')
   }, [])
 
-  // Per-machine notes: the same value the prompt is built from, resolved in main
-  // against the live backend so the renderer never guesses which machine is which.
+  // Main resolves both machine and live cwd; never restore a stale pull over a newer push.
   useEffect(() => {
     let cancelled = false
+    let receivedPush = false
 
     void window.api.getTerminalNotes().then((value) => {
-      if (!cancelled) applyNotes(value)
+      if (!cancelled && !receivedPush) applyNotes(value)
+    }).catch(() => {
+      if (!cancelled && !receivedPush) setNotesError('读取说明失败，请重新打开当前会话。')
     })
 
-    const unsubscribe = window.api.onTerminalNotesChanged(applyNotes)
+    const unsubscribe = window.api.onTerminalNotesChanged((value) => {
+      receivedPush = true
+      applyNotes(value)
+    })
     return () => {
       cancelled = true
       unsubscribe()
@@ -1528,16 +1501,22 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   }, [applyNotes])
 
   const saveNotes = useCallback(async (): Promise<void> => {
+    const owner = notesSnapshotRef.current
+    if (!owner?.directoryKey || notesSaving) return
     setNotesSaving(true)
+    setNotesError('')
     try {
-      applyNotes(await window.api.setTerminalNotes(notesDraft))
-      setNotesOpen(false)
+      const saved = await window.api.setTerminalNotes(notesDraft, owner)
+      if (notesSnapshotRef.current && terminalNotesOwnerKey(notesSnapshotRef.current) === terminalNotesOwnerKey(saved)) {
+        applyNotes(saved)
+        setNotesOpen(false)
+      }
     } catch {
-      /* leave the panel open so nothing typed is lost */
+      setNotesError('说明未保存，请确认当前工作目录后重试。')
     } finally {
       setNotesSaving(false)
     }
-  }, [applyNotes, notesDraft])
+  }, [applyNotes, notesDraft, notesSaving])
 
   // Escape closes the dialog, like every other dialog on the platform.
   useEffect(() => {
@@ -1886,17 +1865,16 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
         <div className="stage__slot" ref={slotRef}>
           {placeholderToggle ? (
             <div className={placeholderClosing ? 'stage__alternate-card stage__alternate-card--leaving' : 'stage__alternate-card'} aria-label="对话视图">
-              <div
-                className="conversation-transcript"
-                ref={conversationTranscriptRef}
-                onScroll={trackConversationScroll}
-              >
-                {conversationMessages.length === 0 ? (
+              <ConversationTranscript key={transcriptScrollKey} scrollKey={transcriptScrollKey} ready={conversationMessagesReady}>
+                {!conversationMessagesReady ? (
+                  <div className="conversation-transcript__empty">正在加载对话记录…</div>
+                ) : conversationMessages.length === 0 ? (
                   <div className="conversation-transcript__empty">暂无对话记录</div>
                 ) : (
                   conversationMessages.map((message) => (
                     <article
                       key={message.id}
+                      data-message-id={message.id}
                       className={`conversation-message conversation-message--${message.role}`}
                     >
                       <div className="conversation-message__avatar" aria-hidden="true">
@@ -1935,7 +1913,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
                     </article>
                   ))
                 )}
-              </div>
+              </ConversationTranscript>
             </div>
           ) : (
             <div className="stage__hint">
@@ -1977,14 +1955,13 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
             <span className={interceptor?.installed ? 'terminal__dot' : 'terminal__dot terminal__dot--wait'} />
             <span className="terminal__hint terminal__hint--inline">
               {interceptor === null
-                ? '正在读取状态…'
+                ? '读取中…'
                 : interceptor.enabled
                   ? interceptor.installed
-                    ? null
-                    : '已开启，等待页面加载后生效'
-                  : '进入普通对话模式'}
+                    ? '执行命令'
+                    : '等待页面'
+                  : '普通对话'}
             </span>
-            <span className="terminal__spacer" />
             <button
               type="button"
               role="switch"
@@ -1997,6 +1974,32 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               <span className="switch__knob" />
             </button>
           </div>
+
+          <div className="terminal__row terminal__row--toggle">
+            <span className="terminal__label">提示词注入</span>
+            <span className="terminal__hint terminal__hint--inline">
+              {savingPromptInjection
+                ? '保存中…'
+                : interceptor === null
+                  ? '读取中…'
+                  : interceptor.promptInjectionEnabled
+                    ? '自动注入'
+                    : '停止注入'}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={interceptor?.promptInjectionEnabled ?? false}
+              aria-label="提示词注入"
+              disabled={!interceptor || savingPromptInjection}
+              className={interceptor?.promptInjectionEnabled ? 'switch switch--on' : 'switch'}
+              title="控制当前会话是否追加系统提示词和工具提示词"
+              onClick={() => void togglePromptInjection()}
+            >
+              <span className="switch__knob" />
+            </button>
+          </div>
+          {promptInjectionError ? <p className="terminal__hint" role="alert">{promptInjectionError}</p> : null}
 
           <div className="mode" role="radiogroup" aria-label="执行模式">
             <button
@@ -2085,7 +2088,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               aria-haspopup="dialog"
               onClick={() => setPromptView('base')}
             >
-              查看注入的系统提示词
+              查看系统提示词
             </button>
             <button
               type="button"
@@ -2093,7 +2096,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
               aria-haspopup="dialog"
               onClick={() => setPromptView('tools')}
             >
-              查看注入的工具提示词
+              查看工具提示词
             </button>
           </div>
         </div>
@@ -2289,6 +2292,16 @@ ${conversation.url}`}
                       </span>
                       <span>Git 管理</span>
                     </Menu.Item>
+                    <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setMysqlDialogOpen(true) }}>
+                      <span className="toolbox-menu__icon">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                          <ellipse cx="12" cy="5.6" rx="7.2" ry="2.8" />
+                          <path d="M4.8 5.6v12.8c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8V5.6" />
+                          <path d="M4.8 12c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8" />
+                        </svg>
+                      </span>
+                      <span>MySQL 连接</span>
+                    </Menu.Item>
                   </Menu.Popup>
                 </Menu.Positioner>
               </Menu.Portal>
@@ -2364,7 +2377,7 @@ ${conversation.url}`}
             <button
               type="button"
               className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
-              title={`写一段只针对这台机器的说明，会拼在系统提示词后面${notesSet ? '（已设置）' : ''}`}
+              title={`为这台机器的当前工作目录设置说明${notesSet ? '（已设置）' : ''}`}
               onClick={() => setNotesOpen((value) => !value)}
             >
               说明{notesSet ? ' ●' : ''}
@@ -2410,7 +2423,7 @@ ${conversation.url}`}
             <button
               type="button"
               className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
-              title={`写一段只针对这台机器的说明，会拼在系统提示词后面${notesSet ? '（已设置）' : ''}`}
+              title={`为这台机器的当前工作目录设置说明${notesSet ? '（已设置）' : ''}`}
               onClick={() => setNotesOpen((value) => !value)}
             >
               说明{notesSet ? ' ●' : ''}
@@ -2441,6 +2454,15 @@ ${conversation.url}`}
                   <span>●</span>{notesDraft === (notes?.text ?? '') ? '已保存' : '未保存'}
                 </span>
                 <button type="button" className="notes-modal__close" aria-label="关闭" onClick={() => setNotesOpen(false)}>×</button>
+              </div>
+
+              <div className="notes-modal__context">
+                <div className="notes-modal__directory" title={notes?.directory || ''}>
+                  <span>当前目录</span>
+                  <strong>{notes?.directory || '等待终端确定工作目录…'}</strong>
+                </div>
+                <p>仅用于这台机器的当前目录，其他目录独立保存。</p>
+                {notesError ? <p className="notes-modal__error" role="alert">{notesError}</p> : null}
               </div>
 
               <div className="notes-modal__editor-wrap">
@@ -2476,6 +2498,7 @@ ${conversation.url}`}
                   extraCommands={[]}
                   textareaProps={{
                     placeholder: '继续输入补充说明…',
+                    disabled: notesSaving || !notes?.directoryKey,
                     'aria-label': '补充说明 Markdown 编辑器'
                   }}
                   onChange={(value) => setNotesDraft(value ?? '')}
@@ -2484,9 +2507,12 @@ ${conversation.url}`}
 
               <div className="notes-modal__foot">
                 <button type="button" className="notes-modal__button" disabled={notesSaving || notesDraft === ''} onClick={() => setNotesDraft('')}>清空</button>
+                {notes?.legacyText ? (
+                  <button type="button" className="notes-modal__button" disabled={notesSaving || !notes.directoryKey || notesDraft !== ''} title="将旧的机器说明放入编辑区；保存后仅用于当前目录" onClick={() => setNotesDraft(notes.legacyText)}>导入原机器说明</button>
+                ) : null}
                 <span className="panel__spacer" />
                 <button type="button" className="notes-modal__button" onClick={() => setNotesOpen(false)}>取消</button>
-                <button type="button" className="notes-modal__button notes-modal__button--primary" disabled={notesSaving || notes === null || notesDraft === (notes?.text ?? '')} onClick={() => void saveNotes()}>
+                <button type="button" className="notes-modal__button notes-modal__button--primary" disabled={notesSaving || !notes?.directoryKey || notesDraft === (notes?.text ?? '')} onClick={() => void saveNotes()}>
                   {notesSaving ? '保存中…' : '保存'}
                 </button>
               </div>
@@ -2963,6 +2989,9 @@ ${record.command}`
               ) : null}
 
               <div ref={promptBodyRef} className="prompt-modal__body">
+                {interceptor?.promptInjectionEnabled === false ? (
+                  <p className="terminal__hint">本会话已关闭提示词注入，以下为配置内容。</p>
+                ) : null}
                 <MDEditor.Markdown source={promptSource || promptEmptyText} wrapperElement={{ 'data-color-mode': theme }} />
               </div>
               {promptSource ? <div className="prompt-modal__scroll-hint" aria-hidden="true"><span>↓</span> 滚动查看更多</div> : null}
@@ -3363,6 +3392,7 @@ ${record.command}`
           </div>
         </div>
       ) : null}
+      <MysqlDialog open={mysqlDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setMysqlDialogOpen(false)} />
       <GitDialog open={gitDialogOpen} cwd={terminal?.cwd ?? ""} theme={settings?.theme ?? "light"} onClose={() => setGitDialogOpen(false)} />
     </div>
   )

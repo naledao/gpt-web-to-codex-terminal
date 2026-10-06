@@ -575,6 +575,69 @@ async function remaining() {
   log('PASS real main-process methods restore confirmed prompt state, reset tasks without baselining new replies and ignore stale confirmations')
 }
 
+async function promptInjectionToggleChecks() {
+  for (const kind of ['contenteditable', 'textarea']) {
+    const p = page(kind, { promptInjectionEnabled: false })
+    p.send('保持原文\n  保留缩进')
+    assert.equal(p.submissions[0], '保持原文\n  保留缩进')
+    assert.equal(p.controls.writes, 0, 'Disabled injection cannot rewrite the user draft')
+    assert.equal(p.state.enabled, true, 'Terminal mode remains enabled')
+    assert.equal(p.state.taskPromptInjected, false)
+    assert.equal(p.events.filter(event => event.event === 'injected').length, 0)
+    assert.equal(p.events.filter(event => event.event === 'user-message').length, 1)
+    assert.equal(p.events.filter(event => event.event === 'sent').at(-1).promptInjected, false)
+    p.reply('{"command":"echo ok","description":"检查"}')
+    assert.equal(p.events.filter(event => event.event === 'command').at(-1).live, true)
+    p.lifecycle.configure({ promptInjectionEnabled: true })
+    p.send('开启后首次注入')
+    assert.equal(p.events.filter(event => event.event === 'injected').length, 1)
+    p.lifecycle.configure({ promptInjectionEnabled: false })
+    p.send('关闭后继续')
+    assert.equal(p.submissions.at(-1), '关闭后继续')
+    p.lifecycle.configure({ promptInjectionEnabled: true })
+    p.send('同一任务再次开启')
+    assert.equal(p.submissions.at(-1), '同一任务再次开启')
+    assert.equal(p.events.filter(event => event.event === 'injected').length, 1, 'Toggling does not re-inject an already confirmed task')
+    p.lifecycle.endTask()
+    p.lifecycle.configure({ promptInjectionEnabled: false, prefix: '' })
+    p.send('没有前缀也能发送')
+    assert.equal(p.submissions.at(-1), '没有前缀也能发送')
+    assert.equal(p.state.taskPromptInjected, false)
+    p.controls.image = true
+    p.send('')
+    assert.equal(p.submissions.at(-1), '')
+    assert.ok(p.events.filter(event => event.event === 'user-message').at(-1).attachmentToken)
+    assert.equal(p.state.taskPromptInjected, false)
+    const rejected = page(kind)
+    rejected.controls.write = false; rejected.controls.accept = false
+    rejected.send('未能注入或发送的草稿')
+    rejected.lifecycle.configure({ promptInjectionEnabled: false })
+    rejected.controls.accept = true
+    rejected.send('关闭注入后重试')
+    assert.equal(rejected.submissions.at(-1), '关闭注入后重试', 'Disabled injection bypasses a previous prefix-write rejection')
+  }
+  const activePage = page()
+  activePage.send('已建立任务')
+  const a = embed(activePage), b = embed()
+  a.instance.handlePageReport('[cmd-terminal] ' + JSON.stringify({ event: 'sent', text: '已建立任务', promptInjected: true, taskPromptGeneration: 0 }))
+  a.instance.setPromptInjectionEnabled(false)
+  assert.equal(a.instance.getInterceptorStatus().enabled, true)
+  assert.equal(a.instance.getInterceptorStatus().promptInjectionEnabled, false)
+  assert.equal(b.instance.getInterceptorStatus().promptInjectionEnabled, true)
+  assert.equal(a.configurations.at(-1).taskPromptInjected, true)
+  assert.equal(a.configurations.at(-1).taskPromptGeneration, 0)
+  assert.equal(a.configurations.at(-1).armBaseline, false)
+  a.instance.setPromptParts({ basePrompt: 'base', toolPrompt: 'tools', prefix: 'changed environment' })
+  await a.instance.installInterceptor()
+  assert.equal(a.configurations.at(-1).promptInjectionEnabled, false, 'Environment updates and reloads preserve the switch')
+  const terminalOff = page('textarea', { enabled: false, promptInjectionEnabled: false })
+  terminalOff.lifecycle.configure({ promptInjectionEnabled: true })
+  assert.equal(terminalOff.state.enabled, false)
+  terminalOff.composer.text = '普通对话'
+  assert.equal(terminalOff.intercept(terminalOff.event()), false)
+  log('PASS session prompt switch: unmodified text/image sends, live command tracking, re-enabling, task deduplication and independent terminal state')
+}
+
 async function rawSendGuardChecks() {
   const scenarios = [
     { reason: 'programmatic-send', setup: p => { p.state.programmatic = true } },
@@ -898,5 +961,5 @@ async function cancelQuestionChecks() {
 }
 
 log(`Log: ${logFile}`)
-main().then(remaining).then(rawSendGuardChecks).then(composerBoundaryChecks).then(composerControlChecks).then(promptDiagnosticChecks).then(questionMarkdownChecks).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
+main().then(remaining).then(promptInjectionToggleChecks).then(rawSendGuardChecks).then(composerBoundaryChecks).then(composerControlChecks).then(promptDiagnosticChecks).then(questionMarkdownChecks).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
   .catch(error => { log(`FAIL ${error.stack || error}`); process.exitCode = 1 })

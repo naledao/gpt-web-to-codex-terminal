@@ -4,6 +4,66 @@ Small, throwaway probes for problems that only reproduce against live third-part
 pages inside the user's real session. Per `AGENTS.md`, **the user runs and drives
 them; the agent reads the log file.**
 
+## directory-notes-check.cjs
+
+The user runs `node --experimental-sqlite tools/diag/directory-notes-check.cjs`
+for offline directory-note regressions. It loads the actual SQLite store, path
+normalizer, runtime note methods/cwd callbacks and editor apply callback with fake
+shells/views. It never opens the app database, starts Electron, launches a shell
+or uses the network. Fixtures and append-only logs are created under `%TEMP%`:
+`%TEMP%\gpt-login-diag\directory-notes-check-<timestamp>.log`.
+
+Notes belong to **machine + exact working directory**, with no parent inheritance.
+Windows case/slash/trailing-separator aliases share one key; SSH POSIX paths keep
+case distinctions. Same-directory sessions share saves and refresh cached platform
+prompts. A save includes its displayed owner and is rejected if the cwd changed.
+Unknown SSH directories disable editing/saving until the execution shell is ready.
+Legacy machine notes remain stored but are never automatically injected into an
+unset directory. **导入原机器说明** copies them to the editor; Save explicitly assigns
+that copy to the current directory. An explicitly cleared directory stays empty.
+
+For live acceptance, the user starts the app with `npm run dev` and:
+
+1. Saves different notes in local directories A and B, then switches between them.
+   Confirm the editor's directory, note marker and system-prompt preview follow it.
+2. Opens a second session in A. Save in one session and confirm the other reads
+   the same note, while a session in B stays separate. Switch chat platforms too.
+3. Changes cwd with a terminal command and checks the note switches after its
+   result. Repeat on SSH with two absolute paths and another saved host record.
+4. Restarts and checks both saved notes. A new child directory must start empty.
+5. Imports an old machine note into one directory, saves it, then clears and saves
+   it. Other unset directories stay empty; the old machine note remains available.
+
+These offline checks and build success do not verify live UI or terminal behavior.
+
+## conversation-scroll-check.cjs
+
+The user runs `node tools/diag/conversation-scroll-check.cjs` for offline reading
+position checks. It loads the actual renderer scroll controller with fake DOM,
+storage, resize observers and animation frames. No Electron, real application
+data, third-party page or network is accessed. Logs use `fs.appendFileSync` under
+`%TEMP%\gpt-login-diag\conversation-scroll-check-<timestamp>.log`.
+
+Checks cover view remounts, independent workspace/platform/conversation positions,
+renderer reloads, late image heights, appended replies, manually leaving the bottom,
+the bottom button, temporary short content, unavailable storage and observer/frame
+cleanup. The UI stores only coordinates, a message ID and the bottom-follow flag
+in localStorage. Restoration waits for the current conversation's messages.
+
+For live acceptance, the user starts the app with `npm run dev` and:
+
+1. Opens the alternate conversation view, scrolls to an older message, switches to
+   the native page and back. Expect the same message at the same viewport offset.
+2. Switches between two workspace sessions or two stored conversations, opens their
+   alternate views, and confirms each restores its own position.
+3. While reading history, waits for a new reply or an image to load. Expect the
+   reading position to remain; **回到底部** stays in the lower-right corner.
+4. Clicks **回到底部**. Expect the latest message and subsequent replies to remain
+   visible. The button hides at the bottom and reappears after scrolling upwards.
+5. Checks keyboard activation, light/dark themes and a narrow conversation pane.
+
+Build success and these offline checks do not establish live UI correctness.
+
 ## ssh-terminal-check.cjs
 
 The user runs `node tools/diag/ssh-terminal-check.cjs` for offline SSH terminal
@@ -630,6 +690,38 @@ restart, unsent snapshots are not reread automatically. Keep the new automatic
 log if the attempt still stops. Build success does not establish live upload success.
 
 ## task-prompt-check.cjs
+
+The sidebar **提示词注入** switch applies to the current app workspace session
+(the left session list), including its cached/later platform views. It defaults
+to ON and persists in that session's SQLite row; existing rows migrate to ON.
+It controls the combined system/tool prefix independently of terminal mode.
+OFF sends keep user text/images and confirmed command tracking without consuming
+the task's injection. Turning ON injects on the next eligible user send if that
+task has not already confirmed a prompt; it does not duplicate a previous prompt.
+Already composed/sent prompts are not retroactively removed. With terminal mode
+OFF, the page's existing ordinary-chat behavior still bypasses interception.
+
+In addition to the page/main checks below, the user runs the session persistence checks:
+
+```powershell
+node --experimental-sqlite tools/diag/prompt-injection-session-check.cjs
+```
+
+This uses the real SQLite store/migration and actual runtime methods with fake
+web views. It creates its database only in a new `%TEMP%\gpt-login-diag` fixture
+directory, never opens the app database and never starts Electron or network
+connections. It covers old-row defaults, two independent session settings,
+cached/new platform propagation and reopening saved ON/OFF rows.
+Log: `%TEMP%\gpt-login-diag\prompt-injection-session-check-<timestamp>.log`.
+The task-prompt checks also cover unmodified multiline/image sends while OFF,
+live command tracking, re-enabling without duplicate task prompts and independent
+terminal mode. Automatic prompt logs retain the boolean `promptInjectionEnabled`.
+
+For live acceptance, use `npm run dev`, create sessions A and B, turn OFF only A,
+and compare their sidebar states and first task sends. Restart and confirm A
+remains OFF and B remains ON. Re-enable A and check its next task; switching
+platform inside A must use A's setting. The prompt preview links remain readable
+while OFF, with a note that their contents are configured rather than injected.
 
 Task-scoped prompt injection: the first confirmed user send in a task carries the
 full prompt. Follow-up messages, question answers and command output reuse it.

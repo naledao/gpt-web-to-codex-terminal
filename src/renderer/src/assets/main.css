@@ -122,10 +122,10 @@ body {
 .address {
   /*
    * The ONLY growing item in the bar, so it fills the space between the navigation buttons on
-   * its left and the model select on its right 鈥?the three of them end up touching, with no
+   * its left and the model select on its right �?the three of them end up touching, with no
    * slack left anywhere to open a gap.
    *
-   * This went: `flex: 1` 鈫?capped at 360px 鈫?capped + `margin-left: auto` 鈫?back to `flex: 1`.
+   * This went: `flex: 1` �?capped at 360px �?capped + `margin-left: auto` �?back to `flex: 1`.
    * The two auto margins it passed through are gone with it; an auto margin on a growing item
    * is both redundant and harmful, because it would take the free space the field is meant to
    * fill.
@@ -206,6 +206,51 @@ body {
   height: 100%;
   color: #8b9099;
   font-size: 13px;
+}
+
+.conversation-transcript__content {
+  display: flow-root;
+  min-height: 100%;
+}
+
+.conversation-transcript__bottom-button {
+  position: absolute;
+  right: 20px;
+  bottom: 18px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .12);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.conversation-transcript__bottom-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.conversation-transcript__bottom-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.conversation-transcript__bottom-button:active {
+  background: var(--accent-soft);
+}
+
+.conversation-transcript__bottom-button:focus-visible,
+.conversation-transcript:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .conversation-message {
@@ -588,7 +633,7 @@ body {
  * Lives in the terminal pane's normal flow rather than floating over it.
  *
  * The pane sits to the LEFT of the embedded page, which is a native view that
- * always paints above the DOM 鈥?a dropdown anchored to the header would spill out
+ * always paints above the DOM �?a dropdown anchored to the header would spill out
  * of this column and be swallowed by it. Taking vertical space instead of
  * overlaying is the only layout that cannot break.
  */
@@ -648,7 +693,7 @@ body {
   margin-bottom: 6px;
 }
 
-/* Which machine this note belongs to 鈥?the one thing that must not be guessed. */
+/* Which machine this note belongs to �?the one thing that must not be guessed. */
 .notes__owner {
   flex: none;
   max-width: 55%;
@@ -863,6 +908,10 @@ body {
   gap: 7px;
 }
 
+.terminal__row--toggle {
+  margin-top: 8px;
+}
+
 .terminal__label {
   font-size: 12px;
   font-weight: 600;
@@ -930,7 +979,7 @@ body {
   line-height: 1.5;
 }
 
-/* A hint with no text at all 鈥?a state whose description was removed 鈥?must not
+/* A hint with no text at all �?a state whose description was removed �?must not
  * leave its 7px margin behind as a gap. */
 .terminal__hint:empty {
   display: none;
@@ -1365,7 +1414,7 @@ body {
  *
  * Green rather than amber: this is the intended state while an SSH session is
  * attached, not a warning. It is loud because the stakes are "which computer is
- * about to run this" 鈥?the one fact the user must never have to guess at.
+ * about to run this" �?the one fact the user must never have to guess at.
  */
 .badge--remote {
   background: rgba(63, 185, 80, 0.18);
@@ -1430,7 +1479,7 @@ body {
    * `appearance: none` because the native control draws its drop-down arrow with SYSTEM colours:
    * on Windows that is a light box, which looks broken against this dark bar. Removing the
    * native rendering also removes the arrow, so the chevron below is drawn as a background image
-   * (an inline SVG 鈥?no asset to load, and allowed by the renderer's CSP `img-src data:`).
+   * (an inline SVG �?no asset to load, and allowed by the renderer's CSP `img-src data:`).
    */
   appearance: none;
   padding: 0 24px 0 10px;
@@ -1560,7 +1609,7 @@ body {
   color: var(--text);
 }
 
-/* A proxy is configured 鈥?worth noticing, since it changes how the page loads. */
+/* A proxy is configured �?worth noticing, since it changes how the page loads. */
 .toolbar__settings--on {
   color: #e3b341;
 }
@@ -1584,7 +1633,7 @@ body {
  *
  * The settings dialog now carries a long session-import block, so growing to fit
  * the content pushed the buttons off-screen on a short window. Capping the box and
- * letting `.modal__body` scroll keeps the title, the close button and 淇濆瓨 always
+ * letting `.modal__body` scroll keeps the title, the close button and 淇濆�?always
  * reachable. `min-height: 0` on the body is load-bearing: a flex item defaults to
  * `min-height: auto` and would refuse to shrink below its content, so the body
  * would overflow the box instead of scrolling inside it.
@@ -1665,7 +1714,7 @@ body {
  * The session-import value box.
  *
  * A textarea rather than an input because a SPLIT session token arrives as two cookies
- * (`.0` and `.1`) and has to be pasted whole 鈥?an input would scroll one of them out of
+ * (`.0` and `.1`) and has to be pasted whole �?an input would scroll one of them out of
  * sight and make a correct paste look wrong. `resize: vertical` only: the dialog is a
  * fixed-height flex column now, and a horizontally resizable box can push its footer
  * off-screen.
@@ -1908,7 +1957,7 @@ body {
   color: var(--danger);
 }
 
-/* The host the model is currently driving 鈥?the one row that must be unmistakable. */
+/* The host the model is currently driving �?the one row that must be unmistakable. */
 .ssh-list__pick--active {
   border-color: rgba(126, 231, 135, 0.35);
   background: rgba(63, 185, 80, 0.12);
@@ -1932,12 +1981,12 @@ body {
 
 /*
  * The footer is a direct child of `.modal__box` in the settings dialog, and the body
- * is the only scroll container 鈥?so 淇濆瓨 stays put while the settings list scrolls.
+ * is the only scroll container �?so 淇濆�?stays put while the settings list scrolls.
  *
- * The SSH dialog cannot use that shape: its 杩炴帴 button is `type="submit"` and must
+ * The SSH dialog cannot use that shape: its 杩炴�?button is `type="submit"` and must
  * live inside the form, and a footer inside a scroll container scrolls away. There
- * the FORM becomes the scroll container and the footer is exempted from it 鈥?same
- * result, without `form="鈥?` attribute indirection.
+ * the FORM becomes the scroll container and the footer is exempted from it �?same
+ * result, without `form="�?` attribute indirection.
  *
  * No negative margins here: `.modal__body` keeps its padding and the form simply
  * fills it. Bleeding the form to the edges would make its content scroll behind the
@@ -2038,7 +2087,7 @@ body {
 }
 
 /*
- * "Passing a security check" — a bot-check interstitial is transient, not a failure, but it looks
+ * "Passing a security check" �?a bot-check interstitial is transient, not a failure, but it looks
  * exactly like one. Amber rather than red: nothing is broken and no action is required.
  */
 .bot-check {
@@ -2787,7 +2836,7 @@ body {
   font-weight: 700;
 }
 .ssh-files__browser .wx-list.wx-SSaVhET7 .wx-header::before {
-  content: '绫诲瀷';
+  content: '类型';
   position: absolute;
   z-index: 3;
   right: 58px;
@@ -6042,8 +6091,13 @@ body {
   background: #fbfcfe;
 }
 
-.workspace:not(.workspace--manager) .terminal__row:first-child {
+.workspace:not(.workspace--manager) .terminal__row:first-child,
+.workspace:not(.workspace--manager) .terminal__row--toggle {
   min-height: 34px;
+}
+
+.workspace:not(.workspace--manager) .terminal__row--toggle {
+  margin-top: 13px;
 }
 
 .workspace:not(.workspace--manager) .terminal__label {
@@ -8971,7 +9025,7 @@ body {
   border-top-color: #2a3546 !important;
 }
 
-/* 宸ュ叿绠变笅鎷夎彍鍗曪紙Base UI Menu锛夆€斺€?榛樿璺熼殢娴呰壊涓婚 */
+/* 宸ュ叿绠变笅鎷夎彍鍗曪紙Base UI Menu锛夆€斺�?榛樿璺熼殢娴呰壊涓婚 */
 .toolbox-menu__positioner {
   z-index: 60;
 }
@@ -9030,7 +9084,7 @@ body {
 }
 
 
-/* 寮圭獥閲岀殑 Git 鍥炬爣锛氬僵鑹插搧鐗?Logo锛屼笉闇€瑕佹祬钃濊‖搴?*/
+/* 寮圭獥閲岀�?Git 鍥炬爣锛氬僵鑹插搧鐗?Logo锛屼笉闇€瑕佹祬钃濊‖搴?*/
 .confirm-dialog__icon--git {
   background: transparent;
   overflow: visible;
@@ -10480,7 +10534,7 @@ body {
 
 
 
-/* 未设置头像时的默认占位 */
+/* 未设置头像时的默认占�?*/
 .settings-avatar-preview-img--empty { display:grid; place-items:center; position:relative; box-sizing:border-box; background:#e9eaee; border:1px solid #dfe1e6; color:#8b8f97; cursor:pointer; }
 .settings-avatar-preview-img--empty > svg { width:30px; height:30px; }
 .settings-avatar-badge { position:absolute; right:-2px; bottom:-2px; width:22px; height:22px; display:grid; place-items:center; border-radius:50%; background:#1a73e8; border:2px solid #fff; color:#fff; }
@@ -11708,8 +11762,12 @@ body {
 
 .terminal__hint--inline {
   margin: 0;
-  flex: 0 1 auto;
+  flex: 1;
   min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Gemini icon size */
@@ -11730,7 +11788,7 @@ body {
   height: 22px !important;
 }
 
-/* 备用会话视图（切换对话视图）：深色模式 */
+/* 备用会话视图（切换对话视图）：深色模�?*/
 .workspace[data-theme='dark'] .stage__alternate-card {
   background: #101620 !important;
 }
@@ -12196,4 +12254,401 @@ body {
   resize: none;
   white-space: pre;
   overflow: auto;
+}
+
+/* ---------------- MySQL connection page (full screen) ---------------- */
+
+.modal--mysql {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: #fff;
+  backdrop-filter: none;
+}
+
+.mysql-page {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #fff;
+}
+
+.mysql-page__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.mysql-page__mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #00758f, #00a0b8);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(0, 117, 143, .28);
+}
+
+.mysql-page__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mysql-page__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #1f2733;
+}
+
+.mysql-page__scope {
+  font-size: 12px;
+  color: #6b7688;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46vw;
+}
+
+.mysql-page__badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: #f1f3f8;
+  font-size: 12px;
+  color: #8a93a6;
+}
+
+.mysql-page__badge i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c3cad8;
+}
+
+.mysql-page__badge--ok {
+  background: #e9f8f0;
+  color: #1f9d63;
+}
+
+.mysql-page__badge--ok i {
+  background: #22b573;
+}
+
+.mysql-page__close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7688;
+  cursor: pointer;
+}
+
+.mysql-page__close:hover {
+  background: #f1f3f8;
+  color: #1f2733;
+}
+
+.mysql-page__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 26px 22px 32px;
+  background: #f6f8fb;
+}
+
+.mysql-page__card {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 22px 24px 24px;
+  border: 1px solid #e6e9f0;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .07);
+}
+
+.mysql-page__card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.mysql-page__card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2733;
+}
+
+.mysql-page__card-note {
+  font-size: 12px;
+  color: #8a93a6;
+}
+
+.mysql-page__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 18px;
+}
+
+.mysql-page__field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.mysql-page__field--host {
+  grid-column: span 1;
+}
+
+.mysql-page__field--port {
+  grid-column: span 1;
+  max-width: 180px;
+}
+
+.mysql-page__field--wide {
+  grid-column: 1 / -1;
+}
+
+.mysql-page__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #55617a;
+}
+
+.mysql-page__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #d8dde8;
+  border-radius: 9px;
+  background: #fff;
+  font-size: 13px;
+  color: #1f2733;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.mysql-page__input:focus {
+  border-color: #00a0b8;
+  box-shadow: 0 0 0 3px rgba(0, 160, 184, .14);
+}
+
+.mysql-page__password {
+  position: relative;
+  display: block;
+}
+
+.mysql-page__password .mysql-page__input {
+  padding-right: 62px;
+}
+
+.mysql-page__reveal {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  color: #6b7688;
+  cursor: pointer;
+}
+
+.mysql-page__reveal:hover {
+  background: #f1f3f8;
+  color: #1f2733;
+}
+
+.mysql-page__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6b7688;
+}
+
+.mysql-page__hint--note {
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: #f5f8fb;
+}
+
+.mysql-page__hint--error {
+  color: #c0392b;
+}
+
+.mysql-page__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid #eef1f6;
+  background: #fff;
+}
+
+.mysql-page__foot-hint {
+  font-size: 12px;
+  color: #8a93a6;
+}
+
+.mysql-page__btn {
+  padding: 9px 18px;
+  border: 1px solid #d8dde8;
+  border-radius: 9px;
+  background: #fff;
+  font-size: 13px;
+  color: #33405a;
+  cursor: pointer;
+}
+
+.mysql-page__btn:hover {
+  background: #f4f6fa;
+}
+
+.mysql-page__btn--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #00758f, #00a0b8);
+  color: #fff;
+}
+
+.mysql-page__btn--primary:hover {
+  filter: brightness(1.05);
+}
+
+.mysql-page__btn:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.workspace[data-theme='dark'] .modal--mysql {
+  background: #0c1119;
+}
+
+.workspace[data-theme='dark'] .mysql-page {
+  background: #0c1119;
+}
+
+.workspace[data-theme='dark'] .mysql-page__head {
+  border-bottom-color: #1d2531;
+}
+
+.workspace[data-theme='dark'] .mysql-page__title {
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .mysql-page__scope {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__badge {
+  background: #161d28;
+  color: #7d8aa0;
+}
+
+.workspace[data-theme='dark'] .mysql-page__badge--ok {
+  background: #12281f;
+  color: #3ecf8e;
+}
+
+.workspace[data-theme='dark'] .mysql-page__close {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__close:hover {
+  background: #1a2230;
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .mysql-page__body {
+  background: #0a0f16;
+}
+
+.workspace[data-theme='dark'] .mysql-page__card {
+  border-color: #232b38;
+  background: #10151d;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
+}
+
+.workspace[data-theme='dark'] .mysql-page__card-title {
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .mysql-page__card-note,
+.workspace[data-theme='dark'] .mysql-page__label {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__input {
+  border-color: #2a3444;
+  background: #0c1119;
+  color: #e6ecf6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__input:focus {
+  border-color: #00a0b8;
+  box-shadow: 0 0 0 3px rgba(0, 160, 184, .22);
+}
+
+.workspace[data-theme='dark'] .mysql-page__reveal:hover {
+  background: #1a2230;
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .mysql-page__hint {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__hint--note {
+  background: #161d28;
+}
+
+.workspace[data-theme='dark'] .mysql-page__hint--error {
+  color: #ff8a7a;
+}
+
+.workspace[data-theme='dark'] .mysql-page__foot {
+  border-top-color: #1d2531;
+  background: #10151d;
+}
+
+.workspace[data-theme='dark'] .mysql-page__foot-hint {
+  color: #7d8aa0;
+}
+
+.workspace[data-theme='dark'] .mysql-page__btn {
+  border-color: #2a3444;
+  background: #161d28;
+  color: #cbd6e6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__btn:hover {
+  background: #1c2739;
+}
+
+.workspace[data-theme='dark'] .mysql-page__btn--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #00758f, #00a0b8);
+  color: #fff;
 }

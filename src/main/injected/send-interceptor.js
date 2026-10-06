@@ -142,6 +142,7 @@
 
   const state = {
     enabled: false,
+    promptInjectionEnabled: true,
     prefix: '',
     injectedCount: 0,
     /** True while WE are driving the composer; suppresses prefixing/interception. */
@@ -1557,6 +1558,7 @@
       trigger: event.type === 'keydown' ? 'enter' : 'click',
       reason,
       enabled: state.enabled,
+      promptInjectionEnabled: state.promptInjectionEnabled,
       prefixLength: state.prefix.length,
       programmatic: state.programmatic,
       taskPromptInjected: state.taskPromptInjected,
@@ -1581,13 +1583,13 @@
       noteUserSend(event, 'terminal-disabled', element)
       return false
     }
-    if (!state.prefix) {
+    if (state.promptInjectionEnabled && !state.prefix) {
       noteUserSend(event, 'missing-prefix', element)
       return false
     }
     // This draft already failed to compose. Attempting again on every keystroke is how the
     // injected counter ran away; the user's text sends as-is instead.
-    if (draftRejected) {
+    if (state.promptInjectionEnabled && draftRejected) {
       noteUserSend(event, 'draft-rejected', element)
       return false
     }
@@ -1599,7 +1601,7 @@
     const draft = readComposer(element)
     // A failed submit can leave our full draft in the editor. Reuse it on a user retry,
     // while still confirming the send and recording only the user's words.
-    const prefixedDraft = hasPrefix(element) && draft.includes(USER_TEXT_SENTINEL)
+    const prefixedDraft = !!state.prefix && hasPrefix(element) && draft.includes(USER_TEXT_SENTINEL)
     const text = collapse(userTextOf(draft))
     const draftHasImage = hasDraftImageAttachment()
 
@@ -1634,9 +1636,9 @@
 
     const sendContext = {
       taskPromptGeneration: state.taskPromptGeneration,
-      promptInjected: prefixedDraft || !state.taskPromptInjected
+      promptInjected: prefixedDraft || (state.promptInjectionEnabled && !state.taskPromptInjected)
     }
-    if (state.taskPromptInjected || prefixedDraft) {
+    if (!state.promptInjectionEnabled || state.taskPromptInjected || prefixedDraft) {
       // Skipping the prefix must still capture images, publish the user turn and arm
       // the next reply. Synthetic Enter/click events bypass this handler above.
       submitWithRetry(
@@ -2997,6 +2999,7 @@
     configure(config) {
       if (!config) return { ...state }
       if (typeof config.enabled === 'boolean') state.enabled = config.enabled
+      if (typeof config.promptInjectionEnabled === 'boolean') state.promptInjectionEnabled = config.promptInjectionEnabled
       if (typeof config.prefix === 'string') state.prefix = config.prefix
       // Restore main's snapshot after a full reload, or accept a NEW task boundary.
       // Reconfiguring the same task (environment probe, mode toggle) must not undo a
@@ -3036,6 +3039,7 @@
       report({
         event: 'configured',
         enabled: state.enabled,
+        promptInjectionEnabled: state.promptInjectionEnabled,
         prefixLength: state.prefix.length,
         taskPromptInjected: state.taskPromptInjected,
         taskPromptGeneration: state.taskPromptGeneration
