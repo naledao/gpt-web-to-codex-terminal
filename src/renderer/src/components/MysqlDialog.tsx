@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import ConfirmDialog from './ConfirmDialog'
 import type { AppTheme, MysqlConnection, MysqlConnectionDraft, MysqlConnectionsState } from '../../../shared/types'
 
 interface MysqlDialogProps {
@@ -122,6 +123,8 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const newTabRef = useRef(0)
   /** Focused when saving is refused, so the missing field is the one on screen. */
   const databaseRef = useRef<HTMLInputElement>(null)
+  /** The connection a delete is waiting on; non-null while the confirm dialog is up. */
+  const [pendingDelete, setPendingDelete] = useState<MysqlConnection | null>(null)
 
   const connections = state?.connections ?? []
   const machineLabel = state?.machineLabel ?? ''
@@ -249,26 +252,32 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     }
   }, [activeForm, activeTab, saving])
 
-  const remove = useCallback(
-    async (connection: MysqlConnection): Promise<void> => {
-      if (!window.confirm(`删除连接「${connectionLabel(connection)}」？`)) return
-      setError('')
-      try {
-        const next = await window.api.removeMysqlConnection(connection.id)
-        setState(next)
-        const index = tabs.findIndex((tab) => tab.key === connection.id)
-        const remaining = tabs.filter((tab) => tab.key !== connection.id)
-        setTabs(remaining)
-        if (activeKey === connection.id) {
-          setActiveKey(remaining.length === 0 ? '' : remaining[Math.min(index, remaining.length - 1)].key)
-        }
-      } catch {
-        setError('删除失败，请重试。')
+  /**
+   * Delete the connection the confirm dialog is showing.
+   *
+   * Split from the click that opened it so the confirmation can be the project own
+   * dialog instead of the browser one, which is unstyled, is not themed, and cannot say
+   * what is about to be lost.
+   */
+  const confirmRemove = useCallback(async (): Promise<void> => {
+    const connection = pendingDelete
+    if (connection === null) return
+    setError("")
+    try {
+      const next = await window.api.removeMysqlConnection(connection.id)
+      setState(next)
+      const index = tabs.findIndex((tab) => tab.key === connection.id)
+      const remaining = tabs.filter((tab) => tab.key !== connection.id)
+      setTabs(remaining)
+      if (activeKey === connection.id) {
+        setActiveKey(remaining.length === 0 ? "" : remaining[Math.min(index, remaining.length - 1)].key)
       }
-    },
-    [tabs, activeKey]
-  )
-
+    } catch {
+      setError("删除失败，请重试。")
+    } finally {
+      setPendingDelete(null)
+    }
+  }, [pendingDelete, tabs, activeKey])
   if (!open) return null
 
   return (
@@ -383,7 +392,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                         className="mysql-page__item-remove"
                         aria-label={`删除 ${connectionLabel(connection)}`}
                         title="从数据库删除"
-                        onClick={() => void remove(connection)}
+                        onClick={() => setPendingDelete(connection)}
                       >
                         <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
                           <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
@@ -537,7 +546,36 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
             {saving ? '保存中…' : '保存'}
           </button>
         </footer>
-      </div>
+      {/*
+        Deleting is irreversible, so it goes through the project own confirm dialog rather
+        than window.confirm: same styling and theme as everything else, and it can name
+        the connection and where it points before anything is lost.
+      */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        danger
+        icon='🗑'
+        title='删除连接'
+        description={pendingDelete === null ? undefined : '删除后无法恢复，需要重新填写连接信息。'}
+        items={
+          pendingDelete === null
+            ? []
+            : [
+                {
+                  icon: '🔌',
+                  label: connectionLabel(pendingDelete),
+                  value: connectionTarget(pendingDelete),
+                  tone: 'danger' as const
+                },
+                ...(pendingDelete.database.trim() === ''
+                  ? []
+                  : [{ icon: '🗄', label: '默认数据库', value: pendingDelete.database, tone: 'neutral' as const }])
+              ]
+        }
+        confirmLabel='确认删除'
+        onConfirm={() => void confirmRemove()}
+        onCancel={() => setPendingDelete(null)}
+      />      </div>
     </div>
   )
 }
