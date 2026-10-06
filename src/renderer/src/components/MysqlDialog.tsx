@@ -113,6 +113,23 @@ function tabTitle(tab: MysqlTab): string {
   return tab.kind === 'connection' ? tabCaption(tab.form) : `${tab.database}.${tab.table}`
 }
 
+/**
+ * The connection as one paste-able URI, password included.
+ *
+ * `mysql://user:pass@host:port/database` is what every client accepts, and it is the one
+ * form that carries all five values without the user reassembling them. User and password
+ * are percent-encoded because a password containing @ : or / would otherwise split the URI
+ * in the wrong place and hand the client a different host than the one that was copied.
+ */
+function connectionUri(connection: MysqlConnection): string {
+  const user = encodeURIComponent(connection.username.trim())
+  const password = connection.password === '' ? '' : ':' + encodeURIComponent(connection.password)
+  const host = connection.host.trim() || '127.0.0.1'
+  const port = connection.port ? ':' + connection.port : ''
+  const database = encodeURIComponent(connection.database.trim())
+  return 'mysql://' + user + password + '@' + host + port + (database === '' ? '' : '/' + database)
+}
+
 function connectionLabel(connection: MysqlConnection): string {
   if (connection.name.trim() !== '') return connection.name.trim()
   if (connection.host.trim() !== '') return connection.host.trim()
@@ -176,6 +193,9 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const newTabRef = useRef(0)
   /** Focused when saving is refused, so the missing field is the one on screen. */
   const databaseRef = useRef<HTMLInputElement>(null)
+  /** Id of the connection whose info was just copied, for the transient 已复制 mark. */
+  const [copiedId, setCopiedId] = useState('')
+  const copyTimerRef = useRef<number | null>(null)
   /** The connection a delete is waiting on; non-null while the confirm dialog is up. */
   const [pendingDelete, setPendingDelete] = useState<MysqlConnection | null>(null)
   /** The database picker: whether it is open, what it is fetching, and what came back. */
@@ -270,6 +290,35 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     setError('')
   }, [])
 
+  /**
+   * Copy one connection to the clipboard as a mysql:// URI.
+   *
+   * The password goes with it, which is the whole point: the URI is meant to be pasted into
+   * a client and used, and a URI missing its password is only half a connection. The mark
+   * on the row is what tells the user it worked, since a clipboard write has no other
+   * visible effect.
+   */
+  const copyConnection = useCallback(async (connection: MysqlConnection): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(connectionUri(connection))
+    } catch {
+      setError('复制失败，请检查剪贴板权限。')
+      return
+    }
+    setCopiedId(connection.id)
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = window.setTimeout(() => {
+      setCopiedId('')
+      copyTimerRef.current = null
+    }, 1600)
+  }, [])
+
+  // A pending copy timer must not fire after the dialog is gone.
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+    }
+  }, [])
   const closeTab = useCallback(
     (key: string) => {
       const index = tabs.findIndex((tab) => tab.key === key)
@@ -595,6 +644,24 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                       >
                         <span className="mysql-page__item-name">{connectionLabel(connection)}</span>
                         <span className="mysql-page__item-target">{connectionTarget(connection)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={copiedId === connection.id ? 'mysql-page__item-copy mysql-page__item-copy--done' : 'mysql-page__item-copy'}
+                        aria-label={copiedId === connection.id ? '已复制连接信息' : '复制连接信息（含密码）'}
+                        title={copiedId === connection.id ? '已复制到剪贴板（含密码）' : '复制连接信息（含密码）'}
+                        onClick={() => void copyConnection(connection)}
+                      >
+                        {copiedId === connection.id ? (
+                          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M3 8.5l3.2 3.2L13 4.8" />
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="5.5" y="5.5" width="8" height="8" rx="1.6" />
+                            <path d="M10.5 5.5V4.1A1.6 1.6 0 0 0 8.9 2.5H4.1A1.6 1.6 0 0 0 2.5 4.1v4.8a1.6 1.6 0 0 0 1.6 1.6h1.4" />
+                          </svg>
+                        )}
                       </button>
                       <button
                         type="button"

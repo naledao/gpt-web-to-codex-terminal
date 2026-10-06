@@ -12549,6 +12549,36 @@ body {
   white-space: nowrap;
 }
 
+/* Copy is revealed on hover next to delete, for the same reason delete is. */
+.mysql-page__item-copy {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a3abbd;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.mysql-page__item:hover .mysql-page__item-copy {
+  opacity: 1;
+}
+
+.mysql-page__item-copy:hover {
+  background: #e9f6fa;
+  color: #0b7c92;
+}
+
+.mysql-page__item-copy--done {
+  background: #e9f8f0;
+  color: #1f9d63;
+  opacity: 1;
+}
 /* Revealed on hover so the row reads as a name, not as a name with a delete button. */
 .mysql-page__item-remove {
   flex: none;
@@ -13171,6 +13201,19 @@ body {
   color: #7d8aa0;
 }
 
+.workspace[data-theme='dark'] .mysql-page__item-copy {
+  color: #5f6b7f;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item-copy:hover {
+  background: #0f2a33;
+  color: #4fd1e8;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item-copy--done {
+  background: #12291f;
+  color: #4ecf95;
+}
 .workspace[data-theme='dark'] .mysql-page__item-remove {
   color: #5f6b7f;
 }
