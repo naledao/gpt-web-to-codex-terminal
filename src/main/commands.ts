@@ -1015,8 +1015,8 @@ export class CommandRunner {
     this.flushTerminal()
   }
   /** Stop the current command without clearing the transcript. */
-  async interruptTerminal(): Promise<void> {
-    if (this.fileAbort) { this.fileAbort.abort(); return }
+  async interruptTerminal(silentWhenIdle = false): Promise<boolean> {
+    if (this.fileAbort) { this.fileAbort.abort(); return true }
     const shell = this.activeShell
     /*
      * Both branches are logged. The first is the one where 中断 visibly does nothing except
@@ -1024,18 +1024,22 @@ export class CommandRunner {
      * the process to close, with no timeout, and its callers all await it.
      */
     if (!shell || !shell.running) {
+      // SSH manual input uses a separate PTY; let the caller interrupt that
+      // channel without claiming that no command is running there.
+      if (silentWhenIdle) return false
       console.warn(
         `[cmd] interrupt: nothing running (shell=${shell ? shell.kind : 'null'} ` +
           `running=${shell ? String(shell.running) : 'n/a'})`
       )
       this.appendLine({ kind: 'notice', text: '当前没有正在执行的命令' })
       this.flushTerminal()
-      return
+      return false
     }
 
     console.info(`[cmd] interrupt: asking the ${shell.kind} backend to stop`)
     const stopped = await shell.interrupt()
     console.info(`[cmd] interrupt: backend reported ${String(stopped)}`)
+    return true
   }
 
 

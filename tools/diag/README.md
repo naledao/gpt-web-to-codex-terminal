@@ -4,6 +4,39 @@ Small, throwaway probes for problems that only reproduce against live third-part
 pages inside the user's real session. Per `AGENTS.md`, **the user runs and drives
 them; the agent reads the log file.**
 
+## ssh-terminal-check.cjs
+
+The user runs `node tools/diag/ssh-terminal-check.cjs` for offline SSH terminal
+regressions. It does not start Electron, a shell, or a network connection. Fake
+channels exercise the actual SSH input and Ctrl+C methods, the command runner,
+the interrupt IPC handler, and the React editor callbacks. Checks cover multiline
+here-documents, blank lines, CRLF, advertised bracketed paste across split packets,
+password non-disclosure, idle fallback, IME input and copying selected text.
+
+Log: `%TEMP%\gpt-login-diag\ssh-terminal-check-<timestamp>.log`.
+
+For live acceptance, the user starts the app with `npm run dev`, connects SSH and:
+
+1. Pastes this harmless multiline command and presses Enter. Expect `first`, a
+   blank line, and `last`, followed by the normal shell prompt:
+
+   ```sh
+   cat <<'EOF'
+   first
+
+   last
+   EOF
+   ```
+
+2. Sends only `cat <<'EOF'`, waits for `>`, then clicks **中断**. Expect the normal
+   shell prompt to return; `ls` must then list the directory. Repeat with Ctrl+C
+   while focus is in the command editor and no text is selected.
+3. Uses Shift+Enter to add a draft line; confirms Enter during Chinese IME
+   composition does not submit, and Ctrl+C with selected draft text copies it.
+4. Checks a model-issued running command still uses its existing interrupt path.
+
+These offline checks do not establish live SSH behavior or visual correctness.
+
 ## attachments-probe.js / read-files-check.cjs
 
 Attachment observation and offline checks for AI-selected file uploads. See

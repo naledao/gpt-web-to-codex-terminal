@@ -1056,7 +1056,13 @@ function registerIpcHandlers(): void {
      * "interrupt: requested" with no matching "interrupt: completed" is precisely that case.
      */
     console.info('[interrupt] requested from the renderer')
-    await runtime.runner.interruptTerminal()
+    const sshState = runtime.ssh.getState()
+    if (sshState.attached && sshState.status === 'connected') {
+      const handled = await runtime.runner.interruptTerminal(true)
+      if (!handled) runtime.ssh.interrupt()
+    } else {
+      await runtime.runner.interruptTerminal()
+    }
     console.info('[interrupt] completed')
     return runtime.runner.getTerminalState()
   })

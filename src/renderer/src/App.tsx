@@ -2211,7 +2211,7 @@ ${conversation.url}`}
             <button
               type="button"
               className="panel__sync"
-              title="中断当前正在执行的命令"
+              title={sshActive ? '中断执行中的命令；手动 SSH 输入发送 Ctrl+C' : '中断当前正在执行的命令'}
               onClick={() => void interruptTerminal()}
             >
               中断
@@ -2695,20 +2695,34 @@ ${record.command}`
               <span className={sshActive ? 'terminal-pane__prompt terminal-pane__prompt--ssh' : 'terminal-pane__prompt'} aria-hidden="true">
                 {sshActive ? '$' : <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>}
               </span>
-              <input
-                className="address__input"
+              <textarea
+                className="address__input terminal-pane__command-input"
                 value={commandDraft}
+                rows={Math.min(8, commandDraft.split('\n').length)}
                 spellCheck={false}
                 placeholder={
                   sshActive
                     ? ssh?.status === 'connected'
-                      ? '输入命令，回车发送到远程主机'
+                      ? '输入或粘贴命令，回车发送，Shift+回车换行'
                       : '尚未连接'
-                    : '直接在本机执行命令（不经过模型）'
+                    : '输入或粘贴命令，回车执行，Shift+回车换行'
                 }
                 aria-label={sshActive ? 'SSH 命令' : '终端命令'}
                 disabled={sshActive ? ssh?.status !== 'connected' : false}
                 onChange={(event) => setCommandDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return
+                  if (event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 'c'
+                    && event.currentTarget.selectionStart === event.currentTarget.selectionEnd) {
+                    event.preventDefault()
+                    void interruptTerminal()
+                    return
+                  }
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    event.currentTarget.form?.requestSubmit()
+                  }
+                }}
               />
             </form>
           </>

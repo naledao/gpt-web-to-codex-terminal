@@ -12177,3 +12177,16 @@ body {
   border-color: #5a292d !important;
   color: #ff9da7 !important;
 }
+
+/* The command editor must keep pasted newlines and grow with its draft. */
+.workspace:not(.workspace--manager) .terminal-pane__input .terminal-pane__command-input {
+  box-sizing: border-box;
+  height: auto;
+  min-height: 46px;
+  max-height: 240px;
+  padding: 10px 16px;
+  line-height: 1.6;
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+}

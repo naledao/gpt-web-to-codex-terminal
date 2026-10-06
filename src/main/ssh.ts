@@ -148,6 +148,9 @@ export class SshManager {
   private partialLineIndex: number | null = null
   /** Set only for the next visible PTY line after a manual input, never stores its text. */
   private manualInputPending = false
+  /** Readline advertises whether it can receive a paste as one editable block. */
+  private bracketedPaste = false
+  private pasteModeTail = ''
   /** Working directory parsed from the interactive PTY prompt (best effort). */
   private ptyCwd = ''
   /** Remote $HOME, resolved once so a `~` in the prompt can be expanded. */
@@ -712,19 +715,43 @@ export class SshManager {
       return
     }
 
-    // The renderer currently submits one input line at a time. Keep the carriage
-    // return explicit so the remote PTY sees the same Enter key a real terminal
-    // would receive. Do not mirror the text into the transcript: it may be a sudo
-    // password, and a PTY will echo ordinary commands by itself.
-    const payload = text.replace(/[\r\n]+/g, '\r')
+    // Keep every newline, including blank lines in here-documents. When Readline
+    // enables bracketed paste, insert a multiline draft as one block before Enter:
+    // later lines must not accidentally become answers to a sudo password prompt.
+    // Never mirror the input: it may be a password, and the PTY supplies its echo.
+    const normalized = text.replace(/\r\n?/g, '\n')
+    const payload = this.bracketedPaste && normalized.includes('\n')
+      ? `\x1b[200~${normalized}\x1b[201~\r`
+      : normalized.replace(/\n/g, '\r')
     this.manualInputPending = payload.trim() !== ''
     try {
-      stream.write(`${payload}\r`)
+      stream.write(payload.endsWith('\r') ? payload : `${payload}\r`)
     } catch (error) {
       this.manualInputPending = false
       this.pushLine('error', `写入交互式终端失败：${(error as Error).message}`)
       this.emit()
     }
+  }
+
+  /** Cancel a manual PTY command or an unfinished here-document with Ctrl+C. */
+  interrupt(): void {
+    const stream = this.stream
+    if (!stream || this.state.status !== 'connected') {
+      this.pushLine('error', '交互式终端尚未连接，无法发送 Ctrl+C。')
+      this.emit()
+      return
+    }
+
+    this.manualInputPending = false
+    this.finishPartialLine()
+    try {
+      // This is a terminal control key, not a line of shell input. No Enter.
+      stream.write('\x03')
+      this.pushLine('notice', '已向远程交互终端发送 Ctrl+C')
+    } catch (error) {
+      this.pushLine('error', `发送 Ctrl+C 失败：${(error as Error).message}`)
+    }
+    this.emit()
   }
 
   /** Move the visible interactive PTY to the model execution directory. */
@@ -854,6 +881,9 @@ export class SshManager {
 
     this.partialLineIndex = null
 
+    this.bracketedPaste = false
+    this.pasteModeTail = ''
+
     // Disposed BEFORE the client goes away: `RemoteShell.dispose()` marks itself
     // disposed, so its close handler does not try to reopen a channel on a
     // connection that is being torn down.
@@ -906,6 +936,13 @@ export class SshManager {
    * bare CR as "overwrite" would just lose output.
    */
   private consume(text: string): void {
+    // DECSET/DECRST may be split across SSH packets. Observe them before ANSI
+    // removal and retain just enough bytes to recognise a split sequence.
+    const modeText = this.pasteModeTail + text
+    for (const match of modeText.matchAll(/\x1b\[\?2004([hl])/g)) {
+      this.bracketedPaste = match[1] === 'h'
+    }
+    this.pasteModeTail = modeText.slice(-7)
     this.buffer += text
 
     for (;;) {
