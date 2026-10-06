@@ -108,6 +108,61 @@ async function main() {
     cloneNode() { return new Element(this.tagName, { ...this.attributes }, this.text, this.children.map(child => child.cloneNode())) }
     remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this) }
   }
+  // 2026-10-06 local log: six inputs, two unrestricted, none in the
+  // eight-level composer scope. Diagnostics must explain ownership without
+  // choosing an arbitrary input or recording private page/file values.
+  const inputDiagnosticStart = injectedSource.indexOf('  const attachmentInputDiagnostics =')
+  const inputDiagnosticEnd = injectedSource.indexOf('  const fileUserTurnRoot =', inputDiagnosticStart)
+  assert.ok(inputDiagnosticStart > pickerEnd && inputDiagnosticEnd > inputDiagnosticStart)
+  const makeInputGroup = () => observedInputs.map(properties => Object.assign(new Element('input', { type: 'file' }), properties, { isConnected: true }))
+  const activeInputs = makeInputGroup(), inactiveInputs = makeInputGroup()
+  const activeEditor = new Element('div', { contenteditable: 'true' })
+  const inactiveEditor = new Element('div', { contenteditable: 'true' })
+  inactiveEditor.shown = false
+  let editorBranch = activeEditor
+  for (let depth = 0; depth < 10; depth++) editorBranch = new Element('div', {}, '', [editorBranch])
+  const activeOwner = new Element('form', {}, '', [...activeInputs, editorBranch])
+  const inactiveOwner = new Element('form', { 'aria-hidden': 'true' }, '', [...inactiveInputs, inactiveEditor])
+  inactiveOwner.shown = false
+  const inputBody = new Element('body', {}, '', [activeOwner, inactiveOwner])
+  const inputContext = {
+    PAGE: { composerSelectors: ['[contenteditable="true"]'] },
+    document: { body: inputBody, activeElement: activeEditor, querySelectorAll: selector => inputBody.querySelectorAll(selector) },
+    isVisibleElement: node => node.shown && !node.closest('[aria-hidden="true"]'),
+    attachmentHasMessages: node => !!node.querySelector('[data-content-search-unit-key]'),
+    chooseAttachmentInput: chooseInput
+  }
+  const inspectInputs = vm.runInNewContext(injectedSource.slice(inputDiagnosticStart, inputDiagnosticEnd) + '\nattachmentInputDiagnostics', inputContext)
+  const observedNoInput = inspectInputs([textFile], activeEditor, editorBranch)
+  assert.equal(observedNoInput.fileInputs.length, 6)
+  assert.equal(observedNoInput.fileInputs.filter(input => input.compatible).length, 2)
+  assert.equal(observedNoInput.fileInputs.some(input => input.selected), false, 'Ambiguous inputs remain blocked')
+  assert.equal(observedNoInput.fileInputs.some(input => input.nearComposer), false)
+  assert.equal(observedNoInput.fileInputs[2].ancestors[0].containsComposer, true)
+  assert.equal(observedNoInput.fileInputs[2].ancestors[0].visibleComposers, 1)
+  assert.equal(observedNoInput.fileInputs[5].hiddenAncestor, true)
+  assert.equal(observedNoInput.fileInputs[5].ancestors[0].visibleComposers, 0)
+  assert.equal(observedNoInput.composerCandidates.filter(node => node.selected && node.focused && node.visible).length, 1)
+  const observedLocal = inspectInputs([textFile], activeEditor, activeOwner)
+  assert.equal(observedLocal.fileInputs.filter(input => input.selected).length, 1)
+  assert.equal(observedLocal.fileInputs[2].selected, true)
+  const diagnosticSource = fs.readFileSync(path.resolve(__dirname, '../../src/main/page-files.ts'), 'utf8')
+  const diagnosticStart = diagnosticSource.indexOf('function diagnosticSnapshot(')
+  const diagnosticEnd = diagnosticSource.indexOf('/** Upload through', diagnosticStart)
+  assert.ok(diagnosticStart >= 0 && diagnosticEnd > diagnosticStart)
+  const safeDiagnostic = vm.runInNewContext(ts.transpileModule(diagnosticSource.slice(diagnosticStart, diagnosticEnd), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + '\ndiagnosticSnapshot')
+  const untrustedDiagnostic = JSON.parse(JSON.stringify(observedNoInput))
+  untrustedDiagnostic.text = 'private document body'
+  untrustedDiagnostic.composerCandidates[0].draft = 'private draft'
+  untrustedDiagnostic.fileInputs[0].filename = 'private filename'
+  untrustedDiagnostic.fileInputs[0].ancestors[0].text = 'private history'
+  untrustedDiagnostic.fileInputs[0].ancestors[0].id = 'private conversation id'
+  const retainedDiagnostic = safeDiagnostic(untrustedDiagnostic)
+  assert.equal(retainedDiagnostic.fileInputs[2].compatible, true)
+  assert.equal(retainedDiagnostic.fileInputs[5].ancestors[0].visibleComposers, 0)
+  assert.equal(retainedDiagnostic.composerCandidates[0].focused, true)
+  assert.doesNotMatch(JSON.stringify(retainedDiagnostic), /private|sample\.txt|上传/)
+  log('PASS six-input ambiguity diagnostics, hidden/active ownership, selected composer and metadata-only log filtering')
   const editor = new Element('textarea', {}, 'private draft')
   const toolbar = new Element('div', {}, '', [editor, new Element('button'), new Element('div', { role: 'button' })])
   const card = new Element('div', { role: 'button', title: 'full-document-name.md' }, 'codex_can_do.md')
@@ -124,6 +179,50 @@ async function main() {
   const rootStart = injectedSource.indexOf('  const attachmentHasMessages =')
   assert.ok(rootStart >= 0 && rootStart < pickerStart)
   const scopeApi = vm.runInContext(injectedSource.slice(rootStart, pickerStart) + '\n({attachmentRoot, attachmentSnapshot, draftAttachmentEvidence, attachmentNameEvidence})', scopeContext)
+  const findMeasuredInput = vm.runInContext(injectedSource.slice(pickerStart, inputDiagnosticStart) + '\nfindAttachmentInput', scopeContext)
+  // Follow-up at 13:03:42Z: active input owner depth 8, native form depth
+  // 10; a hidden old editor retains a second complete three-input group.
+  const measuredEditor = new Element('div', { contenteditable: 'true', 'data-composer-markdown': '' })
+  const measuredToolbar = new Element('div', {}, '', [measuredEditor, new Element('button'), new Element('button')])
+  let measuredBranch = measuredToolbar
+  for (let depth = 0; depth < 7; depth++) measuredBranch = new Element('div', {}, '', [measuredBranch])
+  const measuredInputs = makeInputGroup()
+  measuredInputs.forEach(input => { input.shown = false }) // Native inputs are intentionally hidden.
+  const measuredOwner = new Element('div', {}, '', [...measuredInputs, measuredBranch])
+  const measuredForm = new Element('form', {}, '', [new Element('div', {}, '', [measuredOwner])])
+  const oldInputs = makeInputGroup()
+  const oldEditor = new Element('div', { contenteditable: 'true', 'data-composer-markdown': '' })
+  oldEditor.shown = false
+  const oldForm = new Element('form', {}, '', [...oldInputs, oldEditor]); oldForm.shown = false
+  const measuredHistory = new Element('div', { 'data-content-search-unit-key': 'previous:user' }, 'unrelated-history-file.md')
+  const measuredBody = new Element('body', {}, '', [new Element('main', {}, '', [oldForm, measuredHistory, measuredForm])])
+  const originalScopePage = scopeContext.PAGE, originalScopeComposer = scopeContext.getComposer, originalScopeBody = scopeContext.document.body
+  scopeContext.PAGE = CHATGPT_PAGE; scopeContext.getComposer = () => measuredEditor; scopeContext.document.body = measuredBody
+  scopeContext.document.querySelectorAll = selector => scopeContext.document.body.querySelectorAll(selector)
+  assert.equal(scopeApi.attachmentRoot(), measuredForm, 'The active native form at depth 10 is included')
+  assert.equal(findMeasuredInput([textFile]), measuredInputs[2], 'Use the active general input with an old hidden editor present')
+  assert.equal(findMeasuredInput([image, textFile]), measuredInputs[2])
+  const measuredDotfiles = ['.bashrc', '.bash_history', '.bash_profile'].map(fileName => ({ fileName, mimeType: 'application/octet-stream' }))
+  assert.equal(findMeasuredInput(measuredDotfiles), measuredInputs[2], 'Dotfiles reach the unrestricted current input')
+  assert.doesNotMatch(scopeApi.attachmentSnapshot().text, /unrelated-history-file/)
+  measuredInputs[2].disabled = true
+  assert.equal(findMeasuredInput([textFile]), null, 'A disabled local input cannot borrow the old general input')
+  measuredInputs[2].disabled = false; measuredInputs[2].accept = '.pdf'
+  assert.equal(findMeasuredInput([textFile]), null, 'An incompatible local input cannot borrow the old general input')
+  measuredInputs[2].accept = ''; measuredInputs[2].multiple = false
+  assert.equal(findMeasuredInput(measuredDotfiles), null, 'A local single-file input cannot borrow a multiple-file input')
+  measuredInputs[2].multiple = true
+  const duplicateLocalInput = Object.assign(new Element('input', { type: 'file' }), generalInput)
+  measuredOwner.children.push(duplicateLocalInput); duplicateLocalInput.parentElement = measuredOwner
+  assert.equal(findMeasuredInput([textFile]), null, 'Two unrestricted inputs within the active scope remain ambiguous')
+  duplicateLocalInput.remove()
+  assert.equal(findMeasuredInput([textFile]), measuredInputs[2])
+  const deepHistory = new Element('div', { 'data-content-search-unit-key': 'hidden:user' })
+  measuredOwner.children.push(deepHistory); deepHistory.parentElement = measuredOwner
+  assert.equal(findMeasuredInput([textFile]), null, 'A history boundary cannot be crossed to pick either outside group')
+  deepHistory.remove()
+  scopeContext.PAGE = originalScopePage; scopeContext.getComposer = originalScopeComposer; scopeContext.document.body = originalScopeBody
+  log('PASS measured ChatGPT input depth 8/form depth 10, hidden duplicate composer, dotfile batches, local input authority and history/ambiguity guards')
   const imageDraftStart = injectedSource.indexOf('  const hasDraftImageAttachment =')
   const imageDraftEnd = injectedSource.indexOf('  const beginUserImageCapture =', imageDraftStart)
   assert.ok(imageDraftStart >= 0 && imageDraftEnd > imageDraftStart)

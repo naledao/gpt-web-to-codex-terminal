@@ -1,7 +1,9 @@
 /** Read-only browser observer. Serialized into the page; never clicks, types or submits. */
 module.exports = function captureAttachments(page, sampleNames, options = {}) {
   const isGemini = options.platformId === 'gemini'
-  const stateKey = isGemini ? '__geminiAttachmentProbe' : '__claudeAttachmentProbe'
+  const isChatGpt = options.platformId === 'chatgpt'
+  const captureNameParts = isGemini || options.captureNameParts === true
+  const stateKey = isGemini ? '__geminiAttachmentProbe' : isChatGpt ? '__chatgptAttachmentProbe' : '__claudeAttachmentProbe'
   const state = window[stateKey] || (window[stateKey] = {
     nodes: new WeakMap(), keys: new Map(), routes: new Map(), names: [], events: [],
     nextNode: 1, nextKey: 1, nextRoute: 1, sequence: 0, listening: false
@@ -24,7 +26,7 @@ module.exports = function captureAttachments(page, sampleNames, options = {}) {
   }
   sampleNames.forEach(rememberName)
   const nameMatches = value => state.names.flatMap((name, index) => String(value || '').includes(name) ? [index] : [])
-  // Gemini may render the basename and extension in separate children. These
+  // A site may render the basename and extension in separate children. These
   // flags discover that layout; a partial match is never an upload verdict.
   const namePartMatches = value => {
     const text = String(value || '').normalize('NFKC').toLowerCase()
@@ -34,20 +36,22 @@ module.exports = function captureAttachments(page, sampleNames, options = {}) {
       const extension = dot > 0 ? name.slice(dot + 1).normalize('NFKC').toLowerCase() : ''
       const stemMatch = !!stem && text.includes(stem)
       const extensionMatch = !!extension && text.includes(extension)
-      return stemMatch || extensionMatch ? [{ index, stemMatch, extensionMatch }] : []
+      const compactMatch = text.replace(/\s+/g, '').includes(name.normalize('NFKC').toLowerCase().replace(/\s+/g, ''))
+      return stemMatch || extensionMatch || compactMatch ? [{ index, stemMatch, extensionMatch, compactMatch }] : []
     })
   }
   // Report truncated-name candidates as evidence, without returning the displayed text.
   const truncatedNameCandidates = value => {
     const parts = String(value || '').trim().split(/\u2026|\.{3}/)
-    if (parts.length !== 2 || parts[0].length < 12) return []
+    if (parts.length !== 2 || parts[0].length < (options.allowShortTruncation === true ? 3 : 12)) return []
     const prefix = parts[0].normalize('NFKC')
     const suffix = parts[1].normalize('NFKC')
     const indices = state.names.flatMap((name, index) => name.normalize('NFKC').startsWith(prefix) && name.normalize('NFKC').endsWith(suffix) ? [index] : [])
     return indices.map(index => ({ index, prefixLength: prefix.length, suffixLength: suffix.length, ambiguous: indices.length > 1 }))
   }
   const composers = select(page.composerSelectors)
-  const composer = composers.find(node => node.getClientRects().length > 0) || composers[0]
+  const composer = (isChatGpt && composers.find(node => node.contains(document.activeElement) && node.getClientRects().length > 0)) ||
+    composers.find(node => node.getClientRects().length > 0) || composers[0]
   const messageSelectors = [...new Set([...page.messageSelectors, ...page.assistantSelectors, ...(page.fileUserTurnSelector ? [page.fileUserTurnSelector] : [])])]
   const messageNodes = [...new Set(select(messageSelectors).map(node => page.fileUserTurnSelector ? node.closest(page.fileUserTurnSelector) || node : node))]
   const assistantNodes = select(page.assistantSelectors)
@@ -106,8 +110,13 @@ module.exports = function captureAttachments(page, sampleNames, options = {}) {
     textNameMatches: nameMatches(node.textContent),
     truncatedNameCandidates: truncatedNameCandidates(node.textContent),
     labelNameMatches: nameMatches([node.getAttribute('title'), node.getAttribute('aria-label'), node.getAttribute('alt')].filter(Boolean).join(' ')),
-    ...(isGemini ? {
+    ...(captureNameParts ? {
       namePartMatches: namePartMatches(node.textContent), references: referenceEvidence(node),
+      labelNamePartMatches: namePartMatches([node.getAttribute('title'), node.getAttribute('aria-label'), node.getAttribute('alt')].filter(Boolean).join(' ')),
+      nameLayout: {
+        lineBreakCount: (String(node.textContent || '').match(/[\r\n]/g) || []).length,
+        ellipsisCount: (String(node.textContent || '').match(/…|\.{3}/g) || []).length
+      },
       ...(node.tagName.toLowerCase() === 'img' ? { image: imageShape(node) } : {})
     } : {}),
     controlTokens: node.matches(controlSelector) ? semanticTokens(node.getAttribute('aria-label') || node.getAttribute('title') || node.textContent) : [],
@@ -198,10 +207,13 @@ module.exports = function captureAttachments(page, sampleNames, options = {}) {
     composerRoots.push(parent)
   }
   const region = composerRoots[composerRoots.length - 1] || composer
+  const hasNameEvidence = node => nameMatches(node.textContent).length > 0 || truncatedNameCandidates(node.textContent).length > 0 ||
+    (captureNameParts && namePartMatches(node.textContent).some(match => match.stemMatch || match.compactMatch))
   const candidates = state.names.length ? query(document, '*').filter(node => {
     if (node.closest('script,style,input,textarea,[contenteditable="true"]')) return false
     const label = nameMatches([node.getAttribute('title'), node.getAttribute('aria-label'), node.getAttribute('alt')].filter(Boolean).join(' '))
-    return label.length > 0 || ((nameMatches(node.textContent).length > 0 || truncatedNameCandidates(node.textContent).length > 0) && ![...node.children].some(child => nameMatches(child.textContent).length > 0 || truncatedNameCandidates(child.textContent).length > 0))
+    const partialLabel = captureNameParts && namePartMatches([node.getAttribute('title'), node.getAttribute('aria-label'), node.getAttribute('alt')].filter(Boolean).join(' ')).some(match => match.stemMatch || match.compactMatch)
+    return label.length > 0 || partialLabel || (hasNameEvidence(node) && ![...node.children].some(hasNameEvidence))
   }) : []
   const statuses = [...new Set([...query(document, '[role="progressbar"],[role="status"],[role="alert"],[aria-busy="true"]'), ...customStatusNodes()])]
   const route = location.origin + location.pathname
@@ -220,14 +232,15 @@ module.exports = function captureAttachments(page, sampleNames, options = {}) {
   })
   return {
     schema: 1,
-    page: { origin: location.origin, routeAlias: state.routes.get(route), pathKind: (isGemini ? /^\/app\/[^/]+\/?$/.test(location.pathname) : /^\/chat\//.test(location.pathname)) ? 'conversation' : location.pathname === (isGemini ? '/app' : '/new') ? 'new' : 'other', readyState: document.readyState },
+    page: { origin: location.origin, routeAlias: state.routes.get(route), pathKind: (isGemini ? /^\/app\/[^/]+\/?$/.test(location.pathname) : isChatGpt ? /^\/c\//.test(location.pathname) : /^\/chat\//.test(location.pathname)) ? 'conversation' : location.pathname === (isGemini ? '/app' : isChatGpt ? '/' : '/new') ? 'new' : 'other', readyState: document.readyState },
+    ...(isChatGpt ? { viewport: { width: innerWidth, height: innerHeight, devicePixelRatio } } : {}),
     selectors: [...new Set([...page.composerSelectors, ...page.sendButtonSelectors, ...page.stopButtonSelectors, ...messageSelectors])].map(selector => ({ selector, count: query(document, selector).length })),
     markers: [...markerCounts].map(([marker, count]) => ({ marker, count })).sort((a, b) => b.count - a.count).slice(0, 80),
     customTags: [...customTags].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count).slice(0, 80),
     composer: composer ? { ...describe(composer), draftLength: String(composer.value ?? composer.innerText ?? '').length, draftEmpty: !String(composer.value ?? composer.innerText ?? '').trim(), ancestors: composerAncestors } : null,
     sendControls: select(page.sendButtonSelectors).map(describe), stopControls: select(page.stopButtonSelectors).map(describe),
     fileInputs: fileInputs.map(inputShape),
-    composerRegion: region ? { root: describe(region), tree: tree(region, { left: 100 }), controls: query(region, controlSelector).slice(-30).map(describe) } : null,
+    composerRegion: region ? { root: describe(region), tree: tree(region, { left: isChatGpt ? 180 : 100 }, 0, isChatGpt ? 9 : 5), controls: query(region, controlSelector).slice(-30).map(describe) } : null,
     ...(isGemini ? { attachmentDetails: {
       // Start at the observed native card roots so outer Angular wrappers don't
       // consume the depth budget. Sent images stay inside a user-query carousel.

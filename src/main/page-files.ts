@@ -40,12 +40,34 @@ function diagnosticSnapshot(value: unknown): Record<string, unknown> {
   })
   if (Array.isArray(snapshot.fileInputs)) result.fileInputs = snapshot.fileInputs.slice(0, 12).map((raw) => {
     const input = raw as Record<string, unknown>
-    return { accept: String(input.accept ?? '').slice(0, 500), multiple: !!input.multiple, disabled: !!input.disabled, nearComposer: !!input.nearComposer }
+    const safe: Record<string, unknown> = { accept: String(input.accept ?? '').slice(0, 500), multiple: !!input.multiple, disabled: !!input.disabled, nearComposer: !!input.nearComposer }
+    for (const key of ['index', 'compatible', 'selected', 'connected', 'hiddenAncestor']) {
+      if (typeof input[key] === 'boolean' || typeof input[key] === 'number') safe[key] = input[key]
+    }
+    if (Array.isArray(input.ancestors)) safe.ancestors = input.ancestors.slice(0, 16).map((raw) => {
+      const ancestor = raw as Record<string, unknown>
+      const row: Record<string, unknown> = {}
+      if (typeof ancestor.tag === 'string' && /^[a-z][a-z0-9-]{0,40}$/.test(ancestor.tag)) row.tag = ancestor.tag
+      for (const key of ['depth', 'visible', 'containsComposer', 'hasMessages', 'isForm', 'fileInputs', 'composers', 'visibleComposers']) {
+        if (typeof ancestor[key] === 'boolean' || typeof ancestor[key] === 'number') row[key] = ancestor[key]
+      }
+      return row
+    })
+    return safe
   })
-  if (Array.isArray(snapshot.attachmentAncestors)) result.attachmentAncestors = snapshot.attachmentAncestors.slice(0, 8).map((raw) => {
+  if (Array.isArray(snapshot.composerCandidates)) result.composerCandidates = snapshot.composerCandidates.slice(0, 12).map((raw) => {
+    const composer = raw as Record<string, unknown>
+    const safe: Record<string, unknown> = {}
+    if (composer.tag === 'textarea' || composer.tag === 'div') safe.tag = composer.tag
+    for (const key of ['index', 'visible', 'selected', 'focused']) {
+      if (typeof composer[key] === 'boolean' || typeof composer[key] === 'number') safe[key] = composer[key]
+    }
+    return safe
+  })
+  if (Array.isArray(snapshot.attachmentAncestors)) result.attachmentAncestors = snapshot.attachmentAncestors.slice(0, 16).map((raw) => {
     const ancestor = raw as Record<string, unknown>
     const safe: Record<string, boolean | number> = {}
-    for (const key of ['depth', 'hasMessages', 'isForm', 'selectedRoot', 'controls', 'images', 'textNameMatches', 'labelNameMatches']) {
+    for (const key of ['depth', 'hasMessages', 'isForm', 'selectedRoot', 'controls', 'fileInputs', 'visible', 'images', 'textNameMatches', 'labelNameMatches']) {
       if (typeof ancestor[key] === 'boolean' || typeof ancestor[key] === 'number') safe[key] = ancestor[key] as boolean | number
     }
     return safe
@@ -140,7 +162,7 @@ export async function sendPageFiles(
     const begin = await call('beginFileSend', token, attachments.map(({ fileName, mimeType, sizeBytes }) => ({ fileName, mimeType, sizeBytes })))
     log('begin-result', { result: begin ?? 'missing-handler' })
     if (begin !== 'ok' && begin !== 'resume') {
-      try { log('page-diagnostics', diagnosticSnapshot(await call('attachmentDiagnostics'))) } catch { log('page-diagnostics-unavailable') }
+      try { log('page-diagnostics', diagnosticSnapshot(await call('attachmentDiagnostics', attachments.map(({ fileName, mimeType, sizeBytes }) => ({ fileName, mimeType, sizeBytes }))))) } catch { log('page-diagnostics-unavailable') }
       return finish(begin === 'busy' || begin === 'no-composer' || begin === 'insert-failed' || begin === 'unsupported-file-type' ? begin : 'upload-failed', typeof begin === 'string' ? begin : 'missing-handler')
     }
     if (attachments.length) {

@@ -2527,10 +2527,12 @@
     }
     let candidate = null
     let root = composer.parentElement
-    for (let depth = 0; root && root !== document.body && depth < 8; depth += 1, root = root.parentElement) {
+    for (let depth = 0; root && root !== document.body && depth < 16; depth += 1, root = root.parentElement) {
       // Both sites can render cards above the toolbar; ChatGPT can also move
       // them OUTSIDE the native form after upload. A form is a candidate, not
       // a boundary. Widen only within the composer branch, never into history.
+      // The 2026-10-06 capture placed the active inputs at depth 8 and their
+      // native form at depth 10, beyond the former eight-ancestor limit.
       if (attachmentHasMessages(root)) break
       if (root.matches('form') || root.querySelectorAll(CONTROL_SELECTOR).length >= 2) candidate = root
     }
@@ -2643,7 +2645,48 @@
   }
   const findAttachmentInput = (files) => {
     const root = attachmentRoot()
-    return chooseAttachmentInput(files, root ? [...root.querySelectorAll('input[type="file"]')] : [], [...document.querySelectorAll('input[type="file"]')])
+    const nearby = root ? [...root.querySelectorAll('input[type="file"]')] : []
+    // A measured local input scope is authoritative, even when its controls
+    // are disabled or reject this type. Never borrow a hidden editor's input.
+    return chooseAttachmentInput(files, nearby, nearby.length ? nearby : [...document.querySelectorAll('input[type="file"]')])
+  }
+  const attachmentInputDiagnostics = (files, composer, root) => {
+    const inputs = [...document.querySelectorAll('input[type="file"]')]
+    const composers = [...new Set(PAGE.composerSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]))]
+    const nearby = root ? inputs.filter((input) => root.contains(input)) : []
+    const chosen = chooseAttachmentInput(files, nearby, nearby.length ? nearby : inputs)
+    return {
+      composerCandidates: composers.slice(0, 12).map((node, index) => ({
+        index, tag: node.tagName.toLowerCase(), visible: isVisibleElement(node),
+        selected: node === composer, focused: node === document.activeElement || node.contains(document.activeElement)
+      })),
+      fileInputs: inputs.slice(0, 12).map((input, index) => ({
+        index, accept: input.accept, multiple: input.multiple, disabled: input.disabled,
+        nearComposer: nearby.includes(input), compatible: chooseAttachmentInput(files, [input], [input]) === input,
+        selected: input === chosen, connected: input.isConnected,
+        hiddenAncestor: !!input.parentElement?.closest('[hidden], [inert], [aria-hidden="true"]'),
+        // File inputs are normally hidden. Inspect their owners rather than
+        // treating the input's own visibility as proof that it is inactive.
+        ancestors: (() => {
+          const rows = []
+          for (let node = input.parentElement, depth = 0; node && node !== document.body && depth < 16; node = node.parentElement, depth++) {
+            const containsComposer = !!composer && node.contains(composer)
+            const hasMessages = attachmentHasMessages(node)
+            rows.push({
+              depth, tag: node.tagName.toLowerCase(), visible: isVisibleElement(node),
+              containsComposer, hasMessages, isForm: node.matches('form'),
+              fileInputs: inputs.filter((item) => node.contains(item)).length,
+              composers: composers.filter((item) => node === item || node.contains(item)).length,
+              visibleComposers: composers.filter((item) => (node === item || node.contains(item)) && isVisibleElement(item)).length
+            })
+            // The first shared owner or transcript boundary is sufficient;
+            // no text, labels, IDs or page-wide tree is read into the log.
+            if (containsComposer || hasMessages) break
+          }
+          return rows
+        })()
+      }))
+    }
   }
   const fileUserTurnRoot = (node) => PAGE.fileUserTurnSelector
     ? node?.closest?.(PAGE.fileUserTurnSelector) || (PAGE.fileUserTurnFallbackSelector ? node?.closest?.(PAGE.fileUserTurnFallbackSelector) : null) || node : node
@@ -2872,7 +2915,7 @@
       input.setAttribute('data-codex-file-input', token)
       return true
     },
-    attachmentDiagnostics: () => {
+    attachmentDiagnostics: (files = fileSend?.files || []) => {
       const composer = getComposer()
       const root = attachmentRoot()
       const send = findSendButton()
@@ -2880,14 +2923,13 @@
       return {
         ...snapshot, composerFound: !!composer,
         rootIsForm: !!root?.matches('form'),
-        nameEvidence: attachmentNameEvidence(snapshot.text, fileSend?.files || []),
+        nameEvidence: attachmentNameEvidence(snapshot.text, files),
         sendFound: !!send, sendDisabled: send ? controlDisabled(send) : null,
         draftEmpty: composer ? collapse(readComposer(composer)) === '' : null, stopFound: !!findStopButton(),
         // Counts only: diagnostics never return file-card or conversation text.
         attachmentAncestors: (() => {
           const ancestors = []
-          const files = fileSend?.files || []
-          for (let node = composer?.parentElement, depth = 0; node && node !== document.body && depth < 8; node = node.parentElement, depth++) {
+          for (let node = composer?.parentElement, depth = 0; node && node !== document.body && depth < 16; node = node.parentElement, depth++) {
             const hasMessages = attachmentHasMessages(node)
             const isForm = node.matches('form')
             if (hasMessages) { ancestors.push({ depth, hasMessages: true, isForm }); break }
@@ -2895,6 +2937,8 @@
             ancestors.push({
               depth, hasMessages: false, isForm, selectedRoot: node === root,
               controls: node.querySelectorAll(CONTROL_SELECTOR).length,
+              fileInputs: node.querySelectorAll('input[type="file"]').length,
+              visible: isVisibleElement(node),
               images: node.querySelectorAll('img').length,
               textNameMatches: files.filter((file) => String(node.textContent || '').includes(file.fileName)).length,
               labelNameMatches: files.filter((file) => labels.includes(file.fileName)).length
@@ -2917,9 +2961,7 @@
           }
           return ancestors
         })(),
-        fileInputs: [...document.querySelectorAll('input[type="file"]')].map((input) => ({
-          accept: input.accept, multiple: input.multiple, disabled: input.disabled, nearComposer: !!root?.contains(input)
-        }))
+        ...attachmentInputDiagnostics(files, composer, root)
       }
     },
     submitFileSend(token) {

@@ -214,6 +214,42 @@ ancestor depths, the selected scope, control/image counts and filename-match cou
 in text or labels. It never records the matching text or labels themselves.
 `rootIsForm` and ancestor `isForm` flags distinguish the selected scope from the
 nearest native form, including cards rendered outside it.
+For the local 2026-10-06 `no-file-input` failure, the page reported six inputs:
+two identical sets of media, image and unrestricted inputs, all outside the chosen
+composer scope. No CDP selection or upload ran. The diagnostic now records each
+input's compatibility, selected/nearby flags and up to sixteen owner ancestors,
+including owner visibility, composer counts and the first shared composer owner
+or conversation boundary. Hidden native inputs are normal and their own visibility
+is not interpreted as inactivity. `composerCandidates` identifies the visible,
+focused and selected editor using indices/flags only. Composer ancestor rows now
+include input counts and extend to sixteen levels so an eight-level scope limit
+can be distinguished from a portal or a duplicate composer. A failed begin passes
+requested-file metadata to diagnostics for accurate compatibility flags; filename
+values remain excluded from the log. These additions observe the ambiguity and do
+not relax input selection or attachment readiness.
+
+For this input-entry failure, restart the normal app with `npm run dev`, wait until
+the reply has ended and the composer is empty, then click **重试回传** once on the
+failed file request (or repeat the request if it is no longer available). Keep the
+new `chatgpt-file-send-*.log`. No standalone probe is needed for this capture.
+The user-run offline `read-files-check.cjs` also covers the six-input diagnostic
+and filters private text/filename/ID fields from retained structural metadata.
+The follow-up `chatgpt-file-send-2026-10-06T13-03-42-268Z-41996.log` confirmed
+one hidden old composer and one visible/focused current composer. The current
+three-input owner was at composer ancestor depth 8 and its native form at depth
+10; the previous limit inspected only depths 0–7. The bounded attachment scope
+now inspects up to sixteen ancestors, retaining the conversation/body boundaries.
+When this scope has native file inputs, it is authoritative even when they are
+disabled, incompatible or unable to select multiple files; the picker cannot
+fall back to the old editor's inputs. Two ambiguous unrestricted inputs inside
+the current scope still block selection. Offline fixtures exercise this measured
+depth/duplicate-composer layout, original dotfile names, native hidden inputs,
+and those guards. After the user runs `node tools/diag/read-files-check.cjs`, restart
+with `npm run dev` and retry the file request. Expect the CDP selection phase and
+attachment cards to appear, followed by upload-ready/submission/confirmation.
+If a later phase fails, retain the same automatically generated phase log;
+build/offline success alone does not establish successful live uploads.
+
 `nameEvidence` reports each attachment's index, filename length and matching method
 (`exact`, `normalized`, `truncated`, `image` or `missing`). It contains no filenames
 or card text. Only a unique truncated prefix/suffix of at least 12 visible prefix
@@ -252,6 +288,35 @@ Log: `%TEMP%\gpt-login-diag\<platform>-attachments-<timestamp>.log`.
 The proxy defaults to `http://127.0.0.1:7897`; `PROBE_PROXY`, `PROBE_USER_DATA` and
 `PROBE_PARTITION` override the probe process only. Use application testing to
 confirm the CDP upload path; an observed file input is not proof of a successful upload.
+
+### Focused draft capture: uploaded cards not recognized
+
+For uploaded ChatGPT cards that stay in the composer while the automatic send log
+shows `uploading=false`, an enabled Send and `namesSeen=false`, use the focused
+draft capture first. It can run on the current computer; if that layout works,
+repeat on the computer that produced the failure with the same repository version.
+The user runs and operates it, with the normal app closed:
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\attachments-probe.js --draft
+```
+
+The command prints a directory containing three harmless Markdown samples with
+short, long and Chinese/space filenames. Open a new conversation, wait five seconds,
+select those three files manually, then leave the completed cards in the composer
+for fifteen seconds before sending. Adjust the window width once if filenames
+become shortened. Finally send manually, wait for the reply and ten more seconds,
+then close the probe. Logs stay at `%TEMP%\gpt-login-diag\chatgpt-attachments-*.log`.
+
+`draftStructure` adds the visible/focused composer, a deeper bounded composer tree,
+filename nodes and sixteen ancestor levels, basename/extension/whitespace-joined
+name flags, label/reference matches, short ellipsis candidates, progress markers,
+manual selection/click/Enter events, node aliases and viewport dimensions.
+Short/partial matches are discovery evidence only; this does not loosen the app's
+ready or confirmation checks. The probe records app/Electron/Chrome versions for
+comparison between computers. Filename text, drafts, document bytes, cookie values
+and raw conversation routes are excluded. It does not automate any file selection
+or submission, and this observer does not verify the normal app's CDP send path.
 
 ### Attachment-only messages missing from the turn selectors
 

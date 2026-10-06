@@ -5,6 +5,7 @@ const path = require('node:path')
 const Module = require('node:module')
 const ts = require('typescript')
 const captureAttachmentStructure = require('./attachment-structure.cjs')
+const captureAttachments = require('./attachment-capture.cjs')
 
 // Read the app's actual adapter; do not maintain a second set of website selectors.
 function load(relative) {
@@ -22,6 +23,8 @@ function load(relative) {
 const { CHATGPT_PLATFORM, DEEPSEEK_PLATFORM } = load('src/shared/platforms.ts')
 const platformId = process.argv.includes('deepseek') ? 'deepseek' : 'chatgpt'
 const platform = platformId === 'deepseek' ? DEEPSEEK_PLATFORM : CHATGPT_PLATFORM
+const inspectDraft = process.argv.includes('--draft')
+if (inspectDraft && platformId !== 'chatgpt') throw new Error('--draft 用于 ChatGPT 上传完成后的附件卡片诊断')
 const knownNames = []
 for (let index = 2; index < process.argv.length; index++) {
   if (process.argv[index] !== '--file-name') continue
@@ -39,6 +42,16 @@ const sampleName = `attach-probe-${Date.now()}-${process.pid}${platformId === 'd
 const sampleFile = path.join(logDir, sampleName)
 fs.writeFileSync(sampleFile, 'Attachment upload diagnostic sample.\nThis file contains no private data.\n', { encoding: 'utf8', flag: 'wx' })
 knownNames.push(sampleName)
+let sampleDirectory = null
+if (inspectDraft) {
+  sampleDirectory = path.join(logDir, `chatgpt-draft-samples-${Date.now()}-${process.pid}`)
+  fs.mkdirSync(sampleDirectory)
+  const draftNames = ['sample-short.md', 'sample-long-attachment-card-name-for-diagnostic.md', '附件诊断 带空格的测试文件.md']
+  draftNames.forEach(name => {
+    fs.writeFileSync(path.join(sampleDirectory, name), '# Attachment diagnostic\n\nHarmless local sample. Reply with OK only.\n', { encoding: 'utf8', flag: 'wx' })
+    knownNames.push(name)
+  })
+}
 const logFile = path.join(logDir, `${platformId}-attachments-${new Date().toISOString().replace(/[:.]/g, '-')}.log`)
 const log = (event, data = {}) => fs.appendFileSync(logFile, `${new Date().toISOString()} ${event} ${JSON.stringify(data)}\n`)
 const source = fs.readFileSync(path.join(__dirname, '../../src/main/injected/send-interceptor.js'), 'utf8')
@@ -79,7 +92,9 @@ app.whenReady().then(async () => {
         const api = window.__cmdTerminalInterceptor;
         const diagnostic = api?.attachmentDiagnostics?.() || {};
         const page = ${JSON.stringify(platform.page)};
-        const composer = page.composerSelectors.map(selector => document.querySelector(selector)).find(Boolean);
+        const composers = [...new Set(page.composerSelectors.flatMap(selector => [...document.querySelectorAll(selector)]))];
+        const visible = node => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden' && !node.closest('[hidden],[inert],[aria-hidden="true"]');
+        const composer = composers.find(node => visible(node) && node.contains(document.activeElement)) || composers.find(visible);
         const fileInputs = [...document.querySelectorAll('input[type="file"]')];
         const selectedNames = window.__attachmentProbeNames || (window.__attachmentProbeNames = new Set());
         ${JSON.stringify(knownNames)}.forEach(name => selectedNames.add(name));
@@ -93,20 +108,21 @@ app.whenReady().then(async () => {
         fileInputs.forEach(input => [...(input.files || [])].forEach(file => selectedNames.add(file.name)));
         const ancestors = [];
         const ancestorNodes = [];
-        for (let parent = composer?.parentElement, depth = 0; parent && parent !== document.body && depth < 8; parent = parent.parentElement, depth++) {
+        for (let parent = composer?.parentElement, depth = 0; parent && parent !== document.body && depth < 16; parent = parent.parentElement, depth++) {
           ancestors.push({ tag: parent.tagName, classes: String(parent.className || '').slice(0, 200), controls: parent.querySelectorAll('button,[role="button"]').length, inputs: parent.querySelectorAll('input[type="file"]').length, images: parent.querySelectorAll('img').length });
           ancestorNodes.push(parent);
         }
         const root = ancestorNodes[diagnostic.attachmentAncestors?.find(node => node.selectedRoot)?.depth] || null;
         const turns = [...new Set(page.messageSelectors.flatMap(selector => [...document.querySelectorAll(selector)]))].slice(-4);
         return {
-          page: location.origin + location.pathname,
+          page: location.origin,
           platformId: ${JSON.stringify(platformId)}, ancestors,
           state: { rootFound: diagnostic.rootFound, composerFound: diagnostic.composerFound, sendFound: diagnostic.sendFound, sendDisabled: diagnostic.sendDisabled, images: diagnostic.images, uploading: diagnostic.uploading, error: diagnostic.error, inputFiles: diagnostic.inputFiles, previewTextLength: String(diagnostic.text || '').length },
-          inputs: [...document.querySelectorAll('input[type="file"]')].map(input => ({ accept: input.accept, multiple: input.multiple, disabled: input.disabled, ancestorTags: [input.parentElement?.tagName, input.parentElement?.parentElement?.tagName], files: [...(input.files || [])].map(file => ({ name: file.name, type: file.type, size: file.size })) })),
-          controls: root ? [...root.querySelectorAll('button,[role="button"]')].map(button => ({ tag: button.tagName, classes: String(button.className || '').slice(0, 200), aria: button.getAttribute('aria-label'), testid: button.getAttribute('data-testid'), disabled: button.disabled === true || button.getAttribute('aria-disabled') === 'true' || (page.disabledControlSelectors || []).some(selector => button.matches(selector)) })) : [],
+          inputs: [...document.querySelectorAll('input[type="file"]')].map(input => ({ accept: input.accept, multiple: input.multiple, disabled: input.disabled, ancestorTags: [input.parentElement?.tagName, input.parentElement?.parentElement?.tagName], files: [...(input.files || [])].map(file => ({ nameIndex: [...selectedNames].indexOf(file.name), nameLength: file.name.length, type: file.type, size: file.size })) })),
+          controls: root ? [...root.querySelectorAll('button,[role="button"]')].map(button => ({ tag: button.tagName, classes: String(button.className || '').slice(0, 200), ariaLength: String(button.getAttribute('aria-label') || '').length, testid: button.getAttribute('data-testid'), disabled: button.disabled === true || button.getAttribute('aria-disabled') === 'true' || (page.disabledControlSelectors || []).some(selector => button.matches(selector)) })) : [],
           progress: root ? [...root.querySelectorAll('[role="progressbar"],[aria-busy="true"]')].map(node => ({ tag: node.tagName, role: node.getAttribute('role'), busy: node.getAttribute('aria-busy') })) : [],
           messageStructure: (${captureAttachmentStructure.toString()})(page, [...selectedNames]),
+          ${inspectDraft ? `draftStructure: (${captureAttachments.toString()})(page, [...selectedNames], { platformId: 'chatgpt', captureNameParts: true, allowShortTruncation: true }),` : ''}
           turns: turns.map(node => {
             const key = page.fileTurnPositionAttr ? String(node.getAttribute(page.fileTurnPositionAttr) || '').trim() : '';
             const numeric = /^[0-9]+$/.test(key) && Number.isSafeInteger(Number(key));
@@ -127,10 +143,15 @@ app.whenReady().then(async () => {
   }
   timer = setInterval(inspect, 1000)
   const cookies = await pageSession.cookies.get({ url: platform.homeUrl })
-  log('START', { platformId, partition, knownFilenameCount: knownNames.length, cookies: cookies.map(cookie => `${cookie.name}(len=${cookie.value.length})`), proxy: process.env.PROBE_PROXY || 'http://127.0.0.1:7897' })
+  log('START', { platformId, partition, inspectDraft, appVersion: require('../../package.json').version, electron: process.versions.electron, chrome: process.versions.chrome, knownFilenameCount: knownNames.length, cookies: cookies.map(cookie => `${cookie.name}(len=${cookie.value.length})`), proxy: process.env.PROBE_PROXY || 'http://127.0.0.1:7897' })
   console.log(`附件探针日志：${logFile}`)
-  console.log(`已生成无敏感内容的测试文件：${sampleFile}`)
-  console.log(inspectExisting ? '先手动打开已有附件的那条会话，等 10 秒。然后可以手动上传上面的测试文件并发送，回复结束后再等 10 秒并关闭窗口。已有附件结构也会被采集。' : '请手动上传上面的测试文件并发送，回复结束后等 10 秒再关闭窗口；也可手动再试图片。探针只观察。')
+  if (inspectDraft) {
+    console.log(`已生成三个无敏感内容的 Markdown 样本：${sampleDirectory}`)
+    console.log('进入新对话，先等 5 秒；手动选择这三个 .md 文件。上传完成后先不要发送，保持卡片在输入框内 15 秒。再手动点发送，回复结束后等 10 秒再关闭探针。可调整窗口宽度观察文件名省略。探针只观察。')
+  } else {
+    console.log(`已生成无敏感内容的测试文件：${sampleFile}`)
+    console.log(inspectExisting ? '先手动打开已有附件的那条会话，等 10 秒。然后可以手动上传上面的测试文件并发送，回复结束后再等 10 秒并关闭窗口。已有附件结构也会被采集。' : '请手动上传上面的测试文件并发送，回复结束后等 10 秒再关闭窗口；也可手动再试图片。探针只观察。')
+  }
   await contents.loadURL(platform.homeUrl)
 }).catch(error => { log('FATAL', { message: error.message }); app.quit() })
 app.on('window-all-closed', () => { clearInterval(timer); log('END'); app.quit() })
