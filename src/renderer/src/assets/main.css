@@ -12895,21 +12895,26 @@ body {
   color: #c0392b;
 }
 
-.mysql-page__foot {
-  flex: none;
+/*
+ * The actions that belong to ONE open connection: save, or close just this page.
+ *
+ * They sit inside the card rather than in a bar across the whole dialog, because they act
+ * on the page on screen — a bar at the bottom reads as if it saved everything, and with
+ * several tabs open that is the wrong thing to believe.
+ */
+.mysql-page__card-foot {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 18px;
+  margin-top: 18px;
+  padding-top: 16px;
   border-top: 1px solid #eef1f6;
-  background: #fff;
 }
 
-.mysql-page__foot-hint {
+.mysql-page__card-foot-hint {
   font-size: 12px;
   color: #8a93a6;
 }
-
 .mysql-page__btn {
   padding: 8px 16px;
   border: 1px solid #d8dde8;
@@ -13168,15 +13173,13 @@ body {
   background: #3a1e1e;
   color: #ff8a7a;
 }
-.workspace[data-theme='dark'] .mysql-page__foot {
+.workspace[data-theme='dark'] .mysql-page__card-foot {
   border-top-color: #1d2531;
-  background: #10151d;
 }
 
-.workspace[data-theme='dark'] .mysql-page__foot-hint {
+.workspace[data-theme='dark'] .mysql-page__card-foot-hint {
   color: #7d8aa0;
 }
-
 .workspace[data-theme='dark'] .mysql-page__btn {
   border-color: #2a3444;
   background: #161d28;

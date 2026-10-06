@@ -651,28 +651,11 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     </p>
                   ) : null}
                 </div>
+                <div className="mysql-page__card-foot">                   <span className="mysql-page__card-foot-hint">                     {savedNow ? '已保存到本机' : '有改动尚未保存'}                   </span>                   <span className="panel__spacer" />                   <button                     type="button"                     className="mysql-page__btn"                     title="关闭这个页面，连接仍保留在左侧列表"                     onClick={() => {                       if (activeTab !== null) closeTab(activeTab.key)                     }}                   >                     关闭                   </button>                   <button                     type="button"                     className="mysql-page__btn mysql-page__btn--primary"                     disabled={saving || savedNow || activeForm.database.trim() === ''}                     onClick={() => void save()}                   >                     {saving ? '保存中…' : '保存'}                   </button>                 </div>
               </div>
             )}
           </section>
         </div>
-
-        <footer className="mysql-page__foot">
-          <span className="mysql-page__foot-hint">
-            MySQL 连接按机器分别保存，可以存多条；标签页只是本次打开，重启后从左侧列表重新打开。
-          </span>
-          <span className="panel__spacer" />
-          <button type="button" className="mysql-page__btn" onClick={onClose}>
-            关闭
-          </button>
-          <button
-            type="button"
-            className="mysql-page__btn mysql-page__btn--primary"
-            disabled={activeForm === null || saving || savedNow || activeForm.database.trim() === ''}
-            onClick={() => void save()}
-          >
-            {saving ? '保存中…' : '保存'}
-          </button>
-        </footer>
       {/*
         Deleting is irreversible, so it goes through the project own confirm dialog rather
         than window.confirm: same styling and theme as everything else, and it can name
