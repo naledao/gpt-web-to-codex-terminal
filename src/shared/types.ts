@@ -108,6 +108,7 @@ export const IpcChannels = {
   mysqlConnList: 'mysql-conn:list',
   mysqlConnSave: 'mysql-conn:save',
   mysqlConnRemove: 'mysql-conn:remove',
+  mysqlConnListDatabases: 'mysql-conn:list-databases',
   mysqlConnChanged: 'mysql-conn:changed'
 } as const
 
@@ -1467,7 +1468,14 @@ export interface MysqlConnectionDraft {
 }
 
 /** Every saved connection for one machine, plus whose machine it is. */
-export interface MysqlConnectionsState {
+/** Result of asking a connection which databases it can see. */
+export interface MysqlDatabaseList {
+  ok: boolean
+  /** Database names, sorted; empty when ok is false. */
+  databases: string[]
+  /** Human-readable failure reason, shown in the dropdown itself. */
+  message: string
+}export interface MysqlConnectionsState {
   /** Display name of the machine these belong to, for the dialog header. */
   machineLabel: string
   connections: MysqlConnection[]
@@ -1683,6 +1691,8 @@ export interface AppApi {
   saveMysqlConnection(draft: MysqlConnectionDraft): Promise<MysqlSaveResult>
   /** Delete one connection by id. */
   removeMysqlConnection(id: string): Promise<MysqlConnectionsState>
+  /** Ask one connection which databases it can see. Does not save anything. */
+  listMysqlDatabases(draft: MysqlConnectionDraft): Promise<MysqlDatabaseList>
   onMysqlConnectionChanged(listener: (state: MysqlConnectionsState) => void): () => void
 
   /** Saved SSH targets, newest first. */

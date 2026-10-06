@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { createConnection } from 'mysql2/promise'
+import type { Connection } from 'mysql2/promise'
 import { BrowserWindow, Notification, safeStorage } from 'electron'
 import {
   FALLBACK_ENVIRONMENT,
@@ -26,6 +28,7 @@ import type {
   ManagedSessionSummary,
   MysqlConnectionDraft,
   MysqlConnectionsState,
+  MysqlDatabaseList,
   MysqlSaveResult,
   ParsedAction,
   SshHost,
@@ -185,6 +188,35 @@ function decryptSecret(secret: string): string {
   }
 }
 
+/**
+ * Turn a mysql2 failure into one line a user can act on.
+ *
+ * mysql2 errors carry a `code` for the common causes (bad password, host unreachable,
+ * unknown host) and a message that is already specific; the code is what makes the
+ * difference between "it failed" and "the password is wrong". Anything without a code
+ * falls back to the message, so an unexpected failure is still readable rather than blank.
+ */
+function mysqlErrorMessage(error: unknown): string {
+  const record = error as { code?: unknown; message?: unknown }
+  const message = typeof record?.message === 'string' ? record.message.trim() : ''
+  switch (record?.code) {
+    case 'ER_ACCESS_DENIED_ERROR':
+      return `用户名或密码不正确。${message}`
+    case 'ER_DBACCESS_DENIED_ERROR':
+      return `当前用户没有查看数据库的权限。${message}`
+    case 'ECONNREFUSED':
+      return `无法连接：目标端口拒绝连接，请确认 MySQL 已启动并允许远程访问。${message}`
+    case 'ETIMEDOUT':
+    case 'PROTOCOL_SEQUENCE_TIMEOUT':
+      return `连接超时：请确认主机地址、端口和防火墙设置。${message}`
+    case 'ENOTFOUND':
+      return `找不到主机：请检查主机地址是否正确。${message}`
+    case 'ER_NOT_SUPPORTED_AUTH_MODE':
+      return `服务器要求的认证方式不受支持。${message}`
+    default:
+      return message === '' ? '连接失败，请检查连接信息。' : message
+  }
+}
 function normalizeProxy(raw: string): string {
   const trimmed = raw.trim()
   if (trimmed === '') return ''
@@ -1096,6 +1128,60 @@ export class SessionRuntime {
   }
 
   /** Read every stored connection for the machine in charge and decrypt its password. */
+  /**
+   * Ask one connection which databases it can see.
+   *
+   * This is the first thing in the app that actually talks to MySQL. It opens a
+   * short-lived connection, runs SHOW DATABASES, and closes it — nothing is cached and
+   * nothing is written, so a failure here cannot leave the stored connection changed.
+   *
+   * An empty password means "use the stored one" for an existing row, the same rule the
+   * save path uses, so the dropdown works on a connection that was opened without
+   * retyping its password.
+   */
+  async listMysqlDatabases(draft: MysqlConnectionDraft): Promise<MysqlDatabaseList> {
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const host = String(draft?.host ?? '').trim()
+    if (host === '') return { ok: false, databases: [], message: '请先填写主机地址。' }
+
+    const typed = String(draft?.password ?? '')
+    let password = typed
+    if (password === '' && typeof draft?.id === 'string' && draft.id.trim() !== '') {
+      const stored = this.options.store
+        .listMysqlConnections(this.environmentScope.scope, machineKey)
+        .find((row) => row.id === draft.id.trim())
+      password = stored && stored.secret !== '' ? decryptSecret(stored.secret) : ''
+    }
+
+    const rawPort = Number(draft?.port)
+    const port = Number.isFinite(rawPort) && rawPort > 0 ? Math.trunc(rawPort) : 3306
+    let connection: Connection | null = null
+    try {
+      connection = await createConnection({
+        host,
+        port,
+        user: String(draft?.username ?? '').trim(),
+        password,
+        // No database: the point is to list them, and naming one that does not exist
+        // would fail the connection outright.
+        connectTimeout: 8000
+      })
+      const [rows] = await connection.query('SHOW DATABASES')
+      const databases = (Array.isArray(rows) ? rows : [])
+        .map((row) => {
+          const record = row as Record<string, unknown>
+          const value = record.Database ?? Object.values(record)[0]
+          return typeof value === 'string' ? value : ''
+        })
+        .filter((name) => name !== '')
+        .sort((left, right) => left.localeCompare(right))
+      return { ok: true, databases, message: '' }
+    } catch (error) {
+      return { ok: false, databases: [], message: mysqlErrorMessage(error) }
+    } finally {
+      if (connection) await connection.end().catch(() => undefined)
+    }
+  }
   private readMysqlConnectionsState(): MysqlConnectionsState {
     const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
     const connections = this.options.store.listMysqlConnections(this.environmentScope.scope, machineKey).map((row) => ({

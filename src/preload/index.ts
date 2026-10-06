@@ -23,6 +23,7 @@ import type {
 
   MysqlConnectionDraft,
   MysqlConnectionsState,
+  MysqlDatabaseList,
   MysqlSaveResult,
   WorkspaceState,
   SessionImportDraft,
@@ -346,6 +347,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
 
   saveMysqlConnection: (draft: MysqlConnectionDraft): Promise<MysqlSaveResult> =>
     ipcRenderer.invoke(IpcChannels.mysqlConnSave, draft),
+
+  listMysqlDatabases: (draft: MysqlConnectionDraft): Promise<MysqlDatabaseList> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnListDatabases, draft),
 
   removeMysqlConnection: (id: string): Promise<MysqlConnectionsState> =>
     ipcRenderer.invoke(IpcChannels.mysqlConnRemove, id),

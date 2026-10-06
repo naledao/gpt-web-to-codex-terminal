@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import ConfirmDialog from './ConfirmDialog'
-import type { AppTheme, MysqlConnection, MysqlConnectionDraft, MysqlConnectionsState } from '../../../shared/types'
+import type { AppTheme, MysqlConnection, MysqlConnectionDraft, MysqlConnectionsState, MysqlDatabaseList } from '../../../shared/types'
 
 interface MysqlDialogProps {
   open: boolean
@@ -125,6 +125,11 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const databaseRef = useRef<HTMLInputElement>(null)
   /** The connection a delete is waiting on; non-null while the confirm dialog is up. */
   const [pendingDelete, setPendingDelete] = useState<MysqlConnection | null>(null)
+  /** The database picker: whether it is open, what it is fetching, and what came back. */
+  const [dbPickerOpen, setDbPickerOpen] = useState(false)
+  const [dbLoading, setDbLoading] = useState(false)
+  const [dbResult, setDbResult] = useState<MysqlDatabaseList | null>(null)
+  const dbBoxRef = useRef<HTMLSpanElement>(null)
 
   const connections = state?.connections ?? []
   const machineLabel = state?.machineLabel ?? ''
@@ -219,6 +224,31 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     [activeKey]
   )
 
+  /**
+   * Open the database dropdown, fetching the list on the way in.
+   *
+   * The fetch is done on open rather than on mount because it is a real network
+   * round trip: a page with three saved connections would otherwise make three
+   * connections nobody asked for. The result stays until the form is closed, so
+   * reopening the dropdown does not hit the server again.
+   */
+  const openDatabasePicker = useCallback(async (): Promise<void> => {
+    if (activeForm === null || dbLoading) return
+    if (dbPickerOpen) {
+      setDbPickerOpen(false)
+      return
+    }
+    setDbPickerOpen(true)
+    if (dbResult !== null) return
+    setDbLoading(true)
+    try {
+      setDbResult(await window.api.listMysqlDatabases(draftFromForm(activeForm)))
+    } catch {
+      setDbResult({ ok: false, databases: [], message: '连接失败，请检查连接信息。' })
+    } finally {
+      setDbLoading(false)
+    }
+  }, [activeForm, dbLoading, dbPickerOpen, dbResult])
   const save = useCallback(async (): Promise<void> => {
     if (saving || activeForm === null || activeTab === null) return
     // A connection with no database is not usable later, so it is refused here rather
@@ -252,6 +282,23 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     }
   }, [activeForm, activeTab, saving])
 
+  // A new page starts with the picker closed and nothing fetched: the list belongs to
+  // the connection that was open when it arrived.
+  useEffect(() => {
+    setDbPickerOpen(false)
+    setDbResult(null)
+    setDbLoading(false)
+  }, [activeKey])
+
+  // Clicking anywhere else closes the dropdown, the way a select behaves.
+  useEffect(() => {
+    if (!dbPickerOpen) return
+    const onPointerDown = (event: PointerEvent): void => {
+      if (dbBoxRef.current && !dbBoxRef.current.contains(event.target as Node)) setDbPickerOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [dbPickerOpen])
   /**
    * Delete the connection the confirm dialog is showing.
    *
@@ -499,21 +546,93 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     </span>
                   </label>
 
-                  <label className="mysql-page__field mysql-page__field--wide">
+                  <div className="mysql-page__field mysql-page__field--wide">
                     <span className="mysql-page__label">
                       默认数据库
                       <span className="mysql-page__required">必填</span>
                     </span>
-                    <input
-                      className="mysql-page__input"
-                      ref={databaseRef}
-                      value={activeForm.database}
-                      spellCheck={false}
-                      required
-                      placeholder="例如：myapp_dev（必填）"
-                      onChange={(event) => updateForm({ database: event.target.value })}
-                    />
-                  </label>
+                    <span className="mysql-page__db" ref={dbBoxRef}>
+                      <input
+                        className="mysql-page__input"
+                        ref={databaseRef}
+                        value={activeForm.database}
+                        spellCheck={false}
+                        required
+                        placeholder="例如：myapp_dev（必填），或点右侧查看"
+                        onChange={(event) => {
+                          setDbResult(null)
+                          updateForm({ database: event.target.value })
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className={dbPickerOpen ? 'mysql-page__db-btn mysql-page__db-btn--on' : 'mysql-page__db-btn'}
+                        aria-haspopup="listbox"
+                        aria-expanded={dbPickerOpen}
+                        title="连接这台服务器并列出可选的数据库"
+                        onClick={() => void openDatabasePicker()}
+                      >
+                        {dbLoading ? '查询中…' : dbPickerOpen ? '收起' : '查看数据库'}
+                      </button>
+                      {dbPickerOpen ? (
+                        <div className="mysql-page__db-menu" role="listbox" aria-label="数据库列表">
+                          {dbLoading ? (
+                            <p className="mysql-page__db-note">正在连接服务器并读取数据库列表…</p>
+                          ) : dbResult === null ? null : !dbResult.ok ? (
+                            <p className="mysql-page__db-note mysql-page__db-note--error">{dbResult.message}</p>
+                          ) : dbResult.databases.length === 0 ? (
+                            <p className="mysql-page__db-note">这个账号看不到任何数据库。</p>
+                          ) : (
+                            <>
+                              <div className="mysql-page__db-head">
+                                <span>共 {dbResult.databases.length} 个</span>
+                                <button
+                                  type="button"
+                                  className="mysql-page__db-refresh"
+                                  title="重新连接并刷新列表"
+                                  onClick={() => {
+                                    setDbResult(null)
+                                    void openDatabasePicker()
+                                  }}
+                                >
+                                  刷新
+                                </button>
+                              </div>
+                              <ul className="mysql-page__db-list">
+                                {dbResult.databases.map((name) => (
+                                  <li key={name}>
+                                    <button
+                                      type="button"
+                                      role="option"
+                                      aria-selected={activeForm.database === name}
+                                      className={
+                                        activeForm.database === name
+                                          ? 'mysql-page__db-item mysql-page__db-item--active'
+                                          : 'mysql-page__db-item'
+                                      }
+                                      onClick={() => {
+                                        updateForm({ database: name })
+                                        setDbPickerOpen(false)
+                                      }}
+                                    >
+                                      <span className="mysql-page__db-icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                          <ellipse cx="12" cy="5.6" rx="7.2" ry="2.8" />
+                                          <path d="M4.8 5.6v12.8c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8V5.6" />
+                                          <path d="M4.8 12c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8" />
+                                        </svg>
+                                      </span>
+                                      <span className="mysql-page__db-name">{name}</span>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+                    </span>
+                  </div>
 
                   <p className="mysql-page__hint mysql-page__hint--note mysql-page__field--wide">
                     密码会用系统加密后保存在本机数据库，不会明文写入。

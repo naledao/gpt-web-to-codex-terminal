@@ -47,6 +47,7 @@ import type {
 
   MysqlConnectionDraft,
   MysqlConnectionsState,
+  MysqlDatabaseList,
   MysqlSaveResult,
   UpdateStatus
 } from '../shared/types'
@@ -1121,6 +1122,7 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(IpcChannels.mysqlConnList, (event): MysqlConnectionsState => runtimeForEvent(event)?.listMysqlConnections() ?? EMPTY_MYSQL)
   ipcMain.handle(IpcChannels.mysqlConnSave, (event, draft: MysqlConnectionDraft): MysqlSaveResult => runtimeForEvent(event)?.saveMysqlConnection(draft) ?? { ...EMPTY_MYSQL, id: '' })
+  ipcMain.handle(IpcChannels.mysqlConnListDatabases, (event, draft: MysqlConnectionDraft): Promise<MysqlDatabaseList> => runtimeForEvent(event)?.listMysqlDatabases(draft) ?? Promise.resolve({ ok: false, databases: [], message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnRemove, (event, id: string): MysqlConnectionsState => runtimeForEvent(event)?.removeMysqlConnection(id) ?? EMPTY_MYSQL)
 
   ipcMain.handle(IpcChannels.sshGetState, (event): SshState => runtimeForEvent(event)?.ssh.getState() ?? { ...EMPTY_SSH_STATE })
