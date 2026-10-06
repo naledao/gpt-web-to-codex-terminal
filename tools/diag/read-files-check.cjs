@@ -138,6 +138,52 @@ async function main() {
   panel.tagName = 'FORM'
   assert.equal(scopeApi.attachmentRoot(), panel)
   log('PASS file cards above toolbar, clickable card text, full-name labels, draft protection and conversation boundary')
+  // 2026-10-06 raw-send log: no files/images/upload, but attachment-draft.
+  // The 2026-10-05 capture measured the model button's Chinese aria-label.
+  // Exercise the real snapshot and guard with version text and nested labels.
+  const chatGptEditor = new Element('div', { contenteditable: 'true', 'data-composer-markdown': '' }, '\n')
+  const chatGptModel = new Element('button', { 'aria-label': '选择 ChatGPT 模型', title: 'GPT-6.1' }, '', [
+    new Element('span', { title: 'long-toolbar-model-label…', 'aria-label': 'toolbar-hint.md' }, 'GPT-6.1 Sol 中')
+  ])
+  const chatGptPanel = new Element('form', {}, '', [chatGptEditor, chatGptModel, new Element('button')])
+  const chatGptHistory = new Element('div', { 'data-content-search-unit-key': 'history:user' }, 'old-history-file.md')
+  scopeContext.PAGE = CHATGPT_PAGE; scopeContext.getComposer = () => chatGptEditor
+  scopeContext.document.body = new Element('body', {}, '', [new Element('main', {}, '', [chatGptHistory, chatGptPanel])])
+  scopeContext.document.querySelectorAll = selector => scopeContext.document.body.querySelectorAll(selector)
+  assert.equal(scopeApi.attachmentRoot(), chatGptPanel)
+  const emptyChatGptSnapshot = scopeApi.attachmentSnapshot()
+  assert.equal(emptyChatGptSnapshot.inputFiles, 0)
+  assert.equal(emptyChatGptSnapshot.images, 0)
+  assert.equal(emptyChatGptSnapshot.uploading, false)
+  assert.doesNotMatch(emptyChatGptSnapshot.text, /GPT-6\.1|toolbar|private|old-history/)
+  assert.equal(scopeApi.draftAttachmentEvidence(), false, 'The model selector cannot block an empty ChatGPT draft')
+  // Do not fix this by weakening extensions or dropping all clickable controls.
+  for (const fileName of ['GPT-6.1', 'archive.7z', 'full-document-name.md', 'long-document-filename…']) {
+    const preview = new Element('button', { title: fileName }, '', [new Element('span', { 'aria-label': fileName }, fileName)])
+    chatGptPanel.children.push(preview); preview.parentElement = chatGptPanel
+    assert.equal(scopeApi.draftAttachmentEvidence(), true, 'A genuine clickable file preview remains protected')
+    assert.equal(scopeApi.attachmentNameEvidence(scopeApi.attachmentSnapshot().text, [{ fileName }])[0].method, 'exact')
+    preview.remove()
+    assert.equal(scopeApi.draftAttachmentEvidence(), false)
+  }
+  const selectedFile = new Element('input', { type: 'file' })
+  selectedFile.files = [{ type: 'text/plain' }]
+  chatGptPanel.children.push(selectedFile); selectedFile.parentElement = chatGptPanel
+  assert.equal(scopeApi.draftAttachmentEvidence(), true, 'Protect selected files before their previews appear')
+  selectedFile.remove()
+  const chatGptImage = new Element('img')
+  chatGptImage.src = 'blob:diagnostic'; chatGptImage.naturalWidth = 64; chatGptImage.naturalHeight = 64
+  chatGptPanel.children.push(chatGptImage); chatGptImage.parentElement = chatGptPanel
+  assert.equal(scopeApi.attachmentSnapshot().images, 1)
+  assert.equal(scopeApi.draftAttachmentEvidence(), true)
+  assert.equal(hasDraftImage(), true)
+  chatGptImage.remove()
+  const chatGptUpload = new Element('div', { role: 'progressbar' })
+  chatGptPanel.children.push(chatGptUpload); chatGptUpload.parentElement = chatGptPanel
+  assert.equal(scopeApi.draftAttachmentEvidence(), true, 'Protect a pending upload without filename text')
+  chatGptUpload.remove()
+  assert.equal(scopeApi.draftAttachmentEvidence(), false, 'Cleared attachments must not leave the model toolbar busy')
+  log('PASS ChatGPT model version and nested toolbar labels do not block results or upload confirmation; real clickable files, native selections, images and uploading drafts stay protected')
   // The other computer's 2026-10-05 log: uploads all returned 201, but the
   // closest form lost its cards while a safe outer composer ancestor had them.
   const batchFiles = [

@@ -63,6 +63,7 @@
     assistantReplySelectors: ['[data-markdown-text-style="assistant-message"]'],
     messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
     messageIdAttr: 'data-chatgpt-selection-message-id',
+    fileDraftIgnoreSelector: 'button[aria-label="选择 ChatGPT 模型"]',
     disabledControlSelectors: [],
     fileTurnPositionAttr: '',
     fileTurnPositionSelector: '',
@@ -2456,8 +2457,12 @@
     if (!root) return { rootFound: false, text: '', images: 0, cards: 0, uploading: false, error: false, inputFiles }
     const clone = root.cloneNode(true)
     // Attachment cards can themselves be clickable controls. Keep their text;
-    // remove only editable values and native inputs, which are not previews.
+    // remove editable values, native inputs and measured toolbar controls.
     clone.querySelectorAll('textarea, [contenteditable]:not([contenteditable="false"]), input').forEach((node) => node.remove())
+    // Model versions and truncated toolbar labels can match the filename fallback.
+    // Exclude the whole measured control, including nested title/aria-label hints,
+    // while preserving clickable attachment previews elsewhere in the composer.
+    if (PAGE.fileDraftIgnoreSelector) clone.querySelectorAll(PAGE.fileDraftIgnoreSelector).forEach((node) => node.remove())
     const cardSelector = PAGE.fileDraftCardSelector || PAGE.fileAttachmentCardSelector
     const cards = cardSelector ? [...root.querySelectorAll(cardSelector)] : []
     const previewImages = PAGE.fileDraftImageSelector ? cards.flatMap((card) => [...card.querySelectorAll(PAGE.fileDraftImageSelector)])
@@ -2877,7 +2882,7 @@
         // read/write path decides from the ELEMENT (see readComposer), so a site that
         // changes its composer still works without a descriptor update.
         const { composerKind: _kind, ...selectors } = config.page
-        PAGE = { ...PAGE, disabledControlSelectors: [], fileTurnPositionAttr: '', fileTurnPositionSelector: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, fileAttachmentCardSelector: '', fileDraftCardSelector: '', fileDraftImageSelector: '', fileSentImageSelector: '', fileDraftNameReferenceAttribute: '', fileUploadProgressSelector: '', fileComposerRootSelector: '', fileUploadMenuSelectors: [], fileLocalUploadSelector: '', fileLocalUploadLabels: [], ...selectors }
+        PAGE = { ...PAGE, disabledControlSelectors: [], fileTurnPositionAttr: '', fileTurnPositionSelector: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, fileAttachmentCardSelector: '', fileDraftCardSelector: '', fileDraftIgnoreSelector: '', fileDraftImageSelector: '', fileSentImageSelector: '', fileDraftNameReferenceAttribute: '', fileUploadProgressSelector: '', fileComposerRootSelector: '', fileUploadMenuSelectors: [], fileLocalUploadSelector: '', fileLocalUploadLabels: [], ...selectors }
       }
       // A freshly (re)loaded page has no message of ours outstanding, so nothing
       // it renders can be a reply to us.

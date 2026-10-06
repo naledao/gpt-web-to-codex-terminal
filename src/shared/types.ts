@@ -76,6 +76,7 @@ export const IpcChannels = {
   sshUploadCancel: 'ssh:upload-cancel',
   sshUploadsChanged: 'ssh:uploads-changed',
   sshListFiles: 'ssh:list-files',
+  sshCwdDebugLog: 'ssh:cwd-debug-log',
   sshDownloadFile: 'ssh:download-file',
   sshDownloadsGet: 'ssh:downloads-get',
   sshDownloadCancel: 'ssh:download-cancel',
@@ -1609,6 +1610,8 @@ export interface AppApi {
   onSshUploadsChanged(listener: (items: SshUploadTask[]) => void): () => void
   /** List one remote directory over SFTP. */
   listSshFiles(path: string): Promise<SshFileEntry[]>
+  /** Append one SSH directory-picker diagnostic line to the local debug log. */
+  logSshCwdDebug(message: string): void
   /** Pick a local destination and start downloading one remote file over SFTP. */
   downloadSshFile(path: string): Promise<boolean>
   /** Current and recently finished downloads for this SSH session. */

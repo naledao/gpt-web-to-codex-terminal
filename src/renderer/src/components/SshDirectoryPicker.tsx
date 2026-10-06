@@ -32,6 +32,102 @@ export default function SshDirectoryPicker({
   const [error, setError] = useState('')
   const [highlight, setHighlight] = useState(0)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const autoScrollFrameRef = useRef<number | null>(null)
+  const autoScrollSpeedRef = useRef(0)
+
+  const debugAutoScroll = (event: string, details: Record<string, unknown>): void => {
+    const payload = JSON.stringify({ time: new Date().toISOString(), event, ...details })
+    console.info('[ssh-cwd-picker]', event, details)
+    window.api.logSshCwdDebug?.(payload)
+  }
+
+  const stopAutoScroll = (): void => {
+    if (autoScrollSpeedRef.current !== 0 || autoScrollFrameRef.current !== null) {
+      debugAutoScroll('auto-scroll stop', {
+        scrollTop: listRef.current?.scrollTop ?? null,
+        scrollHeight: listRef.current?.scrollHeight ?? null,
+        clientHeight: listRef.current?.clientHeight ?? null
+      })
+    }
+    autoScrollSpeedRef.current = 0
+    if (autoScrollFrameRef.current !== null) {
+      cancelAnimationFrame(autoScrollFrameRef.current)
+      autoScrollFrameRef.current = null
+    }
+  }
+
+  const runAutoScroll = (): void => {
+    const list = listRef.current
+    if (!list || autoScrollSpeedRef.current === 0) {
+      autoScrollFrameRef.current = null
+      return
+    }
+    const before = list.scrollTop
+    list.scrollTop += autoScrollSpeedRef.current
+    if (list.scrollTop === before) {
+      debugAutoScroll('auto-scroll blocked', {
+        speed: autoScrollSpeedRef.current,
+        scrollTop: list.scrollTop,
+        scrollHeight: list.scrollHeight,
+        clientHeight: list.clientHeight
+      })
+      stopAutoScroll()
+      return
+    }
+    autoScrollFrameRef.current = requestAnimationFrame(runAutoScroll)
+  }
+
+  const updateAutoScroll = (clientX: number, clientY: number): void => {
+    const list = listRef.current
+    if (!list) return
+    const rect = list.getBoundingClientRect()
+    const edge = 46
+    const horizontalTolerance = 24
+    const horizontallyAligned =
+      clientX >= rect.left - horizontalTolerance && clientX <= rect.right + horizontalTolerance
+    let speed = 0
+    if (horizontallyAligned && clientY > rect.bottom - edge) {
+      speed = Math.min(18, 2 + (clientY - (rect.bottom - edge)) * 0.25)
+    } else if (horizontallyAligned && clientY < rect.top + edge) {
+      speed = -Math.min(18, 2 + (rect.top + edge - clientY) * 0.25)
+    }
+    const previousSpeed = autoScrollSpeedRef.current
+    autoScrollSpeedRef.current = speed
+    if (speed !== previousSpeed) {
+      debugAutoScroll('pointer', {
+        clientX,
+        clientY,
+        top: rect.top,
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        speed,
+        previousSpeed,
+        scrollTop: list.scrollTop,
+        scrollHeight: list.scrollHeight,
+        clientHeight: list.clientHeight
+      })
+    }
+    if (speed === 0) {
+      stopAutoScroll()
+    } else if (autoScrollFrameRef.current === null) {
+      debugAutoScroll('auto-scroll start', { speed, scrollTop: list.scrollTop })
+      autoScrollFrameRef.current = requestAnimationFrame(runAutoScroll)
+    }
+  }
+
+  useEffect(() => {
+    const onWindowMouseMove = (event: MouseEvent): void => {
+      updateAutoScroll(event.clientX, event.clientY)
+    }
+    window.addEventListener('mousemove', onWindowMouseMove)
+    debugAutoScroll('global-mouse-tracking start', {})
+    return () => {
+      window.removeEventListener('mousemove', onWindowMouseMove)
+      stopAutoScroll()
+    }
+  }, [])
 
   const trimmedBase = basePath && basePath.length > 0 ? basePath : '/'
 
@@ -78,6 +174,35 @@ export default function SshDirectoryPicker({
     setHighlight(0)
   }, [split.prefix, split.dir])
 
+  useEffect(() => {
+    const list = listRef.current
+    const selected = list?.querySelector<HTMLElement>('[aria-selected="true"]') ?? null
+    if (!list || !selected) return
+    const listRect = list.getBoundingClientRect()
+    const itemRect = selected.getBoundingClientRect()
+    const itemVisible = itemRect.top >= listRect.top && itemRect.bottom <= listRect.bottom
+    debugAutoScroll('keyboard-highlight-rendered', {
+      highlight,
+      scrollTop: list.scrollTop,
+      listTop: listRect.top,
+      listBottom: listRect.bottom,
+      itemTop: itemRect.top,
+      itemBottom: itemRect.bottom,
+      itemVisible
+    })
+    if (!itemVisible) {
+      selected.scrollIntoView({ block: 'nearest' })
+      requestAnimationFrame(() => {
+        debugAutoScroll('keyboard-highlight-scrolled', {
+          highlight,
+          scrollTop: list.scrollTop,
+          scrollHeight: list.scrollHeight,
+          clientHeight: list.clientHeight
+        })
+      })
+    }
+  }, [highlight])
+
   const confirm = (path: string): void => {
     const target = path.trim()
     if (target === '') return
@@ -92,12 +217,32 @@ export default function SshDirectoryPicker({
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setHighlight((value) => Math.min(value + 1, suggestions.length - 1))
+      const next = Math.min(highlight + 1, suggestions.length - 1)
+      const list = listRef.current
+      debugAutoScroll('keyboard-arrow-down', {
+        highlight,
+        next,
+        suggestions: suggestions.length,
+        scrollTop: list?.scrollTop ?? null,
+        scrollHeight: list?.scrollHeight ?? null,
+        clientHeight: list?.clientHeight ?? null
+      })
+      setHighlight(next)
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setHighlight((value) => Math.max(value - 1, 0))
+      const next = Math.max(highlight - 1, 0)
+      const list = listRef.current
+      debugAutoScroll('keyboard-arrow-up', {
+        highlight,
+        next,
+        suggestions: suggestions.length,
+        scrollTop: list?.scrollTop ?? null,
+        scrollHeight: list?.scrollHeight ?? null,
+        clientHeight: list?.clientHeight ?? null
+      })
+      setHighlight(next)
       return
     }
     if (event.key === 'Enter') {
@@ -124,7 +269,7 @@ export default function SshDirectoryPicker({
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={onKeyDown}
       />
-      <ul className="ssh-cwd-picker__list" role="listbox">
+      <ul className="ssh-cwd-picker__list" role="listbox" ref={listRef}>
         {loading ? (
           <li className="ssh-cwd-picker__hint">加载中…</li>
         ) : error ? (
@@ -149,7 +294,7 @@ export default function SshDirectoryPicker({
               }}
             >
               <span className="ssh-cwd-picker__icon">📁</span>
-              <span className="ssh-cwd-picker__name">{entry.name}</span>
+              <span className="ssh-cwd-picker__name" title={entry.name}>{entry.name}</span>
             </li>
           ))
         )}

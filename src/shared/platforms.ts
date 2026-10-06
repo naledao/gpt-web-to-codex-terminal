@@ -155,6 +155,8 @@ export interface PageAdapter {
   fileAttachmentCardSelector?: string
   /** Some sites use different native cards in the composer and sent message. */
   fileDraftCardSelector?: string
+  /** Measured toolbar controls whose text and labels are not attachment names. */
+  fileDraftIgnoreSelector?: string
   fileDraftImageSelector?: string
   fileSentImageSelector?: string
   /** Read filename hints only through references on the current native card. */
@@ -516,6 +518,9 @@ export const CHATGPT_PAGE: PageAdapter = {
   fileUserTurnSelector: '[class~="group/user-message"][data-chatgpt-search-unit-key]',
   fileUserTurnFallbackSelector: '[data-content-search-unit-key$=":user"]',
   fileUserTurnKeyAttr: 'data-chatgpt-search-unit-key',
+  // 2026-10-05 attachment capture: this button contains the selected model.
+  // Version text such as GPT-6.1 must not look like a file draft or uncleared upload.
+  fileDraftIgnoreSelector: 'button[aria-label="选择 ChatGPT 模型"]',
   // Not measured yet; DeepSeek is the platform the theme probe runs against first.
   theme: THEME_UNMEASURED
 }

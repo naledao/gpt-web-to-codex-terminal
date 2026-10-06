@@ -232,6 +232,10 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   listSshFiles: (path: string): Promise<SshFileEntry[]> =>
     ipcRenderer.invoke(IpcChannels.sshListFiles, path),
 
+  logSshCwdDebug: (message: string): void => {
+    ipcRenderer.send(IpcChannels.sshCwdDebugLog, message)
+  },
+
   downloadSshFile: (path: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.sshDownloadFile, path),
 

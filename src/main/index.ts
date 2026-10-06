@@ -1,7 +1,8 @@
 import { join, posix } from 'node:path'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, session, shell, Tray } from 'electron'
-import type { IpcMainEvent, IpcMainInvokeEvent, Rectangle } from 'electron'
+import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_LOGIN_URL,
   FALLBACK_ENVIRONMENT,
@@ -150,8 +151,6 @@ let managerReadyToShow = false
 
 const SPLASH_WIDTH = 380
 const SPLASH_HEIGHT = 264
-/** Match the page's corner radius in src/renderer/splash.html. */
-const SPLASH_CORNER_RADIUS = 16
 /** Keep the animation visible for at least three seconds, even when the page is cached. */
 const SPLASH_MIN_VISIBLE_MS = 3_000
 /**
@@ -204,6 +203,8 @@ function createSplashWindow(): void {
     title: '',
     titleBarStyle: 'hidden',
     titleBarOverlay: false,
+    // The page's rounded card supplies per-pixel alpha. A native setShape()
+    // region would hard-clip its antialiased edge, especially at high DPI.
     transparent: true,
     backgroundColor: '#00000000',
     hasShadow: false,
@@ -230,22 +231,6 @@ function createSplashWindow(): void {
   })
   window.setResizable(false)
   window.setMaximizable(false)
-
-  if (process.platform === 'win32') {
-    // CSS only clips the page. Clip the native window too so Windows cannot paint
-    // a rectangular background behind the page's transparent corners.
-    const { width, height } = window.getBounds()
-    const radius = SPLASH_CORNER_RADIUS
-    const shape: Rectangle[] = [{ x: 0, y: radius, width, height: height - radius * 2 }]
-    for (let y = 0; y < radius; y++) {
-      // Sample each row at its center to follow the same circular corner as CSS.
-      const distance = radius - y - 0.5
-      const inset = Math.ceil(radius - Math.sqrt(radius * radius - distance * distance))
-      const row = { x: inset, y, width: width - inset * 2, height: 1 }
-      shape.push(row, { ...row, y: height - y - 1 })
-    }
-    window.setShape(shape)
-  }
 
   // `showInactive` so the splash never takes focus from the window that is still loading
   // behind it: stealing focus would make the main window's first paint look like a flash.
@@ -1124,7 +1109,23 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.sshListFiles, async (event, path: string): Promise<SshFileEntry[]> => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return []
+    try {
+      const dir = join(app.getPath('userData'), 'logs')
+      mkdirSync(dir, { recursive: true })
+      appendFileSync(join(dir, 'ssh-cwd-picker.log'), JSON.stringify({ time: new Date().toISOString(), event: 'list-files', path: String(path ?? '/') }) + '\n', 'utf8')
+    } catch {
+      /* Diagnostics must never interrupt directory listing. */
+    }
     return runtime.ssh.listFiles(String(path ?? '/'))
+  })
+  ipcMain.on(IpcChannels.sshCwdDebugLog, (_event, message: string): void => {
+    try {
+      const dir = join(app.getPath('userData'), 'logs')
+      mkdirSync(dir, { recursive: true })
+      appendFileSync(join(dir, 'ssh-cwd-picker.log'), String(message ?? '') + '\n', 'utf8')
+    } catch {
+      /* Diagnostics must never interrupt the picker. */
+    }
   })
   ipcMain.handle(IpcChannels.sshDownloadFile, async (event, remotePath: string): Promise<boolean> => {
     const runtime = runtimeForEvent(event)

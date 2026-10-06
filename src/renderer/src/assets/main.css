@@ -1130,7 +1130,9 @@ body {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  right: 0;
+  right: auto;
+  width: min(420px, calc(100vw - 32px));
+  min-width: 100%;
   z-index: 40;
   margin: 0;
   padding: 4px;

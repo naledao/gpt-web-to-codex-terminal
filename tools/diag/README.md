@@ -69,6 +69,19 @@ and wait for its response to finish. The result should be returned. A real text
 or attachment draft must still block a return. If blocked, retain the corresponding
 `claude-raw-send-*.log`; its reason identifies the guard used at that moment.
 
+For the ChatGPT `attachment-draft` report captured on 2026-10-06, the model
+selector measured in the 2026-10-05 attachment capture is excluded from draft
+filename evidence. Its visible model version and nested title/aria-label hints
+must not block result return or the cleared-draft check after an upload.
+The user runs `node tools/diag/read-files-check.cjs` for this regression; genuine
+clickable file previews, numeric extensions, selected files, images and upload
+progress must remain protected. Logs land in
+`%TEMP%\gpt-login-diag\read-files-check-<timestamp>.log`.
+For live acceptance in ChatGPT, leave the composer empty with `GPT-6.1` shown
+in the model selector, run a harmless command, and confirm its result returns.
+Then retain a real text or attachment draft and confirm automatic return does
+not overwrite it. If blocked with an empty draft, retain `chatgpt-raw-send-*.log`.
+
 ## attachments-probe.js / read-files-check.cjs
 
 Attachment observation and offline checks for AI-selected file uploads. See
