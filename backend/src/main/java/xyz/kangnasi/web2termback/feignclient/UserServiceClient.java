@@ -1,4 +1,4 @@
-package xyz.kangnasi.web2termback.user;
+package xyz.kangnasi.web2termback.feignclient;
 
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.http.ResponseEntity;
