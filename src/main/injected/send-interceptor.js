@@ -2077,7 +2077,8 @@
         noteScan(messageId, 'question-still-generating')
         return
       }
-      if (!state.enabled || state.awaitingReplySince === 0) {
+      // Live clarification continues even when terminal command execution is disabled.
+      if (state.awaitingReplySince === 0) {
         state.lastCommandMessageId = messageId
         noteScan(messageId, 'question-not-live')
         return
@@ -2892,7 +2893,8 @@
     },
 
     async answerQuestion(messageId, answer) {
-      if (!state.enabled || !state.pendingQuestion || state.pendingQuestion.messageId !== messageId || !state.taskActive) return 'stale'
+      // Answers belong to the conversation; terminal mode and execution flags do not expire them.
+      if (!state.pendingQuestion || state.pendingQuestion.messageId !== messageId) return 'stale'
       if (typeof answer !== 'string' || !answer.trim() || answer.length > 20000) return 'invalid-answer'
       const ownedDraft = state.answerDraft?.messageId === messageId ? state.answerDraft.text : null
       const outcome = await window[STATE_KEY].sendRaw(answer, ownedDraft)

@@ -87,7 +87,8 @@ function page(kind = 'contenteditable', snapshot = {}) {
   const rawStart = source.indexOf('    sendRaw(text, ownedDraft = null) {', publicStart)
   const rawComment = source.lastIndexOf('    /**', rawStart)
   const answerStart = source.indexOf('    async answerQuestion(', rawStart)
-  assert.ok(publicStart > 0 && rawComment > publicStart && answerStart > rawStart)
+  const answerEnd = source.indexOf('    takeUserImageAttachments,', answerStart)
+  assert.ok(publicStart > 0 && rawComment > publicStart && answerStart > rawStart && answerEnd > answerStart)
   vm.runInContext([
     section('  let PAGE =', '  // Re-injection'),
     section('  const state =', '  /** User-image batches'),
@@ -96,7 +97,7 @@ function page(kind = 'contenteditable', snapshot = {}) {
     section('  const USER_TEXT_SENTINEL =', '  // Capture phase, on'),
     section('  const checkForCommand =', '  const lastAssistantId ='),
     section('  const armBaseline =', '  // Block ChatGPT sidebar'),
-    `const lifecycle = { ${source.slice(publicStart, rawComment)} ${source.slice(rawStart, answerStart)} };`,
+    `const lifecycle = { ${source.slice(publicStart, rawComment)} ${source.slice(rawStart, answerEnd)} };`,
     'window[STATE_KEY] = lifecycle;',
     'globalThis.api = { state, intercept, lifecycle, checkForCommand, armBaseline, USER_TEXT_SENTINEL };'
   ].join('\n'), context)
@@ -113,10 +114,14 @@ function page(kind = 'contenteditable', snapshot = {}) {
   }
   const send = text => { composer.text = text; assert.equal(context.api.intercept(event()), true); flush() }
   const reply = text => { controls.reply = text; controls.replyId += '-reply'; context.api.checkForCommand(); flush() }
-  return { ...context.api, composer, controls, events, submissions, send, reply, flush, event }
+  return {
+    ...context.api, composer, controls, events, submissions, send, reply, flush, event,
+    evaluate: script => vm.runInContext(script, context),
+    onReport: listener => { context.report = event => { events.push(event); listener(event) } }
+  }
 }
 
-function embed() {
+function embed(livePage = null) {
   const exports = {}
   const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/main/embed.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
@@ -135,15 +140,37 @@ function embed() {
       throw new Error(`Unexpected dependency: ${name}`)
     }
   })
-  const instance = new exports.ChatGptEmbed({ id: 'fixture', homeUrl: 'https://example.invalid', page: {} }, { onInterceptor() {} })
+  const instance = new exports.ChatGptEmbed({ id: 'fixture', homeUrl: 'https://example.invalid', page: {} }, {
+    onInterceptor() {}, onAssistantMessage() {}, onUserMessage() {}
+  })
   const configurations = []
   instance.view = { webContents: { isDestroyed: () => false, executeJavaScript: async script => {
     const marker = '.configure('
     const at = script.lastIndexOf(marker)
-    configurations.push(JSON.parse(script.slice(at + marker.length, -');true'.length)))
+    if (at < 0) {
+      assert.ok(livePage, 'Non-configuration calls require a page fixture')
+      return livePage.evaluate(script)
+    }
+    const config = JSON.parse(script.slice(at + marker.length, -');true'.length))
+    configurations.push(config)
+    if (livePage) livePage.lifecycle.configure(config)
     return true
   } } }
+  if (livePage) livePage.onReport(event => instance.handlePageReport('[cmd-terminal] ' + JSON.stringify(event)))
   return { instance, configurations }
+}
+
+function questionSession(kind = 'contenteditable') {
+  const p = page(kind)
+  p.send('启动需要确认的任务')
+  p.reply('{"type":"questions","questions":[{"question":"请把手动执行结果发回。"}]}')
+  assert.ok(p.state.pendingQuestion)
+  const fixture = embed(p)
+  fixture.instance.setBaselinePolicy(true)
+  for (const event of p.events.filter(event => event.event === 'sent' || event.event === 'question')) {
+    fixture.instance.handlePageReport('[cmd-terminal] ' + JSON.stringify(event))
+  }
+  return { p, ...fixture }
 }
 
 async function main() {
@@ -312,6 +339,99 @@ async function remaining() {
   log('PASS real main-process methods restore confirmed prompt state, reset tasks without baselining new replies and ignore stale confirmations')
 }
 
+async function questionChecks() {
+  for (const kind of ['contenteditable', 'textarea']) {
+    const { p, instance, configurations } = questionSession(kind)
+    const messageId = p.state.pendingQuestion.messageId
+    for (const change of ['ssh-connect', 'ssh-close', 'ssh-disconnect', 'ssh-switch', 'cwd', 'notes']) {
+      instance.setPromptParts({ basePrompt: change, toolPrompt: 'tools', prefix: `environment-${change}` })
+      assert.equal(configurations.at(-1).armBaseline, false)
+      assert.equal(instance.getInterceptorStatus().pendingQuestion.messageId, messageId)
+      assert.equal(p.state.pendingQuestion.messageId, messageId, `${change} must preserve the question`)
+    }
+    for (const enabled of [false, true, false]) {
+      instance.setInterceptorEnabled(enabled)
+      assert.equal(p.state.enabled, enabled)
+      assert.equal(p.state.pendingQuestion.messageId, messageId)
+      assert.equal(instance.getInterceptorStatus().pendingQuestion.messageId, messageId)
+    }
+    // A terminal execution flag is not the identity of the conversation's question.
+    p.state.taskActive = false
+    assert.equal(await p.lifecycle.answerQuestion('wrong-question', '旧答案'), 'stale')
+    await assert.rejects(instance.answerQuestion('wrong-question', '旧答案'), /问题已失效/)
+    const answer = instance.answerQuestion(messageId, '手动执行完成\n退出码 0')
+    p.flush()
+    assert.equal((await answer).pendingQuestion, null)
+    assert.equal(p.state.pendingQuestion, null)
+    assert.equal(p.submissions.at(-1), '手动执行完成\n退出码 0')
+    assert.equal(p.events.filter(event => event.event === 'injected').length, 1)
+    assert.equal(p.state.taskPromptInjected, true)
+    await assert.rejects(instance.answerQuestion(messageId, '重复答案'), /问题已失效/)
+    p.reply('{"type":"questions","questions":[{"question":"关闭终端模式后继续确认？"}]}')
+    const followUpId = p.state.pendingQuestion.messageId
+    assert.equal(instance.getInterceptorStatus().pendingQuestion.messageId, followUpId)
+    const followUp = instance.answerQuestion(followUpId, '继续')
+    p.flush()
+    assert.equal((await followUp).pendingQuestion, null)
+    assert.equal(p.events.filter(event => event.event === 'injected').length, 1)
+    p.reply('{"command":"echo disabled","description":"不得自动执行"}')
+    assert.equal(p.events.filter(event => event.event === 'command').length, 0, 'Answering must not re-enable terminal commands')
+    log(`PASS ${kind}: SSH/environment changes and terminal toggles preserve questions; answers work without terminal flags`)
+  }
+
+  const retry = questionSession()
+  const retryId = retry.p.state.pendingQuestion.messageId
+  retry.p.controls.accept = false
+  const failed = retry.instance.answerQuestion(retryId, '保留这份回答')
+  const rejected = assert.rejects(failed, /尚未确认发送/)
+  retry.p.flush()
+  await rejected
+  assert.equal(retry.p.state.answerDraft.text, '保留这份回答')
+  retry.instance.setPromptParts({ basePrompt: 'local', toolPrompt: 'tools', prefix: 'local-after-ssh-close' })
+  retry.instance.setInterceptorEnabled(false)
+  assert.equal(retry.p.state.answerDraft.messageId, retryId)
+  assert.equal(retry.p.state.answerDraft.text, '保留这份回答')
+  retry.p.controls.accept = true
+  const retried = retry.instance.answerQuestion(retryId, '保留这份回答')
+  retry.p.flush()
+  assert.equal((await retried).pendingQuestion, null)
+  assert.equal(retry.p.state.answerDraft, null)
+  assert.equal(retry.p.events.filter(event => event.event === 'injected').length, 1)
+  log('PASS failed-answer draft remains retryable after SSH environment changes and disabling terminal mode')
+
+  const waiting = page()
+  waiting.send('等待模型的问题')
+  const active = embed(waiting)
+  active.instance.setBaselinePolicy(true)
+  active.instance.handlePageReport('[cmd-terminal] ' + JSON.stringify(waiting.events.find(event => event.event === 'sent')))
+  const awaitingReplySince = waiting.state.awaitingReplySince
+  active.instance.setPromptParts({ basePrompt: 'remote', toolPrompt: 'tools', prefix: 'remote-environment' })
+  active.instance.setInterceptorEnabled(false)
+  assert.ok(awaitingReplySince > 0)
+  assert.equal(waiting.state.awaitingReplySince, awaitingReplySince)
+  waiting.reply('{"type":"questions","questions":[{"question":"下一步怎么做？"}]}')
+  assert.ok(active.instance.getInterceptorStatus().pendingQuestion)
+  log('PASS environment updates and terminal-mode changes preserve in-flight replies and live follow-up questions')
+
+  const ended = questionSession()
+  const endedId = ended.p.state.pendingQuestion.messageId
+  await ended.instance.endTask()
+  assert.equal(ended.p.state.pendingQuestion, null)
+  assert.equal(ended.instance.getInterceptorStatus().pendingQuestion, null)
+  await assert.rejects(ended.instance.answerQuestion(endedId, '结束后的回答'), /问题已失效/)
+
+  const replaced = questionSession()
+  const oldId = replaced.p.state.pendingQuestion.messageId
+  replaced.p.send('换一个问题')
+  replaced.p.reply('{"type":"questions","questions":[{"question":"新的确认问题？"}]}')
+  const newId = replaced.p.state.pendingQuestion.messageId
+  assert.notEqual(newId, oldId)
+  await assert.rejects(replaced.instance.answerQuestion(oldId, '旧问题的回答'), /问题已失效/)
+  assert.equal(replaced.instance.getInterceptorStatus().pendingQuestion.messageId, newId)
+  assert.equal(replaced.p.state.pendingQuestion.messageId, newId)
+  log('PASS explicit task termination and replaced question IDs still reject obsolete answers')
+}
+
 log(`Log: ${logFile}`)
-main().then(remaining).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
+main().then(remaining).then(questionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
   .catch(error => { log(`FAIL ${error.stack || error}`); process.exitCode = 1 })

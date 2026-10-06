@@ -174,6 +174,11 @@ messages, live command tracking, clarification pauses, completion/manual termina
 configuration/mode changes, reload restoration and stale task callbacks. It also
 transpiles the real main-process embed methods with Electron stubbed out, checking
 that successful sends are restored after reload and late confirmations stay ignored.
+Question checks connect those real embed methods to the actual injected answer path:
+SSH environment/prompt updates and terminal-mode toggles retain an open question,
+answers and live follow-up questions still work with terminal mode off, failed drafts remain retryable, and
+environment updates retain an in-flight reply. Explicit task termination and
+replaced question IDs still invalidate old answers.
 Logs use `fs.appendFileSync` under
 `%TEMP%\gpt-login-diag\task-prompt-check-<timestamp>.log`.
 
@@ -188,6 +193,12 @@ ChatGPT and DeepSeek separately:
 5. Repeat after using the app's “结束任务”; confirm that the new task receives a prompt.
 6. Reload during a task, or update machine notes without ending it. The next follow-up
    still skips the prompt; the updated prompt is used when the next task starts.
+7. In auto mode, wait for a question, type an answer, then close/disconnect/reconnect
+   SSH, change the working directory or update machine notes. The question and draft
+   must remain available, and confirming the answer must send it without another prompt.
+8. With a question open, turn terminal mode off/on. The question remains; an answer
+   can also be submitted while it is off, and the model's next live question still appears.
+   Commands must stay disabled while it is off.
 
 The normal main-process log now reports `sent promptInjected=true/false` and
 `taskPromptInjected=true/false`. The first value describes that specific user message;

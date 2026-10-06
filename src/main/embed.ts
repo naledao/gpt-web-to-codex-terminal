@@ -326,7 +326,8 @@ export class ChatGptEmbed {
         this.interceptor.toolPrompt === parts.toolPrompt) return
     Object.assign(this.interceptor, parts)
     this.handlers.onInterceptor(this.getInterceptorStatus())
-    if (this.liveContents()) void this.installInterceptor()
+    // Machine/prompt changes keep the current conversation and pending answer alive.
+    if (this.liveContents()) void this.installInterceptor(false)
   }
 
   /**
@@ -768,7 +769,7 @@ export class ChatGptEmbed {
 
   /** The page validates the question id again before touching the composer. */
   async answerQuestion(messageId: string, answer: string): Promise<InterceptorStatus> {
-    if (!this.interceptor.enabled || this.interceptor.pendingQuestion?.messageId !== messageId) {
+    if (this.interceptor.pendingQuestion?.messageId !== messageId) {
       throw new Error('这个问题已失效，请查看当前会话。')
     }
     if (typeof answer !== 'string' || !answer.trim() || answer.length > 20000) {
@@ -820,8 +821,8 @@ export class ChatGptEmbed {
    */
   setInterceptorEnabled(enabled: boolean): InterceptorStatus {
     this.interceptor.enabled = enabled
-    if (!enabled) this.interceptor.pendingQuestion = null
-    void this.installInterceptor()
+    // Terminal mode controls command execution, not an already-open question.
+    void this.installInterceptor(false)
     const status = this.getInterceptorStatus()
     this.handlers.onInterceptor(status)
     return status
@@ -1261,7 +1262,7 @@ export class ChatGptEmbed {
             }
           }).filter((item): item is PendingQuestionItem => item !== null)
           if (
-            this.interceptor.enabled && payload.live === true &&
+            payload.live === true &&
             typeof payload.messageId === 'string' && payload.messageId !== '' &&
             questions.length === candidates.length && questions.length >= 1 && questions.length <= 20
           ) {
