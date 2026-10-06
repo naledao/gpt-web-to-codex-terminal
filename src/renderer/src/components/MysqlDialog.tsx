@@ -120,6 +120,8 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [activeKey, setActiveKey] = useState('')
   const [reveal, setReveal] = useState(false)
   const newTabRef = useRef(0)
+  /** Focused when saving is refused, so the missing field is the one on screen. */
+  const databaseRef = useRef<HTMLInputElement>(null)
 
   const connections = state?.connections ?? []
   const machineLabel = state?.machineLabel ?? ''
@@ -204,6 +206,9 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
 
   const updateForm = useCallback(
     (patch: Partial<ConnectionForm>): void => {
+      // The complaint refers to what was on screen a keystroke ago; keeping it up while the
+      // user fixes the field reads as the fix not working.
+      setError('')
       setTabs((current) =>
         current.map((tab) => (tab.key === activeKey ? { ...tab, form: { ...tab.form, ...patch } } : tab))
       )
@@ -213,6 +218,13 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
 
   const save = useCallback(async (): Promise<void> => {
     if (saving || activeForm === null || activeTab === null) return
+    // A connection with no database is not usable later, so it is refused here rather
+    // than stored and discovered when someone tries to connect with it.
+    if (activeForm.database.trim() === '') {
+      setError('数据库为必填项，请填写后再保存。')
+      databaseRef.current?.focus()
+      return
+    }
     setSaving(true)
     setError('')
     const key = activeTab.key
@@ -479,12 +491,17 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   </label>
 
                   <label className="mysql-page__field mysql-page__field--wide">
-                    <span className="mysql-page__label">默认数据库</span>
+                    <span className="mysql-page__label">
+                      默认数据库
+                      <span className="mysql-page__required">必填</span>
+                    </span>
                     <input
                       className="mysql-page__input"
+                      ref={databaseRef}
                       value={activeForm.database}
                       spellCheck={false}
-                      placeholder="可留空"
+                      required
+                      placeholder="例如：myapp_dev（必填）"
                       onChange={(event) => updateForm({ database: event.target.value })}
                     />
                   </label>
@@ -514,7 +531,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
           <button
             type="button"
             className="mysql-page__btn mysql-page__btn--primary"
-            disabled={activeForm === null || saving || savedNow}
+            disabled={activeForm === null || saving || savedNow || activeForm.database.trim() === ''}
             onClick={() => void save()}
           >
             {saving ? '保存中…' : '保存'}
