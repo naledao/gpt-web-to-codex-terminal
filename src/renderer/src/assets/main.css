@@ -122,10 +122,10 @@ body {
 .address {
   /*
    * The ONLY growing item in the bar, so it fills the space between the navigation buttons on
-   * its left and the model select on its right �?the three of them end up touching, with no
+   * its left and the model select on its right �?the three of them end up touching, with no
    * slack left anywhere to open a gap.
    *
-   * This went: `flex: 1` �?capped at 360px �?capped + `margin-left: auto` �?back to `flex: 1`.
+   * This went: `flex: 1` �?capped at 360px �?capped + `margin-left: auto` �?back to `flex: 1`.
    * The two auto margins it passed through are gone with it; an auto margin on a growing item
    * is both redundant and harmful, because it would take the free space the field is meant to
    * fill.
@@ -633,7 +633,7 @@ body {
  * Lives in the terminal pane's normal flow rather than floating over it.
  *
  * The pane sits to the LEFT of the embedded page, which is a native view that
- * always paints above the DOM �?a dropdown anchored to the header would spill out
+ * always paints above the DOM �?a dropdown anchored to the header would spill out
  * of this column and be swallowed by it. Taking vertical space instead of
  * overlaying is the only layout that cannot break.
  */
@@ -693,7 +693,7 @@ body {
   margin-bottom: 6px;
 }
 
-/* Which machine this note belongs to �?the one thing that must not be guessed. */
+/* Which machine this note belongs to �?the one thing that must not be guessed. */
 .notes__owner {
   flex: none;
   max-width: 55%;
@@ -979,7 +979,7 @@ body {
   line-height: 1.5;
 }
 
-/* A hint with no text at all �?a state whose description was removed �?must not
+/* A hint with no text at all �?a state whose description was removed �?must not
  * leave its 7px margin behind as a gap. */
 .terminal__hint:empty {
   display: none;
@@ -1414,7 +1414,7 @@ body {
  *
  * Green rather than amber: this is the intended state while an SSH session is
  * attached, not a warning. It is loud because the stakes are "which computer is
- * about to run this" �?the one fact the user must never have to guess at.
+ * about to run this" �?the one fact the user must never have to guess at.
  */
 .badge--remote {
   background: rgba(63, 185, 80, 0.18);
@@ -1479,7 +1479,7 @@ body {
    * `appearance: none` because the native control draws its drop-down arrow with SYSTEM colours:
    * on Windows that is a light box, which looks broken against this dark bar. Removing the
    * native rendering also removes the arrow, so the chevron below is drawn as a background image
-   * (an inline SVG �?no asset to load, and allowed by the renderer's CSP `img-src data:`).
+   * (an inline SVG �?no asset to load, and allowed by the renderer's CSP `img-src data:`).
    */
   appearance: none;
   padding: 0 24px 0 10px;
@@ -1609,7 +1609,7 @@ body {
   color: var(--text);
 }
 
-/* A proxy is configured �?worth noticing, since it changes how the page loads. */
+/* A proxy is configured �?worth noticing, since it changes how the page loads. */
 .toolbar__settings--on {
   color: #e3b341;
 }
@@ -1633,7 +1633,7 @@ body {
  *
  * The settings dialog now carries a long session-import block, so growing to fit
  * the content pushed the buttons off-screen on a short window. Capping the box and
- * letting `.modal__body` scroll keeps the title, the close button and 淇濆�?always
+ * letting `.modal__body` scroll keeps the title, the close button and 淇濆�?always
  * reachable. `min-height: 0` on the body is load-bearing: a flex item defaults to
  * `min-height: auto` and would refuse to shrink below its content, so the body
  * would overflow the box instead of scrolling inside it.
@@ -1714,7 +1714,7 @@ body {
  * The session-import value box.
  *
  * A textarea rather than an input because a SPLIT session token arrives as two cookies
- * (`.0` and `.1`) and has to be pasted whole �?an input would scroll one of them out of
+ * (`.0` and `.1`) and has to be pasted whole �?an input would scroll one of them out of
  * sight and make a correct paste look wrong. `resize: vertical` only: the dialog is a
  * fixed-height flex column now, and a horizontally resizable box can push its footer
  * off-screen.
@@ -1957,7 +1957,7 @@ body {
   color: var(--danger);
 }
 
-/* The host the model is currently driving �?the one row that must be unmistakable. */
+/* The host the model is currently driving �?the one row that must be unmistakable. */
 .ssh-list__pick--active {
   border-color: rgba(126, 231, 135, 0.35);
   background: rgba(63, 185, 80, 0.12);
@@ -1981,12 +1981,12 @@ body {
 
 /*
  * The footer is a direct child of `.modal__box` in the settings dialog, and the body
- * is the only scroll container �?so 淇濆�?stays put while the settings list scrolls.
+ * is the only scroll container �?so 淇濆�?stays put while the settings list scrolls.
  *
- * The SSH dialog cannot use that shape: its 杩炴�?button is `type="submit"` and must
+ * The SSH dialog cannot use that shape: its 杩炴�?button is `type="submit"` and must
  * live inside the form, and a footer inside a scroll container scrolls away. There
- * the FORM becomes the scroll container and the footer is exempted from it �?same
- * result, without `form="�?` attribute indirection.
+ * the FORM becomes the scroll container and the footer is exempted from it �?same
+ * result, without `form="�?` attribute indirection.
  *
  * No negative margins here: `.modal__body` keeps its padding and the form simply
  * fills it. Bleeding the form to the edges would make its content scroll behind the
@@ -2087,7 +2087,7 @@ body {
 }
 
 /*
- * "Passing a security check" �?a bot-check interstitial is transient, not a failure, but it looks
+ * "Passing a security check" �?a bot-check interstitial is transient, not a failure, but it looks
  * exactly like one. Amber rather than red: nothing is broken and no action is required.
  */
 .bot-check {
@@ -4589,6 +4589,12 @@ body {
 }
 
 .notes-modal__button:hover:not(:disabled) { background: #f7f9fc; }
+
+.notes-modal__button--primary:hover:not(:disabled) {
+  border-color: #4a58e6;
+  background: linear-gradient(135deg, #5563ff, #3f4bd8);
+  color: #fff;
+}
 
 .notes-modal__button--primary {
   min-width: 108px;
@@ -9025,7 +9031,7 @@ body {
   border-top-color: #2a3546 !important;
 }
 
-/* 宸ュ叿绠变笅鎷夎彍鍗曪紙Base UI Menu锛夆€斺�?榛樿璺熼殢娴呰壊涓婚 */
+/* 宸ュ叿绠变笅鎷夎彍鍗曪紙Base UI Menu锛夆€斺�?榛樿璺熼殢娴呰壊涓婚 */
 .toolbox-menu__positioner {
   z-index: 60;
 }
@@ -9084,7 +9090,7 @@ body {
 }
 
 
-/* 寮圭獥閲岀�?Git 鍥炬爣锛氬僵鑹插搧鐗?Logo锛屼笉闇€瑕佹祬钃濊‖搴?*/
+/* 寮圭獥閲岀�?Git 鍥炬爣锛氬僵鑹插搧鐗?Logo锛屼笉闇€瑕佹祬钃濊‖搴?*/
 .confirm-dialog__icon--git {
   background: transparent;
   overflow: visible;
@@ -10534,7 +10540,7 @@ body {
 
 
 
-/* 未设置头像时的默认占�?*/
+/* 未设置头像时的默认占�?*/
 .settings-avatar-preview-img--empty { display:grid; place-items:center; position:relative; box-sizing:border-box; background:#e9eaee; border:1px solid #dfe1e6; color:#8b8f97; cursor:pointer; }
 .settings-avatar-preview-img--empty > svg { width:30px; height:30px; }
 .settings-avatar-badge { position:absolute; right:-2px; bottom:-2px; width:22px; height:22px; display:grid; place-items:center; border-radius:50%; background:#1a73e8; border:2px solid #fff; color:#fff; }
@@ -11104,20 +11110,20 @@ body {
 
 .workspace[data-theme='dark'] .notes-modal__close,
 .workspace[data-theme='dark'] .notes-modal__preview-toggle,
-.workspace[data-theme='dark'] .notes-modal__button {
+.workspace[data-theme='dark'] .notes-modal__button:not(.notes-modal__button--primary) {
   color: #c9d5e8;
 }
 
 .workspace[data-theme='dark'] .notes-modal__close:hover,
 .workspace[data-theme='dark'] .notes-modal__preview-toggle:hover,
 .workspace[data-theme='dark'] .notes-modal__preview-toggle--on,
-.workspace[data-theme='dark'] .notes-modal__button:hover:not(:disabled) {
+.workspace[data-theme='dark'] .notes-modal__button:hover:not(:disabled):not(.notes-modal__button--primary) {
   background: #1e2c40;
   color: #f1f5ff;
 }
 
 .workspace[data-theme='dark'] .notes-modal__preview-toggle,
-.workspace[data-theme='dark'] .notes-modal__button {
+.workspace[data-theme='dark'] .notes-modal__button:not(.notes-modal__button--primary) {
   border-color: #405675;
   background: #182436;
 }
@@ -11788,7 +11794,7 @@ body {
   height: 22px !important;
 }
 
-/* 备用会话视图（切换对话视图）：深色模�?*/
+/* 备用会话视图（切换对话视图）：深色模�?*/
 .workspace[data-theme='dark'] .stage__alternate-card {
   background: #101620 !important;
 }
@@ -12076,7 +12082,7 @@ body {
 .workspace[data-theme='dark'] .manager-rename button,
 .workspace[data-theme='dark'] .manager-rename__input,
 .workspace[data-theme='dark'] .notes-modal__preview-toggle,
-.workspace[data-theme='dark'] .notes-modal__button,
+.workspace[data-theme='dark'] .notes-modal__button:not(.notes-modal__button--primary),
 .workspace[data-theme='dark'] .prompt-modal__action {
   background: #101010 !important;
   border-color: #3d3d3d !important;
@@ -12093,7 +12099,7 @@ body {
 .workspace[data-theme='dark'] .manager-rename button:hover:not(:disabled),
 .workspace[data-theme='dark'] .notes-modal__preview-toggle:hover,
 .workspace[data-theme='dark'] .notes-modal__preview-toggle--on,
-.workspace[data-theme='dark'] .notes-modal__button:hover:not(:disabled),
+.workspace[data-theme='dark'] .notes-modal__button:hover:not(:disabled):not(.notes-modal__button--primary),
 .workspace[data-theme='dark'] .prompt-modal__action:hover,
 .workspace[data-theme='dark'] .prompt-modal__action--active {
   background: #1c1c1c !important;
@@ -12650,5 +12656,18 @@ body {
 .workspace[data-theme='dark'] .mysql-page__btn--primary {
   border-color: transparent;
   background: linear-gradient(135deg, #00758f, #00a0b8);
+  color: #fff;
+}
+/* Keep the primary (save) button legible while hovering and in dark mode. */
+.workspace[data-theme='dark'] .notes-modal__button--primary {
+  border-color: #5061f4;
+  background: linear-gradient(135deg, #6270ff, #4d59ec);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(77, 89, 236, .28);
+}
+
+.workspace[data-theme='dark'] .notes-modal__button--primary:hover:not(:disabled) {
+  border-color: #4a58e6;
+  background: linear-gradient(135deg, #5563ff, #3f4bd8);
   color: #fff;
 }
