@@ -361,6 +361,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const [questionPage, setQuestionPage] = useState(0)
   const [questionError, setQuestionError] = useState('')
   const [answeringQuestion, setAnsweringQuestion] = useState(false)
+  const [cancelingQuestion, setCancelingQuestion] = useState(false)
   const [questionMinimized, setQuestionMinimized] = useState(false)
   /** Non-null while the working directory is being edited inline. */
   const [cwdDraft, setCwdDraft] = useState<string | null>(null)
@@ -472,6 +473,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   const isAuto = automation?.mode === 'auto'
   const taskRunning = interceptor?.taskStartedAt != null && interceptor.taskFinishedAt == null
   const pendingQuestion = interceptor?.pendingQuestion ?? null
+  const questionBusy = answeringQuestion || cancelingQuestion
   const questionCount = pendingQuestion?.questions.length ?? 0
   const currentQuestion = pendingQuestion?.questions[questionPage] ?? null
   const currentQuestionDraft = questionDrafts[questionPage] ?? ''
@@ -991,6 +993,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     setQuestionPage(0)
     setQuestionError('')
     setAnsweringQuestion(false)
+    setCancelingQuestion(false)
     setQuestionMinimized(false)
   }, [pendingQuestion?.messageId])
 
@@ -1018,7 +1021,7 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
   }, [currentQuestionDraft, questionCount])
 
   const answerQuestion = useCallback(async (): Promise<void> => {
-    if (!pendingQuestion || answeringQuestion) return
+    if (!pendingQuestion || questionBusy) return
     const answers = pendingQuestion.questions.map((_, index) => (questionDrafts[index] ?? '').trim())
     const missingIndex = answers.findIndex((answer) => answer === '')
     if (missingIndex >= 0) {
@@ -1042,12 +1045,25 @@ export default function App({ initialSshDialogOpen = false, platformId = '', the
     } finally {
       setAnsweringQuestion(false)
     }
-  }, [answeringQuestion, pendingQuestion, questionDrafts])
+  }, [questionBusy, pendingQuestion, questionDrafts])
 
   const cancelQuestion = useCallback(async (): Promise<void> => {
-    if (answeringQuestion) return
-    await endTask()
-  }, [answeringQuestion, endTask])
+    if (!pendingQuestion || questionBusy) return
+    const messageId = pendingQuestion.messageId
+    setCancelingQuestion(true)
+    setQuestionError('')
+    try {
+      const next = await window.api.cancelQuestion(messageId)
+      // A late reply to cancelling an old question must preserve a newer one.
+      setInterceptor((current) => current?.pendingQuestion?.messageId === messageId
+        ? { ...current, pendingQuestion: next.pendingQuestion }
+        : current)
+    } catch (error) {
+      setQuestionError(error instanceof Error ? error.message : '取消问题失败，请重试。')
+    } finally {
+      setCancelingQuestion(false)
+    }
+  }, [pendingQuestion, questionBusy])
 
   const togglePaused = useCallback(async (): Promise<void> => {
     if (!automation) return
@@ -2821,7 +2837,7 @@ ${record.command}`
                     value={currentQuestionDraft}
                     placeholder={currentQuestion.placeholder || '输入你的回答…'}
                     aria-label="回答模型的问题"
-                    disabled={answeringQuestion}
+                    disabled={questionBusy}
                     onChange={(event) => {
                       updateQuestionDraft(event.currentTarget.value)
                     }}
@@ -2836,14 +2852,14 @@ ${record.command}`
                   {questionError ? <p className="question-modal__error" role="alert">{questionError}</p> : null}
                 </div>
                 <div className="question-modal__foot">
-                  <button type="button" className="question-modal__cancel" disabled={answeringQuestion} onClick={() => void cancelQuestion()}>取消并结束</button>
+                  <button type="button" className="question-modal__cancel" disabled={questionBusy} onClick={() => void cancelQuestion()}>取消</button>
                   <span className="panel__spacer" />
-                  <button type="button" className="question-modal__back" disabled={answeringQuestion || questionPage === 0} onClick={previousQuestion}>上一题</button>
+                  <button type="button" className="question-modal__back" disabled={questionBusy || questionPage === 0} onClick={previousQuestion}>上一题</button>
                   <span className="question-modal__hint">{typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'} + Enter {questionPage + 1 < questionCount ? '下一题' : '发送'}</span>
                   <button
                     type="button"
                     className="question-modal__confirm"
-                    disabled={answeringQuestion || !currentQuestionDraft.trim()}
+                    disabled={questionBusy || !currentQuestionDraft.trim()}
                     onClick={() => {
                       if (questionPage + 1 < questionCount) nextQuestion()
                       else void answerQuestion()

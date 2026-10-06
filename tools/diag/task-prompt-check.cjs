@@ -432,6 +432,129 @@ async function questionChecks() {
   log('PASS explicit task termination and replaced question IDs still reject obsolete answers')
 }
 
+async function cancelQuestionChecks() {
+  for (const kind of ['contenteditable', 'textarea']) {
+    const { p, instance } = questionSession(kind)
+    const messageId = p.state.pendingQuestion.messageId
+    const before = instance.getInterceptorStatus()
+    const pageBefore = { ...p.state }
+    const submissions = p.submissions.length
+    const eventCount = p.events.length
+    assert.equal(await p.lifecycle.cancelQuestion('wrong-question'), 'stale')
+    await assert.rejects(instance.cancelQuestion('wrong-question'), /问题已失效/)
+    assert.equal(p.state.pendingQuestion.messageId, messageId)
+    p.state.programmatic = true
+    await assert.rejects(instance.cancelQuestion(messageId), /正在处理中/)
+    assert.equal(p.state.pendingQuestion.messageId, messageId)
+    p.state.programmatic = false
+    const cancelled = await instance.cancelQuestion(messageId)
+    p.flush()
+    assert.equal(cancelled.pendingQuestion, null)
+    assert.equal(p.state.pendingQuestion, null)
+    assert.equal(p.state.answerDraft, null)
+    assert.equal(cancelled.taskStartedAt, before.taskStartedAt)
+    assert.equal(cancelled.taskFinishedAt, before.taskFinishedAt)
+    for (const key of ['taskActive', 'taskPromptInjected', 'taskPromptGeneration', 'awaitingReplySince', 'lastCommandMessageId']) {
+      assert.equal(p.state[key], pageBefore[key], `Cancellation must preserve ${key}`)
+    }
+    assert.equal(p.submissions.length, submissions, 'Cancellation must not send anything to the model')
+    assert.deepEqual(p.events.slice(eventCount).map(event => event.event), ['question-cleared'])
+    p.checkForCommand()
+    instance.setPromptParts({ basePrompt: 'local', toolPrompt: 'tools', prefix: 'environment-after-cancel' })
+    instance.setInterceptorEnabled(false)
+    instance.setInterceptorEnabled(true)
+    assert.equal(p.state.pendingQuestion, null, 'DOM/configuration updates must not reopen the cancelled question')
+    assert.equal(instance.getInterceptorStatus().pendingQuestion, null)
+    await assert.rejects(instance.answerQuestion(messageId, '取消后的旧回答'), /问题已失效/)
+    p.send('用户主动发送后续消息')
+    assert.equal(p.submissions.at(-1), '用户主动发送后续消息')
+    assert.equal(p.events.filter(event => event.event === 'injected').length, 1, 'Task prompt must remain injected')
+    p.reply('{"type":"questions","questions":[{"question":"后续的新问题？"}]}')
+    assert.ok(instance.getInterceptorStatus().pendingQuestion)
+    log(`PASS ${kind}: local cancellation sends nothing, preserves task/prompt and does not reopen old questions`)
+  }
+
+  for (const edited of [false, true]) {
+    const { p, instance } = questionSession()
+    const messageId = p.state.pendingQuestion.messageId
+    p.controls.accept = false
+    const answer = instance.answerQuestion(messageId, '未确认发送的回答草稿')
+    const rejected = assert.rejects(answer, /尚未确认发送/)
+    p.flush()
+    await rejected
+    assert.ok(p.state.answerDraft)
+    const submissions = p.submissions.length
+    const userMessages = p.events.filter(event => event.event === 'user-message').length
+    if (edited) p.composer.text = '用户后来编辑的独立草稿'
+    await instance.cancelQuestion(messageId)
+    p.flush()
+    assert.equal(p.composer.text, edited ? '用户后来编辑的独立草稿' : '')
+    assert.equal(p.state.answerDraft, null)
+    assert.equal(p.submissions.length, submissions)
+    assert.equal(p.events.filter(event => event.event === 'user-message').length, userMessages)
+  }
+  log('PASS cancellation clears only its owned failed-answer draft and preserves user edits without sending')
+
+  const retry = questionSession()
+  const retryId = retry.p.state.pendingQuestion.messageId
+  retry.p.state.answerDraft = { messageId: retryId, text: '无法清除的草稿' }
+  retry.p.composer.text = '无法清除的草稿'
+  retry.p.controls.write = false
+  await assert.rejects(retry.instance.cancelQuestion(retryId), /未能清除/)
+  assert.equal(retry.p.state.pendingQuestion.messageId, retryId)
+  assert.ok(retry.p.state.answerDraft)
+  retry.p.controls.write = true
+  await retry.instance.cancelQuestion(retryId)
+  assert.equal(retry.p.state.pendingQuestion, null)
+  log('PASS failed draft clearing leaves the question retryable')
+
+  const race = questionSession()
+  const oldId = race.p.state.pendingQuestion.messageId
+  const evaluate = race.instance.view.webContents.executeJavaScript
+  let release
+  race.instance.view.webContents.executeJavaScript = async script => {
+    const outcome = await evaluate(script)
+    if (script.includes('.cancelQuestion(')) await new Promise(resolve => { release = resolve })
+    return outcome
+  }
+  const cancellation = race.instance.cancelQuestion(oldId)
+  await Promise.resolve()
+  race.p.send('主动提出下一步')
+  race.p.reply('{"type":"questions","questions":[{"question":"新问题不能被旧取消清除。"}]}')
+  const newId = race.p.state.pendingQuestion.messageId
+  assert.notEqual(newId, oldId)
+  release()
+  const status = await cancellation
+  assert.equal(status.pendingQuestion.messageId, newId)
+  await assert.rejects(race.instance.cancelQuestion(oldId), /问题已失效/)
+  assert.equal(race.p.state.pendingQuestion.messageId, newId)
+  log('PASS stale cancellation and delayed results preserve a newer question')
+
+  // Execute the actual IPC handler with a runner that rejects all task-ending calls.
+  const indexSource = fs.readFileSync(path.join(root, 'src/main/index.ts'), 'utf8')
+  const start = indexSource.indexOf('  ipcMain.handle(IpcChannels.interceptorCancelQuestion,')
+  const end = indexSource.indexOf('  ipcMain.handle(IpcChannels.interceptorEndTask,', start)
+  assert.ok(start >= 0 && end > start)
+  let handler
+  const calls = []
+  const runtime = {
+    embed: { cancelQuestion: async id => { calls.push(id); return { pendingQuestion: null } } },
+    runner: { endTask() { throw new Error('Cancellation must not end the task') }, interruptTerminal() { throw new Error('Cancellation must not interrupt commands') } },
+    endTask() { throw new Error('Cancellation must not end the task') }
+  }
+  vm.runInNewContext(ts.transpileModule(indexSource.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText, {
+    ipcMain: { handle(channel, callback) { handler = callback } },
+    IpcChannels: { interceptorCancelQuestion: 'interceptor:cancel-question' },
+    runtimeForEvent: () => runtime
+  })
+  assert.equal((await handler({}, 'question-id')).pendingQuestion, null)
+  assert.deepEqual(calls, ['question-id'])
+  await assert.rejects(handler({}, null), /当前会话不可用/)
+  log('PASS cancellation IPC targets only the question and never ends tasks or interrupts commands')
+}
+
 log(`Log: ${logFile}`)
-main().then(remaining).then(questionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
+main().then(remaining).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
   .catch(error => { log(`FAIL ${error.stack || error}`); process.exitCode = 1 })

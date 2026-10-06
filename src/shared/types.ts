@@ -35,6 +35,7 @@ export const IpcChannels = {
   interceptorGetState: 'interceptor:get-state',
   interceptorSetEnabled: 'interceptor:set-enabled',
   interceptorAnswerQuestion: 'interceptor:answer-question',
+  interceptorCancelQuestion: 'interceptor:cancel-question',
   interceptorEndTask: 'interceptor:end-task',
   interceptorEvent: 'interceptor:event',
   settingsGet: 'settings:get',
@@ -1502,6 +1503,8 @@ export interface AppApi {
   setInterceptorEnabled(enabled: boolean): Promise<InterceptorStatus>
   /** Send the user's collected answers without re-injecting the prompt. */
   answerQuestion(messageId: string, answer: string): Promise<InterceptorStatus>
+  /** Dismiss the current question locally, preserving the task and sending no message. */
+  cancelQuestion(messageId: string): Promise<InterceptorStatus>
   /** Stop the current model/terminal loop and mark the task as manually ended. */
   endTask(): Promise<InterceptorStatus>
   onInterceptorEvent(listener: (status: InterceptorStatus) => void): () => void

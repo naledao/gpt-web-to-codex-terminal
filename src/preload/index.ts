@@ -172,6 +172,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   answerQuestion: (messageId: string, answer: string): Promise<InterceptorStatus> =>
     ipcRenderer.invoke(IpcChannels.interceptorAnswerQuestion, messageId, answer),
 
+  cancelQuestion: (messageId: string): Promise<InterceptorStatus> =>
+    ipcRenderer.invoke(IpcChannels.interceptorCancelQuestion, messageId),
+
   endTask: (): Promise<InterceptorStatus> => ipcRenderer.invoke(IpcChannels.interceptorEndTask),
 
   onInterceptorEvent: (listener: (status: InterceptorStatus) => void): (() => void) => {

@@ -2892,6 +2892,23 @@
       })
     },
 
+    /** Local dismissal: preserve task state and never send cancellation feedback. */
+    cancelQuestion(messageId) {
+      if (!state.pendingQuestion || state.pendingQuestion.messageId !== messageId) return 'stale'
+      if (state.programmatic) return 'busy'
+      // A failed answer send can leave our draft in the page composer. Clear only
+      // that unchanged draft, retaining any text the user has subsequently edited.
+      const draft = state.answerDraft?.messageId === messageId ? state.answerDraft.text : null
+      const element = draft ? getComposer() : null
+      if (element && composerMatches(element, draft) && !insertText(element, '')) return 'draft-clear-failed'
+      state.pendingQuestion = null
+      state.answerDraft = null
+      // lastCommandMessageId already marks this question as handled. Keep it and
+      // the task's prompt boundary so DOM/configuration updates cannot reopen it.
+      report({ event: 'question-cleared', messageId })
+      return 'cancelled'
+    },
+
     async answerQuestion(messageId, answer) {
       // Answers belong to the conversation; terminal mode and execution flags do not expire them.
       if (!state.pendingQuestion || state.pendingQuestion.messageId !== messageId) return 'stale'

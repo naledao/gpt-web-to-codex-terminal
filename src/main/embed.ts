@@ -799,6 +799,31 @@ export class ChatGptEmbed {
     return this.getInterceptorStatus()
   }
 
+  /** Clear only this question and its owned draft; do not end the task or submit a message. */
+  async cancelQuestion(messageId: string): Promise<InterceptorStatus> {
+    if (this.interceptor.pendingQuestion?.messageId !== messageId) {
+      throw new Error('这个问题已失效，请查看当前会话。')
+    }
+    const contents = this.liveContents()
+    if (!contents) throw new Error('模型页面尚未就绪，请稍后重试。')
+    const outcome: unknown = await contents.executeJavaScript(
+      `window.__cmdTerminalInterceptor ? window.__cmdTerminalInterceptor.cancelQuestion(${JSON.stringify(messageId)}) : 'not-ready'`
+    )
+    if (outcome !== 'cancelled') {
+      const messages: Record<string, string> = {
+        stale: '这个问题已失效，请查看当前会话。',
+        busy: '回答正在处理中，请稍后重试。',
+        'draft-clear-failed': '未能清除网页中的回答草稿，请稍后重试。'
+      }
+      throw new Error(messages[String(outcome)] ?? '模型页面尚未就绪，请稍后重试。')
+    }
+    if (this.interceptor.pendingQuestion?.messageId === messageId) {
+      this.interceptor.pendingQuestion = null
+      this.handlers.onInterceptor(this.getInterceptorStatus())
+    }
+    return this.getInterceptorStatus()
+  }
+
   /**
    * The live web contents, or null when the view is gone.
    *

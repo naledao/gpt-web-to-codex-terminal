@@ -179,6 +179,11 @@ SSH environment/prompt updates and terminal-mode toggles retain an open question
 answers and live follow-up questions still work with terminal mode off, failed drafts remain retryable, and
 environment updates retain an in-flight reply. Explicit task termination and
 replaced question IDs still invalidate old answers.
+Local-cancellation checks exercise the real page/main/IPC paths: cancellation
+clears the question and its owned failed-answer draft without sending a message,
+preserves task timestamps and the injected prompt, keeps later user edits, and
+rejects stale IDs. DOM/configuration updates must not reopen cancelled questions;
+late cancellation results must preserve a newer question. The runner is not called.
 Logs use `fs.appendFileSync` under
 `%TEMP%\gpt-login-diag\task-prompt-check-<timestamp>.log`.
 
@@ -199,6 +204,13 @@ ChatGPT and DeepSeek separately:
 8. With a question open, turn terminal mode off/on. The question remains; an answer
    can also be submitted while it is off, and the model's next live question still appears.
    Commands must stay disabled while it is off.
+9. With a question open, type an answer and click **取消**. The dialog and pending
+    question shortcut disappear, no message is sent to the model, and the task
+    remains active. SSH/mode/environment changes must not reopen the old question.
+    Sending a follow-up yourself continues the same task without another prompt.
+    **收起** must still retain the question/draft, and the separate **结束任务**
+    action must still end the task. Repeat cancellation after an unconfirmed answer
+    send: only the app-owned draft is cleared; later edits in the page are retained.
 
 The normal main-process log now reports `sent promptInjected=true/false` and
 `taskPromptInjected=true/false`. The first value describes that specific user message;

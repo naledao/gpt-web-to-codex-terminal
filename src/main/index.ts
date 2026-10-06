@@ -998,6 +998,11 @@ function registerIpcHandlers(): void {
     if (!runtime || typeof messageId !== 'string' || typeof answer !== 'string') throw new Error('当前会话不可用。')
     return runtime.embed.answerQuestion(messageId, answer)
   })
+  ipcMain.handle(IpcChannels.interceptorCancelQuestion, async (event, messageId: string): Promise<InterceptorStatus> => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime || typeof messageId !== 'string') throw new Error('当前会话不可用。')
+    return runtime.embed.cancelQuestion(messageId)
+  })
   ipcMain.handle(IpcChannels.interceptorEndTask, async (event): Promise<InterceptorStatus> => {
     const runtime = runtimeForEvent(event)
     return runtime ? await runtime.endTask() : FALLBACK_INTERCEPTOR_STATE
