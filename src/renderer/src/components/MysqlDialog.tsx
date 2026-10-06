@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import type { AppTheme, MysqlConnection } from '../../../shared/types'
+import type { AppTheme, MysqlConnection, MysqlConnectionDraft, MysqlConnectionsState } from '../../../shared/types'
 
 interface MysqlDialogProps {
   open: boolean
@@ -8,51 +8,138 @@ interface MysqlDialogProps {
   onClose: () => void
 }
 
+/** Editable shape of one connection. `port` stays a string while it is being typed. */
+interface ConnectionForm {
+  id: string
+  name: string
+  host: string
+  port: string
+  username: string
+  password: string
+  database: string
+}
+
+/** One open page. `key` is the row id, or a temporary one for a connection never saved. */
+interface ConnectionTab {
+  key: string
+  form: ConnectionForm
+}
+
+const EMPTY_FORM: ConnectionForm = {
+  id: '',
+  name: '',
+  host: '',
+  port: '3306',
+  username: '',
+  password: '',
+  database: ''
+}
+
+function formFromConnection(connection: MysqlConnection): ConnectionForm {
+  return {
+    id: connection.id,
+    name: connection.name,
+    host: connection.host,
+    port: String(connection.port || 3306),
+    username: connection.username,
+    password: connection.password,
+    database: connection.database
+  }
+}
+
+function draftFromForm(form: ConnectionForm): MysqlConnectionDraft {
+  const port = Number(form.port)
+  return {
+    id: form.id,
+    name: form.name.trim(),
+    host: form.host.trim(),
+    port: Number.isFinite(port) && port > 0 ? Math.trunc(port) : 3306,
+    username: form.username.trim(),
+    password: form.password,
+    database: form.database.trim()
+  }
+}
+
+/** Caption of a tab: the user own name for it, else where it points, else a placeholder. */
+function tabLabel(form: ConnectionForm): string {
+  if (form.name.trim() !== '') return form.name.trim()
+  if (form.host.trim() !== '') return form.host.trim()
+  return form.id === '' ? '新建连接' : '未命名连接'
+}
+
+function connectionLabel(connection: MysqlConnection): string {
+  if (connection.name.trim() !== '') return connection.name.trim()
+  if (connection.host.trim() !== '') return connection.host.trim()
+  return '未命名连接'
+}
+
+function connectionTarget(connection: MysqlConnection): string {
+  const user = connection.username.trim()
+  const host = connection.host.trim() || '未填写主机'
+  const port = connection.port ? `:${connection.port}` : ''
+  return `${user === '' ? '' : `${user}@`}${host}${port}`
+}
+
+/** True when the form still matches what is stored, password included. */
+function matchesSaved(form: ConnectionForm, saved: MysqlConnection): boolean {
+  const draft = draftFromForm(form)
+  return (
+    draft.name === saved.name &&
+    draft.host === saved.host &&
+    draft.port === saved.port &&
+    draft.username === saved.username &&
+    draft.database === saved.database &&
+    form.password === saved.password
+  )
+}
+
 /**
  * The MySQL connection page, opened from the toolbox.
  *
- * Full-screen rather than a small card, because it is the first thing a connection
- * flow needs and the fields (plus whatever a later "browse tables / run SQL" step
- * adds) do not belong in a 440px box. Same reasoning as the Git dialog next to it.
+ * Full-screen rather than a small card, because it is the first thing a connection flow
+ * needs and the fields (plus whatever a later "browse tables / run SQL" step adds) do not
+ * belong in a 440px box. Same reasoning as the Git dialog next to it.
  *
- * One connection PER MACHINE, for the same reason the notes are machine-scoped: a
- * connection describes one database on one machine, and carrying it to another host
- * would be worse than having none. The machine is whichever the terminal is driving
- * right now, so this page only ever edits that one and says which it is.
+ * A machine keeps a LIST of connections. One row per machine could not describe the
+ * ordinary case of a local database next to a staging one, and it made this form
+ * overwrite itself the moment a second connection was entered.
  *
- * Saving is the whole feature for now. Connecting, browsing tables and running SQL
- * come later; nothing here pretends to have tested the connection.
+ * The tabs are an in-memory convenience, not stored state: they exist so that comparing two
+ * connections does not mean losing the first one, and losing them on restart costs nothing
+ * because the connections themselves are in the database.
+ *
+ * Saving is the whole feature for now. Connecting, browsing tables and running SQL come
+ * later; nothing here pretends to have tested the connection.
  */
 export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps): ReactElement | null {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [reveal, setReveal] = useState(false)
   const [error, setError] = useState('')
-  const [label, setLabel] = useState('')
-  const [host, setHost] = useState('')
-  const [port, setPort] = useState('3306')
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [database, setDatabase] = useState('')
+  const [state, setState] = useState<MysqlConnectionsState | null>(null)
+  const [tabs, setTabs] = useState<ConnectionTab[]>([])
+  const [activeKey, setActiveKey] = useState('')
+  const [reveal, setReveal] = useState(false)
+  const newTabRef = useRef(0)
+
+  const connections = state?.connections ?? []
+  const machineLabel = state?.machineLabel ?? ''
+  const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null
+  const activeForm = activeTab?.form ?? null
+  const activeSaved =
+    activeForm !== null && activeForm.id !== ''
+      ? connections.find((connection) => connection.id === activeForm.id) ?? null
+      : null
+  const savedNow = activeForm !== null && activeSaved !== null && matchesSaved(activeForm, activeSaved)
 
   useEffect(() => {
     if (!open) return
     let cancelled = false
     setLoading(true)
     setError('')
-    setSaved(false)
-    setReveal(false)
     void window.api
-      .getMysqlConnection()
-      .then((connection: MysqlConnection) => {
-        if (cancelled) return
-        setLabel(connection.label)
-        setHost(connection.host)
-        setPort(String(connection.port || 3306))
-        setUsername(connection.username)
-        setPassword(connection.password)
-        setDatabase(connection.database)
+      .listMysqlConnections()
+      .then((next) => {
+        if (!cancelled) setState(next)
       })
       .catch(() => {
         if (!cancelled) setError('读取已保存的连接失败。')
@@ -65,6 +152,12 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     }
   }, [open])
 
+  // Another window, or a machine change, can rewrite the list underneath this one.
+  useEffect(() => {
+    if (!open) return
+    return window.api.onMysqlConnectionChanged((next) => setState(next))
+  }, [open])
+
   // Escape closes the page, like every other dialog on the platform.
   useEffect(() => {
     if (!open) return
@@ -75,35 +168,94 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [open, onClose])
 
+  /** Open a saved connection in its own tab, or bring the tab it already has to the front. */
+  const openConnectionTab = useCallback((connection: MysqlConnection) => {
+    setTabs((current) =>
+      current.some((tab) => tab.key === connection.id)
+        ? current
+        : [...current, { key: connection.id, form: formFromConnection(connection) }]
+    )
+    setActiveKey(connection.id)
+    setReveal(false)
+    setError('')
+  }, [])
+
+  const addTab = useCallback(() => {
+    newTabRef.current += 1
+    const key = `new:${newTabRef.current}`
+    setTabs((current) => [...current, { key, form: { ...EMPTY_FORM } }])
+    setActiveKey(key)
+    setReveal(false)
+    setError('')
+  }, [])
+
+  const closeTab = useCallback(
+    (key: string) => {
+      const index = tabs.findIndex((tab) => tab.key === key)
+      if (index < 0) return
+      const next = tabs.filter((tab) => tab.key !== key)
+      setTabs(next)
+      if (activeKey === key) {
+        setActiveKey(next.length === 0 ? '' : next[Math.min(index, next.length - 1)].key)
+      }
+    },
+    [tabs, activeKey]
+  )
+
+  const updateForm = useCallback(
+    (patch: Partial<ConnectionForm>): void => {
+      setTabs((current) =>
+        current.map((tab) => (tab.key === activeKey ? { ...tab, form: { ...tab.form, ...patch } } : tab))
+      )
+    },
+    [activeKey]
+  )
+
   const save = useCallback(async (): Promise<void> => {
-    if (saving) return
+    if (saving || activeForm === null || activeTab === null) return
     setSaving(true)
     setError('')
-    const rawPort = Number(port)
+    const key = activeTab.key
     try {
-      const next = await window.api.setMysqlConnection({
-        scope: 'local',
-        hostId: '',
-        label,
-        host: host.trim(),
-        port: Number.isFinite(rawPort) && rawPort > 0 ? rawPort : 3306,
-        username: username.trim(),
-        password,
-        database: database.trim()
-      })
-      setLabel(next.label)
-      setHost(next.host)
-      setPort(String(next.port || 3306))
-      setUsername(next.username)
-      setPassword(next.password)
-      setDatabase(next.database)
-      setSaved(true)
+      const result = await window.api.saveMysqlConnection(draftFromForm(activeForm))
+      setState({ machineLabel: result.machineLabel, connections: result.connections })
+      const saved = result.connections.find((connection) => connection.id === result.id) ?? null
+      // A brand-new connection is keyed by a temporary id until this moment; the row id
+      // replaces it, so the tab it was opened in becomes the tab of the saved row.
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.key === key
+            ? { key: result.id, form: saved ? formFromConnection(saved) : { ...tab.form, id: result.id } }
+            : tab
+        )
+      )
+      setActiveKey((active) => (active === key ? result.id : active))
     } catch {
       setError('保存失败，请重试。')
     } finally {
       setSaving(false)
     }
-  }, [database, host, label, password, port, saving, username])
+  }, [activeForm, activeTab, saving])
+
+  const remove = useCallback(
+    async (connection: MysqlConnection): Promise<void> => {
+      if (!window.confirm(`删除连接「${connectionLabel(connection)}」？`)) return
+      setError('')
+      try {
+        const next = await window.api.removeMysqlConnection(connection.id)
+        setState(next)
+        const index = tabs.findIndex((tab) => tab.key === connection.id)
+        const remaining = tabs.filter((tab) => tab.key !== connection.id)
+        setTabs(remaining)
+        if (activeKey === connection.id) {
+          setActiveKey(remaining.length === 0 ? '' : remaining[Math.min(index, remaining.length - 1)].key)
+        }
+      } catch {
+        setError('删除失败，请重试。')
+      }
+    },
+    [tabs, activeKey]
+  )
 
   if (!open) return null
 
@@ -116,22 +268,64 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     >
       <div className="mysql-page">
         <header className="mysql-page__head">
-          <span className="mysql-page__mark" aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <ellipse cx="12" cy="5.6" rx="7.2" ry="2.8" />
-              <path d="M4.8 5.6v12.8c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8V5.6" />
-              <path d="M4.8 12c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8" />
+          <button
+            type="button"
+            className="mysql-page__add"
+            title="新建一个连接"
+            onClick={addTab}
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
+              <path d="M8 3.2v9.6M3.2 8h9.6" />
             </svg>
-          </span>
-          <div className="mysql-page__titles">
-            <h2 className="mysql-page__title">MySQL 连接</h2>
-            <span className="mysql-page__scope" title={label}>
-              只对当前机器生效{label ? ` · ${label}` : ''}
-            </span>
+            添加连接
+          </button>
+
+          <div className="mysql-page__tabs" role="tablist" aria-label="打开的连接">
+            {tabs.length === 0 ? (
+              <span className="mysql-page__tabs-empty">未打开任何连接</span>
+            ) : (
+              tabs.map((tab) => (
+                <div
+                  key={tab.key}
+                  className={tab.key === activeKey ? 'mysql-page__tab mysql-page__tab--active' : 'mysql-page__tab'}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab.key === activeKey}
+                    className="mysql-page__tab-label"
+                    title={tabLabel(tab.form)}
+                    onClick={() => {
+                      setActiveKey(tab.key)
+                      setReveal(false)
+                      setError('')
+                    }}
+                  >
+                    {tabLabel(tab.form)}
+                  </button>
+                  <button
+                    type="button"
+                    className="mysql-page__tab-close"
+                    aria-label={`关闭 ${tabLabel(tab.form)}`}
+                    title="关闭这个页面（连接仍保留在左侧列表）"
+                    onClick={() => closeTab(tab.key)}
+                  >
+                    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
+                      <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              ))
+            )}
           </div>
+
           <span className="panel__spacer" />
-          <span className={saved ? 'mysql-page__badge mysql-page__badge--ok' : 'mysql-page__badge'}>
-            <i />{saved ? '已保存' : '未保存'}
+          <span
+            className={savedNow ? 'mysql-page__badge mysql-page__badge--ok' : 'mysql-page__badge'}
+            title={activeForm === null ? '没有打开的连接' : savedNow ? '与已保存的内容一致' : '有改动尚未保存'}
+          >
+            <i />
+            {activeForm === null ? '未打开' : savedNow ? '已保存' : '未保存'}
           </span>
           <button type="button" className="mysql-page__close" aria-label="关闭" onClick={onClose}>
             <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
@@ -141,102 +335,186 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
         </header>
 
         <div className="mysql-page__body">
-          <div className="mysql-page__card">
-            <div className="mysql-page__card-head">
-              <span className="mysql-page__card-title">连接信息</span>
-              <span className="mysql-page__card-note">保存后即可在后续版本中连接使用</span>
+          <aside className="mysql-page__sidebar">
+            <div className="mysql-page__sidebar-head">
+              <span className="mysql-page__sidebar-title">已保存连接</span>
+              <span className="mysql-page__sidebar-count">{connections.length}</span>
             </div>
-
             {loading ? (
-              <p className="mysql-page__hint">正在读取已保存的连接…</p>
+              <p className="mysql-page__hint mysql-page__sidebar-hint">正在读取已保存的连接…</p>
+            ) : connections.length === 0 ? (
+              <p className="mysql-page__hint mysql-page__sidebar-hint">
+                还没有保存的连接。点左上角「添加连接」新建一个。
+              </p>
             ) : (
-              <div className="mysql-page__grid">
-                <label className="mysql-page__field mysql-page__field--host">
-                  <span className="mysql-page__label">主机 / IP</span>
-                  <input
-                    className="mysql-page__input"
-                    value={host}
-                    spellCheck={false}
-                    placeholder="127.0.0.1"
-                    onChange={(event) => { setHost(event.target.value); setSaved(false) }}
-                  />
-                </label>
+              <ul className="mysql-page__sidebar-list">
+                {connections.map((connection) => (
+                  <li key={connection.id}>
+                    <div
+                      className={
+                        activeForm !== null && activeForm.id === connection.id
+                          ? 'mysql-page__item mysql-page__item--active'
+                          : 'mysql-page__item'
+                      }
+                    >
+                      <button
+                        type="button"
+                        className="mysql-page__item-main"
+                        title={`${connectionLabel(connection)} · ${connectionTarget(connection)}`}
+                        onClick={() => openConnectionTab(connection)}
+                      >
+                        <span className="mysql-page__item-name">{connectionLabel(connection)}</span>
+                        <span className="mysql-page__item-target">{connectionTarget(connection)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="mysql-page__item-remove"
+                        aria-label={`删除 ${connectionLabel(connection)}`}
+                        title="从数据库删除"
+                        onClick={() => void remove(connection)}
+                      >
+                        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                          <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </aside>
 
-                <label className="mysql-page__field mysql-page__field--port">
-                  <span className="mysql-page__label">端口</span>
-                  <input
-                    className="mysql-page__input"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={port}
-                    onChange={(event) => { setPort(event.target.value); setSaved(false) }}
-                  />
-                </label>
+          <section className="mysql-page__detail">
+            {activeForm === null ? (
+              <div className="mysql-page__empty">
+                <span className="mysql-page__empty-mark" aria-hidden="true">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <ellipse cx="12" cy="5.6" rx="7.2" ry="2.8" />
+                    <path d="M4.8 5.6v12.8c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8V5.6" />
+                    <path d="M4.8 12c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8" />
+                  </svg>
+                </span>
+                <p className="mysql-page__empty-title">没有打开的连接</p>
+                <p className="mysql-page__empty-sub">
+                  点左上角「添加连接」新建，或在左侧列表里点一个已保存的连接把它打开。
+                </p>
+              </div>
+            ) : (
+              <div className="mysql-page__card">
+                <div className="mysql-page__card-head">
+                  <span className="mysql-page__card-title">连接信息</span>
+                  <span className="mysql-page__card-note">
+                    只对当前机器生效{machineLabel ? ` · ${machineLabel}` : ''}
+                  </span>
+                </div>
 
-                <label className="mysql-page__field">
-                  <span className="mysql-page__label">用户名</span>
-                  <input
-                    className="mysql-page__input"
-                    value={username}
-                    spellCheck={false}
-                    placeholder="root"
-                    onChange={(event) => { setUsername(event.target.value); setSaved(false) }}
-                  />
-                </label>
-
-                <label className="mysql-page__field">
-                  <span className="mysql-page__label">密码</span>
-                  <span className="mysql-page__password">
+                <div className="mysql-page__grid">
+                  <label className="mysql-page__field mysql-page__field--wide">
+                    <span className="mysql-page__label">连接名称</span>
                     <input
                       className="mysql-page__input"
-                      type={reveal ? 'text' : 'password'}
-                      value={password}
+                      value={activeForm.name}
                       spellCheck={false}
-                      autoComplete="off"
-                      placeholder="留空则保留已保存的密码"
-                      onChange={(event) => { setPassword(event.target.value); setSaved(false) }}
+                      placeholder="例如：本地开发库"
+                      onChange={(event) => updateForm({ name: event.target.value })}
                     />
-                    <button
-                      type="button"
-                      className="mysql-page__reveal"
-                      aria-label={reveal ? '隐藏密码' : '显示密码'}
-                      title={reveal ? '隐藏密码' : '显示密码'}
-                      onClick={() => setReveal((value) => !value)}
-                    >
-                      {reveal ? '隐藏' : '显示'}
-                    </button>
-                  </span>
-                </label>
+                  </label>
 
-                <label className="mysql-page__field mysql-page__field--wide">
-                  <span className="mysql-page__label">默认数据库</span>
-                  <input
-                    className="mysql-page__input"
-                    value={database}
-                    spellCheck={false}
-                    placeholder="可留空"
-                    onChange={(event) => { setDatabase(event.target.value); setSaved(false) }}
-                  />
-                </label>
+                  <label className="mysql-page__field mysql-page__field--host">
+                    <span className="mysql-page__label">主机 / IP</span>
+                    <input
+                      className="mysql-page__input"
+                      value={activeForm.host}
+                      spellCheck={false}
+                      placeholder="127.0.0.1"
+                      onChange={(event) => updateForm({ host: event.target.value })}
+                    />
+                  </label>
 
-                <p className="mysql-page__hint mysql-page__hint--note mysql-page__field--wide">
-                  密码会用系统加密后保存在本机数据库，不会明文写入。
-                </p>
-                {error ? <p className="mysql-page__hint mysql-page__hint--error mysql-page__field--wide" role="alert">{error}</p> : null}
+                  <label className="mysql-page__field mysql-page__field--port">
+                    <span className="mysql-page__label">端口</span>
+                    <input
+                      className="mysql-page__input"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={activeForm.port}
+                      onChange={(event) => updateForm({ port: event.target.value })}
+                    />
+                  </label>
+
+                  <label className="mysql-page__field">
+                    <span className="mysql-page__label">用户名</span>
+                    <input
+                      className="mysql-page__input"
+                      value={activeForm.username}
+                      spellCheck={false}
+                      placeholder="root"
+                      onChange={(event) => updateForm({ username: event.target.value })}
+                    />
+                  </label>
+
+                  <label className="mysql-page__field">
+                    <span className="mysql-page__label">密码</span>
+                    <span className="mysql-page__password">
+                      <input
+                        className="mysql-page__input"
+                        type={reveal ? 'text' : 'password'}
+                        value={activeForm.password}
+                        spellCheck={false}
+                        autoComplete="off"
+                        placeholder="留空则保留已保存的密码"
+                        onChange={(event) => updateForm({ password: event.target.value })}
+                      />
+                      <button
+                        type="button"
+                        className="mysql-page__reveal"
+                        aria-label={reveal ? '隐藏密码' : '显示密码'}
+                        title={reveal ? '隐藏密码' : '显示密码'}
+                        onClick={() => setReveal((value) => !value)}
+                      >
+                        {reveal ? '隐藏' : '显示'}
+                      </button>
+                    </span>
+                  </label>
+
+                  <label className="mysql-page__field mysql-page__field--wide">
+                    <span className="mysql-page__label">默认数据库</span>
+                    <input
+                      className="mysql-page__input"
+                      value={activeForm.database}
+                      spellCheck={false}
+                      placeholder="可留空"
+                      onChange={(event) => updateForm({ database: event.target.value })}
+                    />
+                  </label>
+
+                  <p className="mysql-page__hint mysql-page__hint--note mysql-page__field--wide">
+                    密码会用系统加密后保存在本机数据库，不会明文写入。
+                  </p>
+                  {error ? (
+                    <p className="mysql-page__hint mysql-page__hint--error mysql-page__field--wide" role="alert">
+                      {error}
+                    </p>
+                  ) : null}
+                </div>
               </div>
             )}
-          </div>
+          </section>
         </div>
 
         <footer className="mysql-page__foot">
-          <span className="mysql-page__foot-hint">MySQL 连接按机器分别保存，切换机器后各自独立。</span>
+          <span className="mysql-page__foot-hint">
+            MySQL 连接按机器分别保存，可以存多条；标签页只是本次打开，重启后从左侧列表重新打开。
+          </span>
           <span className="panel__spacer" />
-          <button type="button" className="mysql-page__btn" onClick={onClose}>关闭</button>
+          <button type="button" className="mysql-page__btn" onClick={onClose}>
+            关闭
+          </button>
           <button
             type="button"
             className="mysql-page__btn mysql-page__btn--primary"
-            disabled={loading || saving}
+            disabled={activeForm === null || saving || savedNow}
             onClick={() => void save()}
           >
             {saving ? '保存中…' : '保存'}

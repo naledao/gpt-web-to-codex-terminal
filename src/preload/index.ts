@@ -20,7 +20,10 @@ import type {
   GitFileDiff,
   GitLogResult,
   ManagedSessionSummary,
-  MysqlConnection,
+
+  MysqlConnectionDraft,
+  MysqlConnectionsState,
+  MysqlSaveResult,
   WorkspaceState,
   SessionImportDraft,
   SessionImportResult,
@@ -338,20 +341,22 @@ removeConversation: (id: string): Promise<Conversation[]> =>
       ipcRenderer.removeListener(IpcChannels.terminalNotesChanged, handler)
     }
   },
-  getMysqlConnection: (): Promise<MysqlConnection> =>
-    ipcRenderer.invoke(IpcChannels.mysqlConnGet),
+  listMysqlConnections: (): Promise<MysqlConnectionsState> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnList),
 
-  setMysqlConnection: (connection: MysqlConnection): Promise<MysqlConnection> =>
-    ipcRenderer.invoke(IpcChannels.mysqlConnSet, connection),
+  saveMysqlConnection: (draft: MysqlConnectionDraft): Promise<MysqlSaveResult> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnSave, draft),
 
-  onMysqlConnectionChanged: (listener: (connection: MysqlConnection) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, connection: MysqlConnection): void => listener(connection)
+  removeMysqlConnection: (id: string): Promise<MysqlConnectionsState> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnRemove, id),
+
+  onMysqlConnectionChanged: (listener: (state: MysqlConnectionsState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: MysqlConnectionsState): void => listener(state)
     ipcRenderer.on(IpcChannels.mysqlConnChanged, handler)
     return () => {
       ipcRenderer.removeListener(IpcChannels.mysqlConnChanged, handler)
     }
   },
-
   onEmbedState: (listener: (state: EmbedState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: EmbedState): void => listener(state)
     ipcRenderer.on(IpcChannels.embedState, handler)

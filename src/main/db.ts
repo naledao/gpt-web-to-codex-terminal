@@ -17,6 +17,31 @@ import type {
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
+const MYSQL_CONNECTIONS_TABLE = `-- Saved MySQL connections for one machine -- a LIST, not a single row.
+--
+-- One row per machine could not describe the ordinary case of a local database next
+-- to a staging one, and it made the connection form overwrite itself every time a
+-- second connection was entered. Its id is the row own identity and is what the
+-- dialog tabs are keyed by.
+--
+-- The password is never stored in the clear: secret holds base64 of Electron safeStorage
+-- ciphertext (DPAPI-backed on Windows), or empty when none is set.
+CREATE TABLE IF NOT EXISTS mysql_connections (
+  id            TEXT NOT NULL,
+  machine_scope TEXT NOT NULL,
+  host_id       TEXT NOT NULL DEFAULT '',
+  name          TEXT NOT NULL DEFAULT '',
+  host          TEXT NOT NULL DEFAULT '',
+  port          INTEGER NOT NULL DEFAULT 3306,
+  username      TEXT NOT NULL DEFAULT '',
+  secret        TEXT NOT NULL DEFAULT '',
+  database      TEXT NOT NULL DEFAULT '',
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mysql_connections_machine ON mysql_connections (machine_scope, host_id, updated_at);`
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   id            TEXT PRIMARY KEY,
@@ -156,20 +181,7 @@ CREATE TABLE IF NOT EXISTS terminal_directory_notes (
   PRIMARY KEY (machine_scope, host_id, directory_key)
 );
 
--- One saved MySQL connection PER MACHINE, mirroring how ssh_hosts carries a note.
--- The password is never stored in the clear: secret holds base64 of Electron safeStorage
--- ciphertext (DPAPI-backed on Windows), or empty when none is set.
-CREATE TABLE IF NOT EXISTS mysql_connections (
-  machine_scope TEXT NOT NULL,
-  host_id       TEXT NOT NULL DEFAULT '',
-  host          TEXT NOT NULL DEFAULT '',
-  port          INTEGER NOT NULL DEFAULT 3306,
-  username      TEXT NOT NULL DEFAULT '',
-  secret        TEXT NOT NULL DEFAULT '',
-  database      TEXT NOT NULL DEFAULT '',
-  updated_at    INTEGER NOT NULL,
-  PRIMARY KEY (machine_scope, host_id)
-);
+${MYSQL_CONNECTIONS_TABLE}
 `
 
 interface ConversationRow {
@@ -318,7 +330,40 @@ export class ConversationStore {
     if (!sshColumns.some((column) => column.name === 'note')) {
       this.db.exec("ALTER TABLE ssh_hosts ADD COLUMN note TEXT NOT NULL DEFAULT ''")
     }
-
+    /*
+     * mysql_connections gained an `id` column, so the table is a LIST now rather than one
+     * row per machine. CREATE TABLE IF NOT EXISTS leaves the old shape alone, and a primary
+     * key cannot be altered in place, so the legacy rows are carried into the new table and
+     * the old one is dropped. Those rows were one-connection-per-machine, which maps onto
+     * exactly one row each; the connection gets an empty name and is labelled by its host.
+     */
+    const mysqlColumns = this.db
+      .prepare('PRAGMA table_info(mysql_connections)')
+      .all() as unknown as Array<{ name: string }>
+    if (!mysqlColumns.some((column) => column.name === 'id')) {
+      this.db.exec('ALTER TABLE mysql_connections RENAME TO mysql_connections_legacy')
+      this.db.exec(MYSQL_CONNECTIONS_TABLE)
+      const legacyRows = this.db
+        .prepare('SELECT machine_scope, host_id, host, port, username, secret, database, updated_at FROM mysql_connections_legacy')
+        .all() as unknown as Array<{
+        machine_scope: string
+        host_id: string
+        host: string
+        port: number
+        username: string
+        secret: string
+        database: string
+        updated_at: number
+      }>
+      const insertLegacy = this.db.prepare(
+        'INSERT INTO mysql_connections (id, machine_scope, host_id, name, host, port, username, secret, database, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      for (const row of legacyRows) {
+        insertLegacy.run(randomUUID(), row.machine_scope, row.host_id, '', row.host, row.port, row.username, row.secret, row.database, row.updated_at)
+      }
+      this.db.exec('DROP TABLE mysql_connections_legacy')
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_mysql_connections_machine ON mysql_connections (machine_scope, host_id, updated_at)')
+    }
     const managedSessionColumns = this.db
       .prepare('PRAGMA table_info(managed_sessions)')
       .all() as unknown as Array<{ name: string }>
@@ -1042,27 +1087,60 @@ export class ConversationStore {
   /* ---------------- mysql connections ---------------- */
 
   /**
-   * The stored connection for one machine, or empty fields when none.
+   * Every stored connection for one machine, oldest first.
    *
    * `secret` is the ciphertext only. It is decrypted in the session runtime, so the
    * raw value never travels further than it has to.
    */
-  readMysqlConnection(scope: string, hostId: string): { host: string; port: number; username: string; secret: string; database: string } {
-    const row = this.db
-      .prepare('SELECT host, port, username, secret, database FROM mysql_connections WHERE machine_scope = ? AND host_id = ?')
-      .get(scope, hostId) as { host: string; port: number; username: string; secret: string; database: string } | undefined
-    return row ?? { host: '', port: 3306, username: '', secret: '', database: '' }
+  listMysqlConnections(scope: string, hostId: string): Array<{
+    id: string
+    name: string
+    host: string
+    port: number
+    username: string
+    secret: string
+    database: string
+    updatedAt: number
+  }> {
+    const rows = this.db
+      .prepare(
+        'SELECT id, name, host, port, username, secret, database, updated_at FROM mysql_connections WHERE machine_scope = ? AND host_id = ? ORDER BY updated_at ASC, id ASC'
+      )
+      .all(scope, hostId) as unknown as Array<{
+      id: string
+      name: string
+      host: string
+      port: number
+      username: string
+      secret: string
+      database: string
+      updated_at: number
+    }>
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      host: row.host,
+      port: row.port,
+      username: row.username,
+      secret: row.secret,
+      database: row.database,
+      updatedAt: row.updated_at
+    }))
   }
 
   /**
-   * Write the connection for one machine.
+   * Insert or update one connection.
    *
    * An empty incoming secret means: keep what is already stored, exactly like
-   * ssh_hosts. Reopening the dialog without retyping the password must not erase it.
+   * ssh_hosts. Reopening the form without retyping the password must not erase it.
+   * The incoming id is always honoured, so a new row is one the caller already knows
+   * the id of and can therefore open a tab on.
    */
   upsertMysqlConnection(record: {
+    id: string
     scope: string
     hostId: string
+    name: string
     host: string
     port: number
     username: string
@@ -1072,9 +1150,10 @@ export class ConversationStore {
     const now = Date.now()
     this.db
       .prepare(
-        `INSERT INTO mysql_connections (machine_scope, host_id, host, port, username, secret, database, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(machine_scope, host_id) DO UPDATE SET
+        `INSERT INTO mysql_connections (id, machine_scope, host_id, name, host, port, username, secret, database, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
            host = excluded.host,
            port = excluded.port,
            username = excluded.username,
@@ -1082,13 +1161,12 @@ export class ConversationStore {
            database = excluded.database,
            updated_at = excluded.updated_at`
       )
-      .run(record.scope, record.hostId, record.host, record.port, record.username, record.secret, record.database, now)
+      .run(record.id, record.scope, record.hostId, record.name, record.host, record.port, record.username, record.secret, record.database, now)
   }
 
-  removeMysqlConnection(scope: string, hostId: string): void {
-    this.db.prepare('DELETE FROM mysql_connections WHERE machine_scope = ? AND host_id = ?').run(scope, hostId)
+  removeMysqlConnection(id: string): void {
+    this.db.prepare('DELETE FROM mysql_connections WHERE id = ?').run(id)
   }
-
   listManagedSessions(): ManagedSessionRecord[] {
     const rows = this.db
       .prepare(

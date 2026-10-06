@@ -44,7 +44,10 @@ import type {
   TerminalNotes,
   TerminalNotesOwner,
   TerminalState,
-  MysqlConnection,
+
+  MysqlConnectionDraft,
+  MysqlConnectionsState,
+  MysqlSaveResult,
   UpdateStatus
 } from '../shared/types'
 import { embedAuthState, importCookieSet, importSessionToken, previewSessionImport } from './session-import'
@@ -417,7 +420,7 @@ const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
 const FALLBACK_AUTOMATION: AutomationState = { mode: 'manual', paused: true }
 const FALLBACK_TERMINAL_STATE: TerminalState = { alive: false, cwd: '', lines: [], sendDelaySeconds: 0 }
 const EMPTY_NOTES: TerminalNotes = { scope: 'local', hostId: '', directoryKey: '', directory: '', label: '', text: '', legacyText: '' }
-const EMPTY_MYSQL: MysqlConnection = { scope: 'local', hostId: '', label: '', host: '', port: 3306, username: '', password: '', database: '' }
+const EMPTY_MYSQL: MysqlConnectionsState = { machineLabel: '', connections: [] }
 
 function normalizeProxy(raw: string): string {
   const trimmed = raw.trim()
@@ -1116,8 +1119,9 @@ function registerIpcHandlers(): void {
     if (!runtime || typeof text !== 'string') throw new Error('当前会话不可用。')
     return runtime.applyTerminalNotes(text, owner)
   })
-  ipcMain.handle(IpcChannels.mysqlConnGet, (event): MysqlConnection => runtimeForEvent(event)?.currentMysqlConnection() ?? EMPTY_MYSQL)
-  ipcMain.handle(IpcChannels.mysqlConnSet, (event, connection: MysqlConnection): MysqlConnection => runtimeForEvent(event)?.applyMysqlConnection(connection) ?? EMPTY_MYSQL)
+  ipcMain.handle(IpcChannels.mysqlConnList, (event): MysqlConnectionsState => runtimeForEvent(event)?.listMysqlConnections() ?? EMPTY_MYSQL)
+  ipcMain.handle(IpcChannels.mysqlConnSave, (event, draft: MysqlConnectionDraft): MysqlSaveResult => runtimeForEvent(event)?.saveMysqlConnection(draft) ?? { ...EMPTY_MYSQL, id: '' })
+  ipcMain.handle(IpcChannels.mysqlConnRemove, (event, id: string): MysqlConnectionsState => runtimeForEvent(event)?.removeMysqlConnection(id) ?? EMPTY_MYSQL)
 
   ipcMain.handle(IpcChannels.sshGetState, (event): SshState => runtimeForEvent(event)?.ssh.getState() ?? { ...EMPTY_SSH_STATE })
   ipcMain.handle(IpcChannels.sshListHosts, (event): SshHost[] => runtimeForEvent(event)?.listSshHosts() ?? [])

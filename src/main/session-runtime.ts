@@ -24,7 +24,9 @@ import type {
   ExecutionMode,
   InterceptorStatus,
   ManagedSessionSummary,
-  MysqlConnection,
+  MysqlConnectionDraft,
+  MysqlConnectionsState,
+  MysqlSaveResult,
   ParsedAction,
   SshHost,
   SshHostDraft,
@@ -1049,45 +1051,67 @@ export class SessionRuntime {
   }
 
   /**
-   * The saved MySQL connection for whichever machine the terminal is driving.
+   * Every saved MySQL connection for whichever machine the terminal is driving.
    *
-   * A connection describes ONE database on ONE machine. The password is decrypted
-   * here so the dialog can show it back; it
-   * never leaves this process except on its way into that dialog.
+   * Connections describe ONE database on ONE machine, and a machine keeps a list of
+   * them. The passwords are decrypted here so the dialog can show them back; they
+   * never leave this process except on their way into that dialog.
    */
-  currentMysqlConnection(): MysqlConnection {
+  listMysqlConnections(): MysqlConnectionsState {
+    return this.readMysqlConnectionsState()
+  }
+
+  /**
+   * Persist one connection for the machine in charge.
+   *
+   * A draft with no id is a new connection and gets one here, before the write — the id
+   * is generated rather than read back, so the caller can open a tab on it without a
+   * second round trip. An empty password keeps the stored secret.
+   */
+  saveMysqlConnection(draft: MysqlConnectionDraft): MysqlSaveResult {
     const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
-    const row = this.options.store.readMysqlConnection(this.environmentScope.scope, machineKey)
-    return {
+    const id = typeof draft?.id === 'string' && draft.id.trim() !== '' ? draft.id.trim() : randomUUID()
+    const typed = String(draft?.password ?? '')
+    this.options.store.upsertMysqlConnection({
+      id,
       scope: this.environmentScope.scope,
       hostId: machineKey,
-      label: this.environmentScope.label,
+      name: String(draft?.name ?? '').trim(),
+      host: String(draft?.host ?? '').trim(),
+      port: Number.isFinite(Number(draft?.port)) ? Math.max(1, Math.min(65535, Math.trunc(Number(draft.port)))) : 3306,
+      username: String(draft?.username ?? '').trim(),
+      secret: typed === '' ? '' : encryptSecret(typed),
+      database: String(draft?.database ?? '').trim()
+    })
+    const state = this.readMysqlConnectionsState()
+    this.send(IpcChannels.mysqlConnChanged, state)
+    return { ...state, id }
+  }
+
+  removeMysqlConnection(id: string): MysqlConnectionsState {
+    this.options.store.removeMysqlConnection(String(id ?? ''))
+    const state = this.readMysqlConnectionsState()
+    this.send(IpcChannels.mysqlConnChanged, state)
+    return state
+  }
+
+  /** Read every stored connection for the machine in charge and decrypt its password. */
+  private readMysqlConnectionsState(): MysqlConnectionsState {
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const connections = this.options.store.listMysqlConnections(this.environmentScope.scope, machineKey).map((row) => ({
+      id: row.id,
+      scope: this.environmentScope.scope,
+      hostId: machineKey,
+      name: row.name,
       host: row.host,
       port: row.port,
       username: row.username,
       password: row.secret === '' ? '' : decryptSecret(row.secret),
-      database: row.database
-    }
+      database: row.database,
+      updatedAt: row.updatedAt
+    }))
+    return { machineLabel: this.environmentScope.label, connections }
   }
-
-  /** Persist the connection for the machine in charge, keeping the stored password when none is typed. */
-  applyMysqlConnection(connection: MysqlConnection): MysqlConnection {
-    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
-    const typed = String(connection.password ?? '')
-    this.options.store.upsertMysqlConnection({
-      scope: this.environmentScope.scope,
-      hostId: machineKey,
-      host: String(connection.host ?? '').trim(),
-      port: Number.isFinite(Number(connection.port)) ? Math.max(1, Math.min(65535, Math.trunc(Number(connection.port)))) : 3306,
-      username: String(connection.username ?? '').trim(),
-      secret: typed === '' ? '' : encryptSecret(typed),
-      database: String(connection.database ?? '').trim()
-    })
-    const next = this.currentMysqlConnection()
-    this.send(IpcChannels.mysqlConnChanged, next)
-    return next
-  }
-
   listSshHosts(): SshHost[] {
     return this.options.store.listSshHosts()
   }

@@ -12281,49 +12281,119 @@ body {
   background: #fff;
 }
 
+/*
+ * The head is one row: the add button, then the open-connection tabs.
+ *
+ * The tabs scroll sideways rather than wrapping, because a second row would push the
+ * form down every time another connection is opened, and the list can only get longer.
+ */
 .mysql-page__head {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 18px 22px 16px;
+  gap: 10px;
+  padding: 10px 16px;
   border-bottom: 1px solid #eef1f6;
+  background: #fff;
 }
 
-.mysql-page__mark {
+.mysql-page__add {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #00758f, #00a0b8);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 117, 143, .24);
+}
+
+.mysql-page__add:hover {
+  filter: brightness(1.06);
+}
+
+.mysql-page__add:active {
+  transform: translateY(1px);
+}
+
+.mysql-page__tabs {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.mysql-page__tabs-empty {
+  padding-left: 6px;
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.mysql-page__tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  height: 34px;
+  border-radius: 9px;
+  background: #f1f3f8;
+  color: #55617a;
+  transition: background .15s, color .15s;
+}
+
+.mysql-page__tab:hover {
+  background: #e8ebf3;
+}
+
+.mysql-page__tab--active {
+  background: #e3f5f9;
+  color: #0b7c92;
+  box-shadow: inset 0 0 0 1px rgba(0, 160, 184, .35);
+}
+
+.mysql-page__tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 4px 0 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.mysql-page__tab-close {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #00758f, #00a0b8);
-  color: #fff;
-  box-shadow: 0 6px 16px rgba(0, 117, 143, .28);
+  width: 22px;
+  height: 22px;
+  margin-right: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: .55;
+  cursor: pointer;
 }
 
-.mysql-page__titles {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.mysql-page__title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  color: #1f2733;
-}
-
-.mysql-page__scope {
-  font-size: 12px;
-  color: #6b7688;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 46vw;
+.mysql-page__tab-close:hover {
+  background: rgba(15, 23, 42, .09);
+  opacity: 1;
 }
 
 .mysql-page__badge {
@@ -12373,12 +12443,181 @@ body {
   color: #1f2733;
 }
 
+/* Body is two panes: the saved list, and the page the active tab is showing. */
 .mysql-page__body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  padding: 26px 22px 32px;
+  display: flex;
+  align-items: stretch;
   background: #f6f8fb;
+}
+
+.mysql-page__sidebar {
+  flex: none;
+  width: 264px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e6e9f0;
+  background: #fff;
+  overflow-y: auto;
+}
+
+.mysql-page__sidebar-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 10px;
+  background: #fff;
+}
+
+.mysql-page__sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #55617a;
+}
+
+.mysql-page__sidebar-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f1f3f8;
+  font-size: 11px;
+  color: #8a93a6;
+}
+
+.mysql-page__sidebar-hint {
+  padding: 0 16px 12px;
+}
+
+.mysql-page__sidebar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mysql-page__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 9px;
+}
+
+.mysql-page__item:hover {
+  background: #f4f6fa;
+}
+
+.mysql-page__item--active {
+  background: #e9f6fa;
+}
+
+.mysql-page__item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mysql-page__item-name {
+  font-size: 13px;
+  color: #1f2733;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mysql-page__item--active .mysql-page__item-name {
+  color: #0b7c92;
+  font-weight: 600;
+}
+
+.mysql-page__item-target {
+  font-size: 11.5px;
+  color: #8a93a6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Revealed on hover so the row reads as a name, not as a name with a delete button. */
+.mysql-page__item-remove {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a3abbd;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.mysql-page__item:hover .mysql-page__item-remove {
+  opacity: 1;
+}
+
+.mysql-page__item-remove:hover {
+  background: #fdeaea;
+  color: #c0392b;
+}
+
+.mysql-page__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px 22px 32px;
+}
+
+.mysql-page__empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #8a93a6;
+}
+
+.mysql-page__empty-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 6px;
+  border-radius: 16px;
+  background: #eef2f7;
+  color: #7f8da4;
+}
+
+.mysql-page__empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #55617a;
+}
+
+.mysql-page__empty-sub {
+  margin: 0;
+  max-width: 320px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #98a2b3;
+  text-align: center;
 }
 
 .mysql-page__card {
@@ -12509,7 +12748,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 22px;
+  padding: 12px 18px;
   border-top: 1px solid #eef1f6;
   background: #fff;
 }
@@ -12520,12 +12759,12 @@ body {
 }
 
 .mysql-page__btn {
-  padding: 9px 18px;
+  padding: 8px 16px;
   border: 1px solid #d8dde8;
   border-radius: 9px;
   background: #fff;
   font-size: 13px;
-  color: #33405a;
+  color: #3c4657;
   cursor: pointer;
 }
 
@@ -12537,35 +12776,52 @@ body {
   border-color: transparent;
   background: linear-gradient(135deg, #00758f, #00a0b8);
   color: #fff;
+  font-weight: 600;
 }
 
 .mysql-page__btn--primary:hover {
-  filter: brightness(1.05);
+  filter: brightness(1.06);
 }
 
 .mysql-page__btn:disabled {
-  opacity: .55;
+  opacity: .5;
   cursor: default;
+  filter: none;
 }
-
 .workspace[data-theme='dark'] .modal--mysql {
-  background: #0c1119;
+  background: #0a0f16;
 }
 
 .workspace[data-theme='dark'] .mysql-page {
-  background: #0c1119;
+  background: #0a0f16;
 }
 
 .workspace[data-theme='dark'] .mysql-page__head {
   border-bottom-color: #1d2531;
+  background: #10151d;
 }
 
-.workspace[data-theme='dark'] .mysql-page__title {
-  color: #eef2f9;
+.workspace[data-theme='dark'] .mysql-page__tabs-empty {
+  color: #5f6b7f;
 }
 
-.workspace[data-theme='dark'] .mysql-page__scope {
+.workspace[data-theme='dark'] .mysql-page__tab {
+  background: #161d28;
   color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__tab:hover {
+  background: #1c2739;
+}
+
+.workspace[data-theme='dark'] .mysql-page__tab--active {
+  background: #0f2a33;
+  color: #4fd1e8;
+  box-shadow: inset 0 0 0 1px rgba(0, 160, 184, .45);
+}
+
+.workspace[data-theme='dark'] .mysql-page__tab-close:hover {
+  background: rgba(255, 255, 255, .1);
 }
 
 .workspace[data-theme='dark'] .mysql-page__badge {
@@ -12574,8 +12830,8 @@ body {
 }
 
 .workspace[data-theme='dark'] .mysql-page__badge--ok {
-  background: #12281f;
-  color: #3ecf8e;
+  background: #12291f;
+  color: #4ecf95;
 }
 
 .workspace[data-theme='dark'] .mysql-page__close {
@@ -12589,6 +12845,66 @@ body {
 
 .workspace[data-theme='dark'] .mysql-page__body {
   background: #0a0f16;
+}
+
+.workspace[data-theme='dark'] .mysql-page__sidebar {
+  border-right-color: #1d2531;
+  background: #10151d;
+}
+
+.workspace[data-theme='dark'] .mysql-page__sidebar-head {
+  background: #10151d;
+}
+
+.workspace[data-theme='dark'] .mysql-page__sidebar-title {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__sidebar-count {
+  background: #1a2230;
+  color: #7d8aa0;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item:hover {
+  background: #161d28;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item--active {
+  background: #10222b;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item-name {
+  color: #e6ecf6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item--active .mysql-page__item-name {
+  color: #4fd1e8;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item-target {
+  color: #7d8aa0;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item-remove {
+  color: #5f6b7f;
+}
+
+.workspace[data-theme='dark'] .mysql-page__item-remove:hover {
+  background: #3a1e1e;
+  color: #ff8a7a;
+}
+
+.workspace[data-theme='dark'] .mysql-page__empty-mark {
+  background: #161d28;
+  color: #7d8aa0;
+}
+
+.workspace[data-theme='dark'] .mysql-page__empty-title {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__empty-sub {
+  color: #5f6b7f;
 }
 
 .workspace[data-theme='dark'] .mysql-page__card {

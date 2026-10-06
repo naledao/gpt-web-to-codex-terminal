@@ -105,8 +105,9 @@ export const IpcChannels = {
   updateChanged: 'update:changed',
   gitLog: 'git:log',
   gitDiff: 'git:diff',
-  mysqlConnGet: 'mysql-conn:get',
-  mysqlConnSet: 'mysql-conn:set',
+  mysqlConnList: 'mysql-conn:list',
+  mysqlConnSave: 'mysql-conn:save',
+  mysqlConnRemove: 'mysql-conn:remove',
   mysqlConnChanged: 'mysql-conn:changed'
 } as const
 
@@ -1424,19 +1425,58 @@ export interface TerminalNotes extends TerminalNotesOwner {
   legacyText: string
 }
 
+/**
+ * One saved MySQL connection.
+ *
+ * A machine keeps a LIST of these rather than one row. A single row per machine cannot
+ * describe the ordinary case of a local MySQL next to a staging one, and it turned the
+ * connection dialog into a form that overwrote itself.
+ *
+ * scope + hostId say which machine the row belongs to; id is the row own identity, and it
+ * is what the dialog tabs are keyed by.
+ */
 export interface MysqlConnection {
+  /** Stable row id. */
+  id: string
   /** Which machine this connection belongs to. */
   scope: 'local' | 'ssh'
-  /** The saved host id when scope is ssh; empty for the local machine. */
+  /** The saved host id when scope is ssh; the local machine id otherwise. */
   hostId: string
-  /** Who it belongs to, for the dialog title. */
-  label: string
+  /** What the user calls this connection; shown on its tab. */
+  name: string
   host: string
   port: number
   username: string
   /** Stored encrypted, like the SSH password. Never logged. */
   password: string
   database: string
+  /** Epoch milliseconds of the last save. */
+  updatedAt: number
+}
+
+/** What the connection form submits. id is empty for a connection that was never saved. */
+export interface MysqlConnectionDraft {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  /** Empty means keep the password already stored for this row. */
+  password: string
+  database: string
+}
+
+/** Every saved connection for one machine, plus whose machine it is. */
+export interface MysqlConnectionsState {
+  /** Display name of the machine these belong to, for the dialog header. */
+  machineLabel: string
+  connections: MysqlConnection[]
+}
+
+/** Result of saving one connection: the row written, and the machine list afterwards. */
+export interface MysqlSaveResult extends MysqlConnectionsState {
+  /** Id of the row that was written. A new connection gets its id here. */
+  id: string
 }
 
 /* ------------------------------------------------------------------ *
@@ -1637,10 +1677,13 @@ export interface AppApi {
   setTerminalNotes(text: string, owner: TerminalNotesOwner): Promise<TerminalNotes>
   onTerminalNotesChanged(listener: (notes: TerminalNotes) => void): () => void
 
-  /** The saved MySQL connection for whichever machine the terminal is driving. */
-  getMysqlConnection(): Promise<MysqlConnection>
-  setMysqlConnection(connection: MysqlConnection): Promise<MysqlConnection>
-  onMysqlConnectionChanged(listener: (connection: MysqlConnection) => void): () => void
+  /** Every saved MySQL connection for whichever machine the terminal is driving. */
+  listMysqlConnections(): Promise<MysqlConnectionsState>
+  /** Insert or update one connection and return the row id that was written. */
+  saveMysqlConnection(draft: MysqlConnectionDraft): Promise<MysqlSaveResult>
+  /** Delete one connection by id. */
+  removeMysqlConnection(id: string): Promise<MysqlConnectionsState>
+  onMysqlConnectionChanged(listener: (state: MysqlConnectionsState) => void): () => void
 
   /** Saved SSH targets, newest first. */
   listSshHosts(): Promise<SshHost[]>
