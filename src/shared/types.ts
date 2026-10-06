@@ -109,6 +109,8 @@ export const IpcChannels = {
   mysqlConnSave: 'mysql-conn:save',
   mysqlConnRemove: 'mysql-conn:remove',
   mysqlConnListDatabases: 'mysql-conn:list-databases',
+  mysqlConnListTables: 'mysql-conn:list-tables',
+  mysqlConnQueryTable: 'mysql-conn:query-table',
   mysqlConnChanged: 'mysql-conn:changed'
 } as const
 
@@ -1475,7 +1477,34 @@ export interface MysqlDatabaseList {
   databases: string[]
   /** Human-readable failure reason, shown in the dropdown itself. */
   message: string
-}export interface MysqlConnectionsState {
+}/** One table or view inside a database, as shown under a connection. */
+export interface MysqlTableInfo {
+  name: string
+  /** MySQL wording: 'BASE TABLE' or 'VIEW'. */
+  type: string
+  /** The table comment, empty when it has none. */
+  comment: string
+}
+
+/** Result of asking a database which tables it holds. */
+export interface MysqlTableList {
+  ok: boolean
+  tables: MysqlTableInfo[]
+  message: string
+}
+
+/** One page of rows from a table, for the table viewer. */
+export interface MysqlTableData {
+  ok: boolean
+  /** Column names, in the order the server returned them. */
+  columns: string[]
+  /** Each row cells, already rendered as text. A SQL NULL stays null. */
+  rows: Array<Array<string | null>>
+  /** True when the table held more rows than the viewer asked for. */
+  truncated: boolean
+  message: string
+}
+export interface MysqlConnectionsState {
   /** Display name of the machine these belong to, for the dialog header. */
   machineLabel: string
   connections: MysqlConnection[]
@@ -1693,6 +1722,10 @@ export interface AppApi {
   removeMysqlConnection(id: string): Promise<MysqlConnectionsState>
   /** Ask one connection which databases it can see. Does not save anything. */
   listMysqlDatabases(draft: MysqlConnectionDraft): Promise<MysqlDatabaseList>
+  /** List the tables and views inside one database. */
+  listMysqlTables(draft: MysqlConnectionDraft, database: string): Promise<MysqlTableList>
+  /** Read a page of rows from one table. */
+  queryMysqlTable(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData>
   onMysqlConnectionChanged(listener: (state: MysqlConnectionsState) => void): () => void
 
   /** Saved SSH targets, newest first. */

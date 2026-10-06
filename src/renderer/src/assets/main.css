@@ -12902,6 +12902,135 @@ body {
  * on the page on screen — a bar at the bottom reads as if it saved everything, and with
  * several tabs open that is the wrong thing to believe.
  */
+/* The tables inside a connection, listed under its form. */
+.mysql-page__tables {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #eef1f6;
+}
+
+.mysql-page__tables-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mysql-page__table-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.mysql-page__table-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mysql-page__table-item:hover {
+  background: #f2f6fb;
+}
+
+.mysql-page__table-name {
+  font-size: 13px;
+  color: #1f2733;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.mysql-page__table-type {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #eef2f7;
+  font-size: 10.5px;
+  color: #6b7688;
+}
+
+.mysql-page__table-type--view {
+  background: #f0ecfb;
+  color: #6b4fc4;
+}
+
+.mysql-page__table-comment {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: #98a2b3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The table viewer: one page of rows in its own tab. */
+.mysql-page__table {
+  padding: 4px 2px 8px;
+}
+
+.mysql-page__table-scroll {
+  margin-top: 12px;
+  overflow: auto;
+  max-height: calc(100vh - 260px);
+  border: 1px solid #e6e9f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.mysql-page__grid-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+}
+
+.mysql-page__grid-table th,
+.mysql-page__grid-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid #eef1f6;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mysql-page__grid-table th {
+  position: sticky;
+  top: 0;
+  background: #f6f8fb;
+  font-weight: 600;
+  color: #55617a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.mysql-page__grid-table tbody tr:hover {
+  background: #fafbfd;
+}
+
+.mysql-page__grid-table td {
+  color: #1f2733;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.mysql-page__null {
+  color: #a3abbd;
+  font-style: italic;
+}
+
+.mysql-page__table-note {
+  margin-top: 10px;
+}
 .mysql-page__card-foot {
   display: flex;
   align-items: center;
@@ -13172,6 +13301,62 @@ body {
 .workspace[data-theme='dark'] .mysql-page__required {
   background: #3a1e1e;
   color: #ff8a7a;
+}
+.workspace[data-theme='dark'] .mysql-page__tables {
+  border-top-color: #1d2531;
+}
+
+.workspace[data-theme='dark'] .mysql-page__table-item:hover {
+  background: #161d28;
+}
+
+.workspace[data-theme='dark'] .mysql-page__table-name {
+  color: #e6ecf6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__table-type {
+  background: #1a2230;
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__table-type--view {
+  background: #241f3a;
+  color: #b8a3f0;
+}
+
+.workspace[data-theme='dark'] .mysql-page__table-comment {
+  color: #5f6b7f;
+}
+
+.workspace[data-theme='dark'] .mysql-page__table-scroll {
+  border-color: #232b38;
+  background: #10151d;
+}
+
+.workspace[data-theme='dark'] .mysql-page__grid-table th {
+  background: #161d28;
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__grid-table th,
+.workspace[data-theme='dark'] .mysql-page__grid-table td {
+  border-bottom-color: #1d2531;
+}
+
+.workspace[data-theme='dark'] .mysql-page__grid-table tbody tr:hover {
+  background: #141b25;
+}
+
+.workspace[data-theme='dark'] .mysql-page__grid-table td {
+  color: #e6ecf6;
+}
+
+.workspace[data-theme='dark'] .mysql-page__null {
+  color: #5f6b7f;
+}
+
+.workspace[data-theme='dark'] .mysql-page__tab-icon {
+  color: #4fd1e8;
 }
 .workspace[data-theme='dark'] .mysql-page__card-foot {
   border-top-color: #1d2531;

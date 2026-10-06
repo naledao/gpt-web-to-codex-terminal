@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import ConfirmDialog from './ConfirmDialog'
-import type { AppTheme, MysqlConnection, MysqlConnectionDraft, MysqlConnectionsState, MysqlDatabaseList } from '../../../shared/types'
+import type {
+  AppTheme,
+  MysqlConnection,
+  MysqlConnectionDraft,
+  MysqlConnectionsState,
+  MysqlDatabaseList,
+  MysqlTableData,
+  MysqlTableList
+} from '../../../shared/types'
 
 interface MysqlDialogProps {
   open: boolean
@@ -20,11 +28,43 @@ interface ConnectionForm {
   database: string
 }
 
-/** One open page. `key` is the row id, or a temporary one for a connection never saved. */
+/**
+ * One open page.
+ *
+ * Two kinds, because they answer different questions: a CONNECTION page is the editable
+ * connection plus the list of what is inside it, while a TABLE page is one table's rows.
+ * They share the tab strip and nothing else, so the kind is carried on the tab rather
+ * than inferred from which fields happen to be set.
+ *
+ * The tabs are in-memory only, like before: closing one costs nothing because the
+ * connections themselves are in the database.
+ */
 interface ConnectionTab {
+  kind: 'connection'
+  /** The row id, or a temporary one for a connection never saved. */
   key: string
   form: ConnectionForm
+  /** The tables inside this connection, and the state of the fetch that lists them. */
+  tablesLoading: boolean
+  tables: MysqlTableList | null
 }
+
+interface TableTab {
+  kind: 'table'
+  /** Stable key: connection + database + table, so one table never opens twice. */
+  key: string
+  /** Which connection it came from, for the sidebar highlight. */
+  connectionId: string
+  database: string
+  table: string
+  /** The connection it was opened with. Carries the password, so it stays in memory. */
+  draft: MysqlConnectionDraft
+  loading: boolean
+  data: MysqlTableData | null
+  error: string
+}
+
+type MysqlTab = ConnectionTab | TableTab
 
 const EMPTY_FORM: ConnectionForm = {
   id: '',
@@ -61,11 +101,16 @@ function draftFromForm(form: ConnectionForm): MysqlConnectionDraft {
   }
 }
 
-/** Caption of a tab: the user own name for it, else where it points, else a placeholder. */
-function tabLabel(form: ConnectionForm): string {
+/** The caption of a connection page's tab. */
+function tabCaption(form: ConnectionForm): string {
   if (form.name.trim() !== '') return form.name.trim()
   if (form.host.trim() !== '') return form.host.trim()
   return form.id === '' ? '新建连接' : '未命名连接'
+}
+
+/** What a tab is called, whichever kind it is. */
+function tabTitle(tab: MysqlTab): string {
+  return tab.kind === 'connection' ? tabCaption(tab.form) : `${tab.database}.${tab.table}`
 }
 
 function connectionLabel(connection: MysqlConnection): string {
@@ -125,7 +170,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [state, setState] = useState<MysqlConnectionsState | null>(null)
-  const [tabs, setTabs] = useState<ConnectionTab[]>([])
+  const [tabs, setTabs] = useState<MysqlTab[]>([])
   const [activeKey, setActiveKey] = useState('')
   const [reveal, setReveal] = useState(false)
   const newTabRef = useRef(0)
@@ -142,7 +187,8 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const connections = state?.connections ?? []
   const machineLabel = state?.machineLabel ?? ''
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null
-  const activeForm = activeTab?.form ?? null
+  const activeConnection = activeTab !== null && activeTab.kind === 'connection' ? activeTab : null
+  const activeForm = activeConnection?.form ?? null
   const activeSaved =
     activeForm !== null && activeForm.id !== ''
       ? connections.find((connection) => connection.id === activeForm.id) ?? null
@@ -186,12 +232,26 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [open, onClose])
 
-  /** Open a saved connection in its own tab, or bring the tab it already has to the front. */
+  /**
+   * Open a saved connection in its own tab, or bring the tab it already has to the front.
+   *
+   * The table list is fetched by the effect below rather than here, so opening a tab that
+   * was merely brought to the front does not run the query again.
+   */
   const openConnectionTab = useCallback((connection: MysqlConnection) => {
     setTabs((current) =>
       current.some((tab) => tab.key === connection.id)
         ? current
-        : [...current, { key: connection.id, form: formFromConnection(connection) }]
+        : [
+            ...current,
+            {
+              kind: 'connection',
+              key: connection.id,
+              form: formFromConnection(connection),
+              tablesLoading: false,
+              tables: null
+            }
+          ]
     )
     setActiveKey(connection.id)
     setReveal(false)
@@ -201,7 +261,10 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const addTab = useCallback(() => {
     newTabRef.current += 1
     const key = `new:${newTabRef.current}`
-    setTabs((current) => [...current, { key, form: { ...EMPTY_FORM } }])
+    setTabs((current) => [
+      ...current,
+      { kind: 'connection', key, form: { ...EMPTY_FORM }, tablesLoading: false, tables: null }
+    ])
     setActiveKey(key)
     setReveal(false)
     setError('')
@@ -226,10 +289,77 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       // user fixes the field reads as the fix not working.
       setError('')
       setTabs((current) =>
-        current.map((tab) => (tab.key === activeKey ? { ...tab, form: { ...tab.form, ...patch } } : tab))
+        current.map((tab) =>
+          tab.kind === 'connection' && tab.key === activeKey
+            ? { ...tab, form: { ...tab.form, ...patch } }
+            : tab
+        )
       )
     },
     [activeKey]
+  )
+
+  /**
+   * Load the table list for one connection page.
+   *
+   * Called when the page is opened and by its own 刷新 button. The result is stored on the
+   * tab, so switching to another tab and back does not re-query the server.
+   */
+  const refreshTables = useCallback(async (key: string, form: ConnectionForm): Promise<void> => {
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.kind === 'connection' && tab.key === key ? { ...tab, tablesLoading: true } : tab
+      )
+    )
+    let result: MysqlTableList
+    try {
+      result = await window.api.listMysqlTables(draftFromForm(form), form.database.trim())
+    } catch {
+      result = { ok: false, tables: [], message: '连接失败，请检查连接信息。' }
+    }
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.kind === 'connection' && tab.key === key
+          ? { ...tab, tablesLoading: false, tables: result }
+          : tab
+      )
+    )
+  }, [])
+
+  /**
+   * Open one table in its own tab and read its first page.
+   *
+   * Keyed by connection + database + table so the same table cannot end up open twice;
+   * clicking it again just brings its tab forward.
+   */
+  const openTableTab = useCallback(
+    async (connectionId: string, form: ConnectionForm, table: string): Promise<void> => {
+      const database = form.database.trim()
+      const key = `table:${connectionId}:${database}:${table}`
+      const alreadyOpen = tabs.some((tab) => tab.key === key)
+      const draft = draftFromForm(form)
+      if (!alreadyOpen) {
+        setTabs((current) => [
+          ...current,
+          { kind: 'table', key, connectionId, database, table, draft, loading: true, data: null, error: '' }
+        ])
+      }
+      setActiveKey(key)
+      let result: MysqlTableData
+      try {
+        result = await window.api.queryMysqlTable(draft, database, table)
+      } catch {
+        result = { ok: false, columns: [], rows: [], truncated: false, message: '读取失败，请重试。' }
+      }
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.kind === 'table' && tab.key === key
+            ? { ...tab, loading: false, data: result, error: result.ok ? '' : result.message }
+            : tab
+        )
+      )
+    },
+    [tabs]
   )
 
   /**
@@ -257,8 +387,9 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       setDbLoading(false)
     }
   }, [activeForm, dbLoading, dbPickerOpen, dbResult])
+
   const save = useCallback(async (): Promise<void> => {
-    if (saving || activeForm === null || activeTab === null) return
+    if (saving || activeForm === null || activeConnection === null) return
     // A connection with no database is not usable later, so it is refused here rather
     // than stored and discovered when someone tries to connect with it.
     if (activeForm.database.trim() === '') {
@@ -268,28 +399,43 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     }
     setSaving(true)
     setError('')
-    const key = activeTab.key
+    const key = activeConnection.key
     try {
       const result = await window.api.saveMysqlConnection(draftFromForm(activeForm))
       setState({ machineLabel: result.machineLabel, connections: result.connections })
       const saved = result.connections.find((connection) => connection.id === result.id) ?? null
+      const nextForm = saved ? formFromConnection(saved) : { ...activeForm, id: result.id }
       // A brand-new connection is keyed by a temporary id until this moment; the row id
       // replaces it, so the tab it was opened in becomes the tab of the saved row.
       setTabs((current) =>
         current.map((tab) =>
-          tab.key === key
-            ? { key: result.id, form: saved ? formFromConnection(saved) : { ...tab.form, id: result.id } }
-            : tab
+          tab.kind === 'connection' && tab.key === key ? { ...tab, key: result.id, form: nextForm } : tab
         )
       )
       setActiveKey((active) => (active === key ? result.id : active))
+      // The table list belongs to the saved row now, so it is worth having.
+      void refreshTables(result.id, nextForm)
     } catch {
       setError('保存失败，请重试。')
     } finally {
       setSaving(false)
     }
-  }, [activeForm, activeTab, saving])
+  }, [activeForm, activeConnection, saving, refreshTables])
 
+  /**
+   * Load a connection page's table list the first time it is shown.
+   *
+   * Deliberately keyed on the tab that is being shown, not on every tab: a session with
+   * four connections open would otherwise make four connections at once on open, and most
+   * of them are never looked at. Once loaded the list stays on the tab until 刷新.
+   */
+  useEffect(() => {
+    const tab = tabs.find((candidate) => candidate.key === activeKey)
+    if (!tab || tab.kind !== 'connection') return
+    if (tab.tables !== null || tab.tablesLoading) return
+    if (tab.form.id === '' || tab.form.host.trim() === '' || tab.form.database.trim() === '') return
+    void refreshTables(tab.key, tab.form)
+  }, [activeKey, tabs, refreshTables])
   // A new page starts with the picker closed and nothing fetched: the list belongs to
   // the connection that was open when it arrived.
   useEffect(() => {
@@ -370,20 +516,28 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     role="tab"
                     aria-selected={tab.key === activeKey}
                     className="mysql-page__tab-label"
-                    title={tabLabel(tab.form)}
+                    title={tabTitle(tab)}
                     onClick={() => {
                       setActiveKey(tab.key)
                       setReveal(false)
                       setError('')
                     }}
                   >
-                    {tabLabel(tab.form)}
+                    {tab.kind === 'table' ? (
+                      <span className="mysql-page__tab-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+                          <path d="M3.5 9.5h17M9 9.5v10" />
+                        </svg>
+                      </span>
+                    ) : null}
+                    {tabTitle(tab)}
                   </button>
                   <button
                     type="button"
                     className="mysql-page__tab-close"
-                    aria-label={`关闭 ${tabLabel(tab.form)}`}
-                    title="关闭这个页面（连接仍保留在左侧列表）"
+                    aria-label={`关闭 ${tabTitle(tab)}`}
+                    title={tab.kind === 'table' ? '关闭这个表页' : '关闭这个页面（连接仍保留在左侧列表）'}
                     onClick={() => closeTab(tab.key)}
                   >
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
@@ -461,7 +615,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
           </aside>
 
           <section className="mysql-page__detail">
-            {activeForm === null ? (
+            {activeTab === null ? (
               <div className="mysql-page__empty">
                 <span className="mysql-page__empty-mark" aria-hidden="true">
                   <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -475,7 +629,86 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   点左上角「添加连接」新建，或在左侧列表里点一个已保存的连接把它打开。
                 </p>
               </div>
-            ) : (
+            ) : activeTab.kind === 'table' ? (
+              <div className="mysql-page__table">
+                <div className="mysql-page__card-head">
+                  <span className="mysql-page__card-title">{activeTab.table}</span>
+                  <span className="mysql-page__card-note">{activeTab.database}</span>
+                  <span className="panel__spacer" />
+                  <button
+                    type="button"
+                    className="mysql-page__btn"
+                    disabled={activeTab.loading}
+                    title="重新读取这张表"
+                    onClick={() => {
+                      const key = activeTab.key
+                      setTabs((current) =>
+                        current.map((item) =>
+                          item.kind === 'table' && item.key === key ? { ...item, loading: true } : item
+                        )
+                      )
+                      void window.api
+                        .queryMysqlTable(activeTab.draft, activeTab.database, activeTab.table)
+                        .then((result) => {
+                          setTabs((current) =>
+                            current.map((item) =>
+                              item.kind === 'table' && item.key === key
+                                ? { ...item, loading: false, data: result, error: result.ok ? '' : result.message }
+                                : item
+                            )
+                          )
+                        })
+                        .catch(() => {
+                          setTabs((current) =>
+                            current.map((item) =>
+                              item.kind === 'table' && item.key === key
+                                ? { ...item, loading: false, error: '读取失败，请重试。' }
+                                : item
+                            )
+                          )
+                        })
+                    }}
+                  >
+                    {activeTab.loading ? '读取中…' : '刷新'}
+                  </button>
+                </div>
+                {activeTab.loading ? (
+                  <p className="mysql-page__hint">正在读取表数据…</p>
+                ) : activeTab.error ? (
+                  <p className="mysql-page__hint mysql-page__hint--error" role="alert">{activeTab.error}</p>
+                ) : activeTab.data === null || activeTab.data.rows.length === 0 ? (
+                  <p className="mysql-page__hint">这张表没有数据。</p>
+                ) : (
+                  <>
+                    <div className="mysql-page__table-scroll">
+                      <table className="mysql-page__grid-table">
+                        <thead>
+                          <tr>
+                            {activeTab.data.columns.map((column) => (
+                              <th key={column}>{column}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeTab.data.rows.map((row, rowIndex) => (
+                            <tr key={rowIndex}>
+                              {row.map((cell, cellIndex) => (
+                                <td key={cellIndex}>
+                                  {cell === null ? <span className="mysql-page__null">NULL</span> : cell}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="mysql-page__hint mysql-page__table-note">
+                      共 {activeTab.data.rows.length} 行{activeTab.data.truncated ? '（只显示前 200 行）' : ''}
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : activeForm !== null ? (
               <div className="mysql-page__card">
                 <div className="mysql-page__card-head">
                   <span className="mysql-page__card-title">连接信息</span>
@@ -651,9 +884,57 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     </p>
                   ) : null}
                 </div>
+                <div className="mysql-page__tables">
+                  <div className="mysql-page__tables-head">
+                    <span className="mysql-page__card-title">数据表</span>
+                    {activeConnection !== null && activeConnection.tables !== null && activeConnection.tables.ok ? (
+                      <span className="mysql-page__card-note">共 {activeConnection.tables.tables.length} 张</span>
+                    ) : null}
+                    <span className="panel__spacer" />
+                    <button
+                      type="button"
+                      className="mysql-page__btn"
+                      disabled={activeConnection === null || activeConnection.tablesLoading || activeForm.host.trim() === '' || activeForm.database.trim() === ''}
+                      title="重新连接并读取表列表"
+                      onClick={() => {
+                        if (activeConnection !== null && activeForm !== null) void refreshTables(activeConnection.key, activeForm)
+                      }}
+                    >
+                      {activeConnection?.tablesLoading ? '读取中…' : '刷新'}
+                    </button>
+                  </div>
+                  {activeConnection === null || activeConnection.tablesLoading ? (
+                    <p className="mysql-page__hint">正在读取数据表…</p>
+                  ) : activeConnection.tables === null ? (
+                    <p className="mysql-page__hint">点「刷新」读取这张连接里的表。</p>
+                  ) : !activeConnection.tables.ok ? (
+                    <p className="mysql-page__hint mysql-page__hint--error" role="alert">{activeConnection.tables.message}</p>
+                  ) : activeConnection.tables.tables.length === 0 ? (
+                    <p className="mysql-page__hint">这个数据库里还没有表。</p>
+                  ) : (
+                    <ul className="mysql-page__table-list">
+                      {activeConnection.tables.tables.map((table) => (
+                        <li key={table.name}>
+                          <button
+                            type="button"
+                            className="mysql-page__table-item"
+                            title={table.comment === '' ? table.name : table.name + ' · ' + table.comment}
+                            onClick={() => {
+                              if (activeForm !== null && activeConnection !== null) void openTableTab(activeConnection.key, activeForm, table.name)
+                            }}
+                          >
+                            <span className="mysql-page__table-name">{table.name}</span>
+                            <span className={table.type === 'VIEW' ? 'mysql-page__table-type mysql-page__table-type--view' : 'mysql-page__table-type'}>{table.type === 'VIEW' ? '视图' : '表'}</span>
+                            {table.comment.trim() !== '' ? <span className="mysql-page__table-comment">{table.comment}</span> : null}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <div className="mysql-page__card-foot">                   <span className="mysql-page__card-foot-hint">                     {savedNow ? '已保存到本机' : '有改动尚未保存'}                   </span>                   <span className="panel__spacer" />                   <button                     type="button"                     className="mysql-page__btn"                     title="关闭这个页面，连接仍保留在左侧列表"                     onClick={() => {                       if (activeTab !== null) closeTab(activeTab.key)                     }}                   >                     关闭                   </button>                   <button                     type="button"                     className="mysql-page__btn mysql-page__btn--primary"                     disabled={saving || savedNow || activeForm.database.trim() === ''}                     onClick={() => void save()}                   >                     {saving ? '保存中…' : '保存'}                   </button>                 </div>
               </div>
-            )}
+            ) : null}
           </section>
         </div>
       {/*

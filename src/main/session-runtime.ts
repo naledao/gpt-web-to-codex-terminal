@@ -29,6 +29,8 @@ import type {
   MysqlConnectionDraft,
   MysqlConnectionsState,
   MysqlDatabaseList,
+  MysqlTableData,
+  MysqlTableList,
   MysqlSaveResult,
   ParsedAction,
   SshHost,
@@ -1182,6 +1184,122 @@ export class SessionRuntime {
       if (connection) await connection.end().catch(() => undefined)
     }
   }
+  /**
+   * Resolve the password to use for one connection draft.
+   *
+   * An empty password on a SAVED row means "use the stored one", the same rule the save
+   * path uses. Shared by every query below so the three of them cannot drift apart.
+   */
+  private mysqlPasswordFor(draft: MysqlConnectionDraft): string {
+    const typed = String(draft?.password ?? '')
+    if (typed !== '') return typed
+    const id = typeof draft?.id === 'string' ? draft.id.trim() : ''
+    if (id === '') return ''
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const stored = this.options.store
+      .listMysqlConnections(this.environmentScope.scope, machineKey)
+      .find((row) => row.id === id)
+    return stored && stored.secret !== '' ? decryptSecret(stored.secret) : ''
+  }
+
+  /**
+   * List the tables and views inside one database.
+   *
+   * INFORMATION_SCHEMA rather than SHOW TABLES, because the type and the comment are
+   * part of what the list has to show and SHOW TABLES returns neither. The database name
+   * is bound as a parameter, not interpolated, so it cannot break the query.
+   */
+  async listMysqlTables(draft: MysqlConnectionDraft, database: string): Promise<MysqlTableList> {
+    const host = String(draft?.host ?? '').trim()
+    const db = String(database ?? '').trim()
+    if (host === '') return { ok: false, tables: [], message: '请先填写主机地址。' }
+    if (db === '') return { ok: false, tables: [], message: '请先选择默认数据库。' }
+    const rawPort = Number(draft?.port)
+    const port = Number.isFinite(rawPort) && rawPort > 0 ? Math.trunc(rawPort) : 3306
+    let connection: Connection | null = null
+    try {
+      connection = await createConnection({
+        host,
+        port,
+        user: String(draft?.username ?? '').trim(),
+        password: this.mysqlPasswordFor(draft),
+        database: db,
+        connectTimeout: 8000
+      })
+      const [rows] = await connection.query(
+        'SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME',
+        [db]
+      )
+      const tables = (Array.isArray(rows) ? rows : []).map((row) => {
+        const record = row as Record<string, unknown>
+        return {
+          name: String(record.TABLE_NAME ?? ''),
+          type: String(record.TABLE_TYPE ?? ''),
+          comment: String(record.TABLE_COMMENT ?? '')
+        }
+      })
+      return { ok: true, tables: tables.filter((table) => table.name !== ''), message: '' }
+    } catch (error) {
+      return { ok: false, tables: [], message: mysqlErrorMessage(error) }
+    } finally {
+      if (connection) await connection.end().catch(() => undefined)
+    }
+  }
+
+  /**
+   * Read a page of rows from one table.
+   *
+   * Capped deliberately. A viewer that pulled an entire table would hang the renderer on
+   * the first large one, and the row count is not known before the query runs. Identifiers
+   * are quoted with backticks and any backtick inside them is doubled, which is the escape
+   * MySQL defines; a value cannot be bound in place of a table name.
+   */
+  async queryMysqlTable(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> {
+    const host = String(draft?.host ?? '').trim()
+    const db = String(database ?? '').trim()
+    const target = String(table ?? '').trim()
+    if (host === '') return { ok: false, columns: [], rows: [], truncated: false, message: '请先填写主机地址。' }
+    if (db === '') return { ok: false, columns: [], rows: [], truncated: false, message: '请先选择默认数据库。' }
+    if (target === '') return { ok: false, columns: [], rows: [], truncated: false, message: '请先选择要查看的表。' }
+    const limit = 200
+    const quote = (name: string): string => '`' + name.replace(/`/g, '``') + '`'
+    const rawPort = Number(draft?.port)
+    const port = Number.isFinite(rawPort) && rawPort > 0 ? Math.trunc(rawPort) : 3306
+    let connection: Connection | null = null
+    try {
+      connection = await createConnection({
+        host,
+        port,
+        user: String(draft?.username ?? '').trim(),
+        password: this.mysqlPasswordFor(draft),
+        database: db,
+        connectTimeout: 8000
+      })
+      const [rows, fields] = await connection.query(
+        `SELECT * FROM ${quote(db)}.${quote(target)} LIMIT ${limit + 1}`
+      )
+      const raw = Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : []
+      const truncated = raw.length > limit
+      const page = truncated ? raw.slice(0, limit) : raw
+      const columns = (fields ?? []).map((field) => field.name)
+      const cells = page.map((row) =>
+        columns.map((column) => {
+          const value = row[column]
+          if (value === null || value === undefined) return null
+          if (value instanceof Date) return value.toISOString()
+          if (Buffer.isBuffer(value)) return '<' + value.length + ' bytes>'
+          if (typeof value === 'object') return JSON.stringify(value)
+          return String(value)
+        })
+      )
+      return { ok: true, columns, rows: cells, truncated, message: '' }
+    } catch (error) {
+      return { ok: false, columns: [], rows: [], truncated: false, message: mysqlErrorMessage(error) }
+    } finally {
+      if (connection) await connection.end().catch(() => undefined)
+    }
+  }
+
   private readMysqlConnectionsState(): MysqlConnectionsState {
     const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
     const connections = this.options.store.listMysqlConnections(this.environmentScope.scope, machineKey).map((row) => ({
