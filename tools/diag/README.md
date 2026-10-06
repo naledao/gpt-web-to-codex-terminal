@@ -12,6 +12,10 @@ channels exercise the actual SSH input and Ctrl+C methods, the command runner,
 the interrupt IPC handler, and the React editor callbacks. Checks cover multiline
 here-documents, blank lines, CRLF, advertised bracketed paste across split packets,
 password non-disclosure, idle fallback, IME input and copying selected text.
+Editor checks also cover copied commands ending in LF/CRLF/CR: one terminal line
+ending is removed only when pasting at the end of the draft. Internal newlines,
+blank lines, indentation, multiple trailing line endings and middle-draft separators
+are preserved; paste never submits a command.
 
 Log: `%TEMP%\gpt-login-diag\ssh-terminal-check-<timestamp>.log`.
 
@@ -34,6 +38,12 @@ For live acceptance, the user starts the app with `npm run dev`, connects SSH an
 3. Uses Shift+Enter to add a draft line; confirms Enter during Chinese IME
    composition does not submit, and Ctrl+C with selected draft text copies it.
 4. Checks a model-issued running command still uses its existing interrupt path.
+5. Copies a single-line command such as `usts-login set info` with a question code
+   block's copy button and pastes it without sending. Expect one draft line and
+   the caret at the end, not an empty second line. Repeat with a plain selection
+   and with multiline code: its internal newlines must remain. Paste at the middle
+   of an existing draft and confirm its separators remain; pasting alone must not
+   execute anything. Only send the harmless sample in step 1 for live SSH checks.
 
 These offline checks do not establish live SSH behavior or visual correctness.
 
@@ -54,6 +64,14 @@ and avoid scheduling resumed scans for disabled terminal mode or restored histor
 It also exercises the actual attachment scope/text extraction for file cards above
 the toolbar, clickable cards and full filenames in labels, excluding editor text
 and conversation history.
+Composer-scope fixtures also model a nested native form with a five-file batch:
+cards relocate outside the form after upload, one long filename is shortened,
+and empty-text attachment history must still stop ancestor expansion. Finding a
+form does not end discovery; a form that contains history must not be selected.
+Filename checks also cover Unicode/whitespace normalization, long names displayed
+with an ellipsis, ambiguous shared prefixes, missing batch members and read-only
+`contenteditable="false"` previews. The same matcher is used before submission and
+when acknowledging a new user message. Ambiguous truncated names remain blocked.
 ChatGPT checks normalize nested selectable text to the user unit, inspect sibling
 document/image cards and title/aria-label filenames, and exercise an extensionless
 `hosts` attachment. They reject matching names in previous messages, assistant
@@ -84,6 +102,12 @@ snapshot used DeepSeek's .txt filename compatibility; it does not record source 
 When filename recognition stalls, `page-diagnostics` additionally records composer
 ancestor depths, the selected scope, control/image counts and filename-match counts
 in text or labels. It never records the matching text or labels themselves.
+`rootIsForm` and ancestor `isForm` flags distinguish the selected scope from the
+nearest native form, including cards rendered outside it.
+`nameEvidence` reports each attachment's index, filename length and matching method
+(`exact`, `normalized`, `truncated`, `image` or `missing`). It contains no filenames
+or card text. Only a unique truncated prefix/suffix of at least 12 visible prefix
+characters is accepted; upload completion and send-button checks still apply.
 Confirmation diagnostics include key presence, whether a key was already in the
 baseline, baseline key count, numeric-baseline availability and user-turn count.
 The keys themselves are not recorded. If the new user message appears but its
@@ -184,6 +208,10 @@ clears the question and its owned failed-answer draft without sending a message,
 preserves task timestamps and the injected prompt, keeps later user edits, and
 rejects stale IDs. DOM/configuration updates must not reopen cancelled questions;
 late cancellation results must preserve a newer question. The runner is not called.
+Question-format checks load the real JSON parser and preserve multiline commands
+through the main-process bridge, both as plain text and as nested Markdown code
+blocks inside an outer JSON fence. They cover LF/CRLF, blank lines, indentation,
+standalone here-document delimiters and literal shell escapes; no commands execute.
 Logs use `fs.appendFileSync` under
 `%TEMP%\gpt-login-diag\task-prompt-check-<timestamp>.log`.
 
@@ -204,7 +232,16 @@ ChatGPT and DeepSeek separately:
 8. With a question open, turn terminal mode off/on. The question remains; an answer
    can also be submitted while it is off, and the model's next live question still appears.
    Commands must stay disabled while it is off.
-9. With a question open, type an answer and click **取消**. The dialog and pending
+9. Ask the model for a question containing the harmless `cat <<'EOF'` sample from
+   the SSH acceptance section, once as plain multiline text and once as a fenced
+   code block. Plain paragraphs must retain each source line; the fenced version
+   must display as code instead of failing to open the question dialog. Copy the
+   command by selection (plain version) or the code block's copy button, then paste
+   it into the terminal editor. Confirm blank lines and the standalone `EOF` are
+   intact before submitting. Expect `first`, a blank line, `last` and the normal
+   shell prompt. Repeat in light/dark themes; do not use the real systemd write as
+   a diagnostic. Clipboard and live PTY behavior require this user-run check.
+10. With a question open, type an answer and click **取消**. The dialog and pending
     question shortcut disappear, no message is sent to the model, and the task
     remains active. SSH/mode/environment changes must not reopen the old question.
     Sending a follow-up yourself continues the same task without another prompt.

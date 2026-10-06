@@ -93,12 +93,11 @@ app.whenReady().then(async () => {
         fileInputs.forEach(input => [...(input.files || [])].forEach(file => selectedNames.add(file.name)));
         const ancestors = [];
         const ancestorNodes = [];
-        let root = composer?.closest('form');
         for (let parent = composer?.parentElement, depth = 0; parent && parent !== document.body && depth < 8; parent = parent.parentElement, depth++) {
           ancestors.push({ tag: parent.tagName, classes: String(parent.className || '').slice(0, 200), controls: parent.querySelectorAll('button,[role="button"]').length, inputs: parent.querySelectorAll('input[type="file"]').length, images: parent.querySelectorAll('img').length });
           ancestorNodes.push(parent);
         }
-        if (!root) root = ancestorNodes[diagnostic.attachmentAncestors?.find(node => node.selectedRoot)?.depth] || null;
+        const root = ancestorNodes[diagnostic.attachmentAncestors?.find(node => node.selectedRoot)?.depth] || null;
         const turns = [...new Set(page.messageSelectors.flatMap(selector => [...document.querySelectorAll(selector)]))].slice(-4);
         return {
           page: location.origin + location.pathname,

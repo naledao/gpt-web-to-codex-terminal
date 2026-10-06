@@ -2726,6 +2726,19 @@ ${record.command}`
                 aria-label={sshActive ? 'SSH 命令' : '终端命令'}
                 disabled={sshActive ? ssh?.status !== 'connected' : false}
                 onChange={(event) => setCommandDraft(event.target.value)}
+                onPaste={(event) => {
+                  const editor = event.currentTarget
+                  const pasted = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n')
+                  if (editor.selectionEnd !== editor.value.length || !pasted.endsWith('\n')) return
+                  const text = pasted.slice(0, -1)
+                  // Code-block copying adds one terminal newline. Keep intentional
+                  // blank lines and pastes within a draft, where a separator matters.
+                  if (!text.trim() || text.endsWith('\n')) return
+                  event.preventDefault()
+                  const next = editor.value.slice(0, editor.selectionStart) + text
+                  setCommandDraft(next)
+                  requestAnimationFrame(() => editor.setSelectionRange(next.length, next.length))
+                }}
                 onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing) return
                   if (event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 'c'

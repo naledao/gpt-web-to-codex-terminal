@@ -155,9 +155,11 @@ async function main() {
   let interrupts = 0
   let submissions = 0
   let changedDraft = ''
+  const frames = []
   const editorContext = {
     interruptTerminal: () => { interrupts++ },
-    setCommandDraft: value => { changedDraft = value }
+    setCommandDraft: value => { changedDraft = value },
+    requestAnimationFrame: run => { frames.push(run) }
   }
   function callback(name) {
     const attr = editor.attributes.properties.find(attr => ts.isJsxAttribute(attr) && attr.name.getText(app) === name)
@@ -169,6 +171,41 @@ async function main() {
   }
   callback('onChange')({ target: { value: draft } })
   assert.equal(changedDraft, draft)
+  const onPaste = callback('onPaste')
+  function paste(copied, value = '', start = value.length, end = value.length) {
+    changedDraft = null
+    let caret = null
+    const event = {
+      clipboardData: { getData(type) { assert.equal(type, 'text/plain'); return copied } },
+      currentTarget: { value, selectionStart: start, selectionEnd: end,
+        setSelectionRange(left, right) { caret = [left, right] } },
+      prevented: false,
+      preventDefault() { this.prevented = true }
+    }
+    onPaste(event)
+    for (const frame of frames.splice(0)) frame()
+    return { prevented: event.prevented, text: changedDraft, caret }
+  }
+  for (const ending of ['\n', '\r\n', '\r']) {
+    const result = paste('usts-login set info' + ending)
+    assert.equal(result.prevented, true)
+    assert.equal(result.text, 'usts-login set info')
+    assert.deepEqual(result.caret, [19, 19])
+  }
+  const multiline = paste(draft + '\r\n')
+  assert.equal(multiline.text, draft.replace(/\r\n/g, '\n'),
+    'Remove only the copied terminal newline; keep here-document lines and blanks')
+  assert.equal(paste('  echo indented  \n').text, '  echo indented  ')
+  assert.equal(paste('ok\n', 'echo ').text, 'echo ok')
+  assert.equal(paste('ls\n', 'replace me', 0, 10).text, 'ls')
+  for (const text of ['ls', 'ls\n\n', '\n', ' \n']) {
+    assert.equal(paste(text).prevented, false, 'Ordinary pastes and intentional blank lines use native paste')
+    assert.equal(changedDraft, null)
+  }
+  assert.equal(paste('first\n', 'prefix suffix', 7, 7).prevented, false,
+    'A newline pasted before existing text must remain a separator')
+  assert.equal(submissions, 0, 'Pasting must never submit a command')
+  log('PASS copied LF/CRLF/CR endings, multiline/blank/indented text, selection replacement and middle-draft paste')
   const keydown = callback('onKeyDown')
   function key(key, overrides = {}) {
     const event = {

@@ -1889,7 +1889,10 @@
   // through the lenient command parser, even if it also contains a command field.
   const looksLikeQuestionReply = (text) => /"type"\s*:\s*"questions?"/.test(String(text || ''))
   const extractQuestion = (rawText) => {
-    const candidates = balancedObjects(String(rawText || '').replace(/```[a-zA-Z0-9_-]*/g, '\n'))
+    // The string-aware scanner ignores outer fences while preserving Markdown
+    // fences inside question values. Replacing them before JSON.parse corrupts
+    // the string and prevents a multiline command from reaching the dialog.
+    const candidates = balancedObjects(String(rawText || ''))
     for (let i = candidates.length - 1; i >= 0; i -= 1) {
       for (const attempt of [candidates[i], repairJson(candidates[i])]) {
         let parsed
@@ -2403,19 +2406,21 @@
 
   // Attachment discovery is structural: no guessed attachment card class names.
   // The user-driven attachment probe reports this same snapshot.
+  const attachmentHasMessages = (node) => [
+    ...PAGE.messageSelectors, ...PAGE.assistantReplySelectors,
+    ...(PAGE.fileUserTurnSelector ? [PAGE.fileUserTurnSelector] : [])
+  ].some((selector) => node.matches(selector) || node.querySelector(selector))
   const attachmentRoot = () => {
     const composer = getComposer()
     if (!composer) return null
-    const form = composer.closest('form')
-    if (form) return form
     let candidate = null
     let root = composer.parentElement
     for (let depth = 0; root && root !== document.body && depth < 8; depth += 1, root = root.parentElement) {
-      // DeepSeek puts the file cards above the toolbar. The first ancestor with
-      // two controls can contain only the toolbar and miss the uploaded files.
-      // Stay within the composer branch; never include conversation messages.
-      if (PAGE.messageSelectors.some((selector) => root.matches(selector) || root.querySelector(selector))) break
-      if (root.querySelectorAll(CONTROL_SELECTOR).length >= 2) candidate = root
+      // Both sites can render cards above the toolbar; ChatGPT can also move
+      // them OUTSIDE the native form after upload. A form is a candidate, not
+      // a boundary. Widen only within the composer branch, never into history.
+      if (attachmentHasMessages(root)) break
+      if (root.matches('form') || root.querySelectorAll(CONTROL_SELECTOR).length >= 2) candidate = root
     }
     return candidate
   }
@@ -2425,7 +2430,7 @@
     const clone = root.cloneNode(true)
     // Attachment cards can themselves be clickable controls. Keep their text;
     // remove only editable values and native inputs, which are not previews.
-    clone.querySelectorAll('textarea, [contenteditable], input').forEach((node) => node.remove())
+    clone.querySelectorAll('textarea, [contenteditable]:not([contenteditable="false"]), input').forEach((node) => node.remove())
     const images = [...root.querySelectorAll('img')].filter((img) => /^(blob:|data:)/.test(img.currentSrc || img.src || '') || (img.naturalWidth >= 40 && img.naturalHeight >= 40))
     const imageLabels = images.map((img) => [img.alt, img.title, img.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
     const cardLabels = [...clone.querySelectorAll('[title], [aria-label]')].map((node) => [node.getAttribute('title'), node.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
@@ -2438,9 +2443,42 @@
       inputFiles: [...document.querySelectorAll('input[type="file"]')].reduce((sum, input) => sum + (input.files?.length || 0), 0)
     }
   }
+  const normalizeAttachmentName = (text) => String(text || '').normalize('NFC')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, '').replace(/\s+/g, ' ').trim()
+  const attachmentNameEvidence = (text, files) => {
+    const raw = String(text || '')
+    const normalized = normalizeAttachmentName(raw)
+    const names = files.map((file) => normalizeAttachmentName(file.fileName))
+    const evidence = names.map((name, index) => ({
+      index, nameLength: String(files[index].fileName || '').length,
+      method: !name ? 'missing' : raw.includes(files[index].fileName) ? 'exact' : normalized.includes(name) ? 'normalized' : 'missing'
+    }))
+    // Some file cards replace part of a long name with an actual ellipsis after
+    // upload. A displayed prefix/suffix must identify ONE file in this batch;
+    // two similarly named files must never be acknowledged by the same card.
+    for (const match of normalized.matchAll(/…+|\.{3,}/g)) {
+      const before = normalized.slice(0, match.index)
+      const after = normalized.slice(match.index + match[0].length)
+      const candidates = []
+      names.forEach((name, index) => {
+        let head = Math.min(name.length - 1, before.length)
+        while (head > 0 && !before.endsWith(name.slice(0, head))) head--
+        if (name.slice(0, head).replace(/\s/g, '').length < 12) return
+        const boundary = before[before.length - head - 1]
+        if (boundary && /[\p{L}\p{N}_.-]/u.test(boundary)) return
+        let tail = Math.min(name.length - head - 1, after.length)
+        while (tail > 0 && !after.startsWith(name.slice(-tail))) tail--
+        // Do not accept a different continuous name following the ellipsis.
+        if (after[tail] && /[\p{L}\p{N}_.-]/u.test(after[tail])) return
+        candidates.push(index)
+      })
+      if (candidates.length === 1 && evidence[candidates[0]].method === 'missing') evidence[candidates[0]].method = 'truncated'
+    }
+    return evidence
+  }
   const draftAttachmentEvidence = () => {
     const snapshot = attachmentSnapshot()
-    return snapshot.inputFiles > 0 || snapshot.images > 0 || snapshot.uploading || /[^\s]+\.[a-z0-9]{1,10}(?:\s|$)/i.test(snapshot.text)
+    return snapshot.inputFiles > 0 || snapshot.images > 0 || snapshot.uploading || /[^\s]+\.[a-z0-9]{1,10}(?:\s|$)/i.test(snapshot.text) || /\S{12,}(?:…+|\.{3,})(?:\s|$)/.test(snapshot.text)
   }
   // ChatGPT exposes separate media/image inputs alongside a general attachment
   // input. A picture matches all three; prefer the unique unrestricted input.
@@ -2529,8 +2567,9 @@
     const labels = images.map((image) => [image.alt, image.title, image.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
     const text = fileTurnText(root) + ' ' + labels
     const imagesExpected = files.filter((file) => file.mimeType.startsWith('image/')).length
-    if (PAGE.fileImagesMayUseNames && files.every((file) => text.includes(file.fileName))) return true
-    return images.length >= imagesExpected && files.filter((file) => !file.mimeType.startsWith('image/')).every((file) => text.includes(file.fileName))
+    const names = attachmentNameEvidence(text, files)
+    if (PAGE.fileImagesMayUseNames && names.every((name) => name.method !== 'missing')) return true
+    return images.length >= imagesExpected && files.every((file, index) => file.mimeType.startsWith('image/') || names[index].method !== 'missing')
   }
   let fileSend = null
   const confirmedFileSends = new Set()
@@ -2576,13 +2615,17 @@
     if (fileSend.edited || !composerMatches(composer, '')) return { status: 'busy' }
     if (snapshot.error) return { status: 'upload-failed', ...snapshot }
     const imagesExpected = fileSend.files.filter((item) => item.mimeType.startsWith('image/')).length
-    const namesSeen = fileSend.files.every((item) => snapshot.text.includes(item.fileName) || (item.mimeType.startsWith('image/') && snapshot.images >= imagesExpected))
+    const nameEvidence = attachmentNameEvidence(snapshot.text, fileSend.files)
+    nameEvidence.forEach((name, index) => {
+      if (name.method === 'missing' && fileSend.files[index].mimeType.startsWith('image/') && snapshot.images >= imagesExpected) name.method = 'image'
+    })
+    const namesSeen = nameEvidence.every((name) => name.method !== 'missing')
     const button = findSendButton()
     const sendDisabled = button ? controlDisabled(button) : null
     const stopFound = !!findStopButton()
     return {
       status: fileSend.selected && snapshot.rootFound && namesSeen && !snapshot.uploading && button && !sendDisabled && !stopFound ? 'ready' : 'uploading',
-      ...snapshot, imagesExpected, namesSeen, sendFound: !!button, sendDisabled, stopFound
+      ...snapshot, imagesExpected, namesSeen, nameEvidence, sendFound: !!button, sendDisabled, stopFound
     }
   }
 
@@ -2595,7 +2638,7 @@
         if (fileSend.edited) return 'busy'
         state.programmatic = true
         const snapshot = attachmentSnapshot()
-        if (fileSend.files.length && !snapshot.images && !snapshot.inputFiles && !snapshot.uploading && fileSend.files.every((item) => !snapshot.text.includes(item.fileName))) fileSend.selected = false
+        if (fileSend.files.length && !snapshot.images && !snapshot.inputFiles && !snapshot.uploading && attachmentNameEvidence(snapshot.text, fileSend.files).every((name) => name.method === 'missing')) fileSend.selected = false
         return fileSend.selected ? 'resume' : 'ok'
       }
       if (state.programmatic || findStopButton() || collapse(readComposer(composer)) !== '' || draftAttachmentEvidence()) return 'busy'
@@ -2628,8 +2671,11 @@
       const composer = getComposer()
       const root = attachmentRoot()
       const send = findSendButton()
+      const snapshot = attachmentSnapshot()
       return {
-        ...attachmentSnapshot(), composerFound: !!composer,
+        ...snapshot, composerFound: !!composer,
+        rootIsForm: !!root?.matches('form'),
+        nameEvidence: attachmentNameEvidence(snapshot.text, fileSend?.files || []),
         sendFound: !!send, sendDisabled: send ? controlDisabled(send) : null,
         draftEmpty: composer ? collapse(readComposer(composer)) === '' : null, stopFound: !!findStopButton(),
         // Counts only: diagnostics never return file-card or conversation text.
@@ -2637,11 +2683,12 @@
           const ancestors = []
           const files = fileSend?.files || []
           for (let node = composer?.parentElement, depth = 0; node && node !== document.body && depth < 8; node = node.parentElement, depth++) {
-            const hasMessages = PAGE.messageSelectors.some((selector) => node.matches(selector) || node.querySelector(selector))
-            if (hasMessages) { ancestors.push({ depth, hasMessages: true }); break }
+            const hasMessages = attachmentHasMessages(node)
+            const isForm = node.matches('form')
+            if (hasMessages) { ancestors.push({ depth, hasMessages: true, isForm }); break }
             const labels = [...node.querySelectorAll('[title], [aria-label]')].map((item) => [item.getAttribute('title'), item.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
             ancestors.push({
-              depth, hasMessages: false, selectedRoot: node === root,
+              depth, hasMessages: false, isForm, selectedRoot: node === root,
               controls: node.querySelectorAll(CONTROL_SELECTOR).length,
               images: node.querySelectorAll('img').length,
               textNameMatches: files.filter((file) => String(node.textContent || '').includes(file.fileName)).length,

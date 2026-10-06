@@ -4694,6 +4694,11 @@ body {
 }
 .question-modal__question .wmde-markdown > :first-child { margin-top: 0; }
 .question-modal__question .wmde-markdown > :last-child { margin-bottom: 0; }
+.question-modal__question .wmde-markdown p,
+.question-modal__question .wmde-markdown li {
+  /* Soft Markdown breaks must survive both display and selection copying. */
+  white-space: pre-wrap;
+}
 .question-modal__question .wmde-markdown code:not(pre code) {
   padding: 2px 5px;
   border-radius: 5px;

@@ -76,6 +76,8 @@ async function main() {
     matches(selector) {
       return selector.split(',').some(raw => {
         const rule = raw.trim()
+        const negation = rule.match(/^(.*):not\(([^)]+)\)$/)
+        if (negation) return this.matches(negation[1]) && !this.matches(negation[2])
         if (!rule.startsWith('[')) return this.tagName.toLowerCase() === rule
         const parts = rule.match(/\[[^\]]+\]/g)
         if (!parts || parts.join('') !== rule) return false
@@ -106,9 +108,9 @@ async function main() {
     collapse: text => String(text).trim(), document: { body, querySelectorAll: selector => body.querySelectorAll(selector) }
   }
   vm.createContext(scopeContext)
-  const rootStart = injectedSource.indexOf('  const attachmentRoot =')
+  const rootStart = injectedSource.indexOf('  const attachmentHasMessages =')
   assert.ok(rootStart >= 0 && rootStart < pickerStart)
-  const scopeApi = vm.runInContext(injectedSource.slice(rootStart, pickerStart) + '\n({attachmentRoot, attachmentSnapshot, draftAttachmentEvidence})', scopeContext)
+  const scopeApi = vm.runInContext(injectedSource.slice(rootStart, pickerStart) + '\n({attachmentRoot, attachmentSnapshot, draftAttachmentEvidence, attachmentNameEvidence})', scopeContext)
   assert.equal(scopeApi.attachmentRoot(), panel)
   assert.match(scopeApi.attachmentSnapshot().text, /codex_can_do\.md/)
   assert.match(scopeApi.attachmentSnapshot().text, /full-document-name\.md/)
@@ -119,6 +121,54 @@ async function main() {
   panel.tagName = 'FORM'
   assert.equal(scopeApi.attachmentRoot(), panel)
   log('PASS file cards above toolbar, clickable card text, full-name labels, draft protection and conversation boundary')
+  // The other computer's 2026-10-05 log: uploads all returned 201, but the
+  // closest form lost its cards while a safe outer composer ancestor had them.
+  const batchFiles = [
+    'DGSNet_阶段工作成果与后续计划_2026-10-05.md',
+    'DGSNet_阶段工作成果与后续计划_2026-10-03.md',
+    'DGSNet_implementation_status.md',
+    'DGSNet_数据接口与模型说明_2026-10-03.md',
+    'DGSNet_drug_conditioning_validation_summary_2026-10-03.md'
+  ].map(fileName => ({ fileName, mimeType: 'text/markdown' }))
+  const shortenedName = 'DGSNet_drug_conditioning_val…'
+  const batchLabels = batchFiles.slice(0, 4).map(file => file.fileName).join(' ') + ' ' + shortenedName
+  const nestedEditor = new Element('div', { contenteditable: 'true' }, 'private editor draft')
+  const innerForm = new Element('form', {}, '', [nestedEditor, new Element('button'), new Element('button')])
+  const batchCards = batchFiles.map((file, index) => new Element('div', {
+    role: 'button', contenteditable: 'false', title: index === 4 ? shortenedName : file.fileName
+  }, index === 4 ? shortenedName : file.fileName))
+  const outsideFormPanel = new Element('div', {}, '', [...batchCards, innerForm])
+  // This empty-text history message must still be a hard boundary.
+  const attachmentOnlyHistory = new Element('div', {
+    class: 'group/user-message', 'data-chatgpt-search-unit-key': 'history:user'
+  }, 'unrelated-history-file.md')
+  scopeContext.PAGE = CHATGPT_PAGE
+  scopeContext.getComposer = () => nestedEditor
+  scopeContext.document.body = new Element('body', {}, '', [new Element('div', {}, '', [attachmentOnlyHistory, outsideFormPanel])])
+  scopeContext.document.querySelectorAll = selector => scopeContext.document.body.querySelectorAll(selector)
+  assert.equal(scopeApi.attachmentRoot(), outsideFormPanel)
+  const outsideSnapshot = scopeApi.attachmentSnapshot()
+  assert.doesNotMatch(outsideSnapshot.text, /private editor draft|unrelated-history-file/)
+  assert.deepEqual(Array.from(scopeApi.attachmentNameEvidence(outsideSnapshot.text, batchFiles), name => name.method), ['exact', 'exact', 'exact', 'exact', 'truncated'])
+  // The same wrapper works before the website moves the cards out of the form.
+  batchCards.forEach(node => { node.remove(); innerForm.children.push(node); node.parentElement = innerForm })
+  assert.equal(scopeApi.attachmentRoot(), outsideFormPanel)
+  assert.deepEqual(Array.from(scopeApi.attachmentNameEvidence(scopeApi.attachmentSnapshot().text, batchFiles), name => name.method), ['exact', 'exact', 'exact', 'exact', 'truncated'])
+  batchCards[4].remove()
+  assert.equal(scopeApi.attachmentNameEvidence(scopeApi.attachmentSnapshot().text, batchFiles)[4].method, 'missing')
+  // A form containing history is unsafe too; do not return it early.
+  outsideFormPanel.tagName = 'FORM'
+  innerForm.children.unshift(attachmentOnlyHistory)
+  attachmentOnlyHistory.parentElement = innerForm
+  assert.equal(scopeApi.attachmentRoot(), null)
+  assert.equal(scopeApi.attachmentSnapshot().rootFound, false)
+  const nameEvidence = scopeApi.attachmentNameEvidence
+  assert.equal(nameEvidence('cafe\u0301.md', [{ fileName: 'café.md' }])[0].method, 'normalized')
+  assert.equal(nameEvidence('two  words.md', [{ fileName: 'two words.md' }])[0].method, 'normalized')
+  assert.equal(nameEvidence('sample\u200b.txt', [{ fileName: 'sample.txt' }])[0].method, 'normalized')
+  assert.deepEqual(Array.from(nameEvidence('same-long-prefix…', [{ fileName: 'same-long-prefix-one.md' }, { fileName: 'same-long-prefix-two.md' }]), name => name.method), ['missing', 'missing'])
+  assert.equal(nameEvidence('short…', [{ fileName: 'short-file.md' }])[0].method, 'missing')
+  log('PASS nested form and relocated five-card batch, empty-text history boundaries, read-only previews, missing/ambiguous names and Unicode normalization')
   // Run the actual attachment-only public methods with an in-memory DOM model.
   // insertText is deliberately a trap: no status text or marker may be written.
   const publicStart = injectedSource.indexOf('  window[STATE_KEY] = {', pickerEnd)
@@ -156,7 +206,10 @@ async function main() {
     lastDraftImageAttachments: [], lastDraftImageCapturedAt: 0, lastDraftImagePromise: Promise.resolve([])
   }
   vm.createContext(pageContext)
-  vm.runInContext(injectedSource.slice(pickerStart, publicStart) + injectedSource.slice(publicStart, publicEnd) + '\n};', pageContext)
+  const nameStart = injectedSource.indexOf('  const normalizeAttachmentName =')
+  const nameEnd = injectedSource.indexOf('  const draftAttachmentEvidence =', nameStart)
+  assert.ok(nameStart >= 0 && nameEnd > nameStart)
+  vm.runInContext(injectedSource.slice(nameStart, nameEnd) + injectedSource.slice(pickerStart, publicStart) + injectedSource.slice(publicStart, publicEnd) + '\n};', pageContext)
   const fileApi = pageContext.window.__files
   assert.equal(fileApi.beginFileSend('attachment-only', [image]), 'ok')
   assert.equal(composer.text, '')
@@ -189,6 +242,19 @@ async function main() {
   assert.equal(turnShowsFiles(mockTurn('mixed', [thumbnail], 'sample.txt'), [image, textFile]), true)
   assert.equal(turnShowsFiles(mockTurn('missing-image', [], 'sample.txt'), [image, textFile]), false)
   log('PASS attachment-only send without text, draft protection, image/document confirmation and old-turn rerenders')
+  // Upload completion alone must not submit a batch with a missing card.
+  assert.equal(fileApi.beginFileSend('five-card-batch', batchFiles), 'ok')
+  fileApi.fileSelectionApplied('five-card-batch')
+  draftText = batchFiles.slice(0, 4).map(file => file.fileName).join(' ')
+  assert.equal(fileApi.fileSendStatus('five-card-batch').status, 'uploading')
+  assert.equal(fileApi.fileSendStatus('five-card-batch').nameEvidence[4].method, 'missing')
+  draftText = batchLabels
+  assert.equal(fileApi.fileSendStatus('five-card-batch').status, 'ready')
+  clickAction = () => { draftText = ''; turns.push(mockTurn('five-card-next:user', [], batchLabels)) }
+  assert.equal(fileApi.submitFileSend('five-card-batch'), true)
+  assert.equal(fileApi.fileSendStatus('five-card-batch').status, 'sent')
+  assert.equal(composer.text, '')
+  log('PASS five-card readiness and acknowledgement use the same matcher, require every file and send no text')
   // ChatGPT's selectable text and file card need not share the same node.
   // Use the real boundary/root helpers with nested user units and sibling cards.
   const hostsFile = { fileName: 'hosts', mimeType: 'application/octet-stream' }

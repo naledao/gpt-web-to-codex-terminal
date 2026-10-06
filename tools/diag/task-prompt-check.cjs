@@ -339,6 +339,60 @@ async function remaining() {
   log('PASS real main-process methods restore confirmed prompt state, reset tasks without baselining new replies and ignore stale confirmations')
 }
 
+function questionMarkdownChecks() {
+  const parser = {}
+  vm.runInNewContext([
+    section('  const balancedObjects =', '  const readJsonishString ='),
+    section('  const looksLikeQuestionReply =', '  const looksLikeCommandReply ='),
+    'globalThis.parseQuestion = extractQuestion;'
+  ].join('\n'), parser)
+  const command = [
+    "sudo tee /etc/systemd/system/usts-login.service >/dev/null <<'EOF'",
+    '[Unit]',
+    'Description=USTS Campus Network Auto Login',
+    '',
+    '[Service]',
+    'Type=simple',
+    'User=siyaoer',
+    'Environment=HOME=/home/siyaoer',
+    'ExecStart=/home/siyaoer/.local/bin/usts-login --auto-login',
+    '',
+    '[Install]',
+    'WantedBy=multi-user.target',
+    'EOF',
+    'sudo systemctl daemon-reload && sudo systemctl enable --now usts-login.service',
+    "  printf '%s\\n' '{literal shell escape}'"
+  ].join('\n')
+  const fence = '`'.repeat(3)
+  for (const newline of ['\n', '\r\n']) {
+    for (const fenced of [false, true]) {
+      const question = ['请手动执行以下命令：', '', ...(fenced ? [fence + 'bash'] : []), command,
+        ...(fenced ? [fence] : [])].join('\n').replace(/\n/g, newline)
+      for (const type of ['question', 'questions']) {
+        const request = type === 'question'
+          ? { type, question }
+          : { type, questions: [{ question }] }
+        const raw = fence + 'json\n' + JSON.stringify(request) + '\n' + fence
+        const parsed = parser.parseQuestion(raw)
+        assert.ok(parsed, `${type}: an outer JSON fence must not corrupt nested Markdown`)
+        assert.equal(parsed.questions[0].question, question)
+        const { instance } = embed()
+        instance.handlePageReport('[cmd-terminal] ' + JSON.stringify({
+          event: 'question', messageId: 'multiline-question', live: true, ...parsed
+        }))
+        assert.equal(instance.getInterceptorStatus().pendingQuestion.questions[0].question, question,
+          'Question lines, EOF, indentation and literal shell escapes must survive the main-process bridge')
+      }
+    }
+  }
+  const repairable = '{"type":"questions","questions":[{"question":' +
+    JSON.stringify(fence + 'sh\n' + command + '\n' + fence) + ',}],}'
+  assert.equal(parser.parseQuestion(repairable).questions[0].question, fence + 'sh\n' + command + '\n' + fence)
+  assert.equal(parser.parseQuestion(JSON.stringify({ type: 'question', question: '确认？', command: 'echo nope' })), null)
+  assert.equal(parser.parseQuestion('{"type":"questions","questions":[]}'), null)
+  log('PASS real question parser and main-process bridge preserve plain/fenced commands, LF/CRLF and literal escapes')
+}
+
 async function questionChecks() {
   for (const kind of ['contenteditable', 'textarea']) {
     const { p, instance, configurations } = questionSession(kind)
@@ -556,5 +610,5 @@ async function cancelQuestionChecks() {
 }
 
 log(`Log: ${logFile}`)
-main().then(remaining).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
+main().then(remaining).then(questionMarkdownChecks).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
   .catch(error => { log(`FAIL ${error.stack || error}`); process.exitCode = 1 })

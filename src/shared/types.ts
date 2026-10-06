@@ -629,6 +629,7 @@ const ASK_USER_SECTION = [
   '{"type":"questions","questions":[{"question":"需要用户回答的问题","placeholder":"可选提示"}]}',
   '```',
   'questions 为 1~20 项；question 必填，placeholder 可省略。软件逐页收集回答，按题号合并后一次发回。',
+  'question 支持 Markdown。需要用户手动执行命令时，在 question 内用对应语言的代码块给出完整命令，保留所有换行和缩进；JSON 字符串中的换行写成 \\n。',
   '删除、覆盖、格式化、改权限、发布、发消息、付费等不可逆动作，范围不明先询问；目标明确的代码修改、构建、测试可直接做。用户回答会发回并恢复循环。'
 ].join('\n')
 
