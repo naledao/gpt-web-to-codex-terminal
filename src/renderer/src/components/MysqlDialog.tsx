@@ -74,11 +74,19 @@ function connectionLabel(connection: MysqlConnection): string {
   return '未命名连接'
 }
 
+/**
+ * Where a connection points, in the usual MySQL spelling: user@host:port/database.
+ *
+ * The database is part of the line rather than a separate badge because a list of
+ * connections to the same server is common, and it is the database that tells them
+ * apart — two rows reading `root@127.0.0.1:3306` would otherwise be identical.
+ */
 function connectionTarget(connection: MysqlConnection): string {
   const user = connection.username.trim()
   const host = connection.host.trim() || '未填写主机'
   const port = connection.port ? `:${connection.port}` : ''
-  return `${user === '' ? '' : `${user}@`}${host}${port}`
+  const database = connection.database.trim()
+  return `${user === '' ? '' : `${user}@`}${host}${port}${database === '' ? '' : `/${database}`}`
 }
 
 /** True when the form still matches what is stored, password included. */
