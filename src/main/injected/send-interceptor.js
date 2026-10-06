@@ -65,11 +65,13 @@
     messageIdAttr: 'data-chatgpt-selection-message-id',
     disabledControlSelectors: [],
     fileTurnPositionAttr: '',
+    fileTurnPositionSelector: '',
     fileAssistantSelectors: [],
     fileUserTurnSelector: '[class~="group/user-message"][data-chatgpt-search-unit-key]',
     fileUserTurnFallbackSelector: '[data-content-search-unit-key$=":user"]',
     fileUserTurnKeyAttr: 'data-chatgpt-search-unit-key',
-    fileImagesMayUseNames: false
+    fileImagesMayUseNames: false,
+    fileAttachmentCardSelector: ''
   }
 
   /**
@@ -519,6 +521,12 @@
     }
     const composer = getComposer()
     if (!composer) return false
+    // A measured native-card selector lets us stay inside the draft. Walking
+    // beyond that scope can mistake an old conversation image for a new upload.
+    if (PAGE.fileAttachmentCardSelector) {
+      const root = attachmentRoot()
+      return !!root && [...root.querySelectorAll(PAGE.fileDraftCardSelector || PAGE.fileAttachmentCardSelector)].some((card) => !!card.querySelector(PAGE.fileDraftImageSelector || 'img'))
+    }
     let root = composer
     for (let depth = 0; depth < 6 && root; depth += 1, root = root.parentElement) {
       const images = [...root.querySelectorAll('img')]
@@ -2413,6 +2421,10 @@
   const attachmentRoot = () => {
     const composer = getComposer()
     if (!composer) return null
+    if (PAGE.fileComposerRootSelector) {
+      const root = composer.closest(PAGE.fileComposerRootSelector)
+      return root && !attachmentHasMessages(root) ? root : null
+    }
     let candidate = null
     let root = composer.parentElement
     for (let depth = 0; root && root !== document.body && depth < 8; depth += 1, root = root.parentElement) {
@@ -2424,23 +2436,50 @@
     }
     return candidate
   }
+  const attachmentCardText = (card, referenceAttribute = '') => {
+    const clone = card.cloneNode(true)
+    clone.querySelectorAll('textarea, [contenteditable]:not([contenteditable="false"]), input').forEach((node) => node.remove())
+    const labels = [clone, ...clone.querySelectorAll('[title], [aria-label], [alt]')].map((node) =>
+      [node.getAttribute('title'), node.getAttribute('aria-label'), node.getAttribute('alt')].filter(Boolean).join(' ')).join(' ')
+    const references = referenceAttribute ? [card, ...card.querySelectorAll(`[${referenceAttribute}]`)].flatMap((node) =>
+      String(node.getAttribute(referenceAttribute) || '').split(/\s+/).filter(Boolean).slice(0, 8).map((id) => {
+        const target = document.getElementById(id)
+        // Gemini's current card links a hidden CDK tooltip. Never search all
+        // tooltips or read arbitrary referenced conversation nodes.
+        return target?.getAttribute('role') === 'tooltip' ? String(target.textContent || '') : ''
+      })) : []
+    return collapse(clone.textContent || '') + ' ' + labels + ' ' + references.join(' ')
+  }
   const attachmentSnapshot = () => {
     const root = attachmentRoot()
-    if (!root) return { rootFound: false, text: '', images: 0, uploading: false, error: false, inputFiles: 0 }
+    const inputFiles = [...document.querySelectorAll('input[type="file"]')].reduce((sum, input) => sum + (input.files?.length || 0), 0)
+    if (!root) return { rootFound: false, text: '', images: 0, cards: 0, uploading: false, error: false, inputFiles }
     const clone = root.cloneNode(true)
     // Attachment cards can themselves be clickable controls. Keep their text;
     // remove only editable values and native inputs, which are not previews.
     clone.querySelectorAll('textarea, [contenteditable]:not([contenteditable="false"]), input').forEach((node) => node.remove())
-    const images = [...root.querySelectorAll('img')].filter((img) => /^(blob:|data:)/.test(img.currentSrc || img.src || '') || (img.naturalWidth >= 40 && img.naturalHeight >= 40))
-    const imageLabels = images.map((img) => [img.alt, img.title, img.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+    const cardSelector = PAGE.fileDraftCardSelector || PAGE.fileAttachmentCardSelector
+    const cards = cardSelector ? [...root.querySelectorAll(cardSelector)] : []
+    const previewImages = PAGE.fileDraftImageSelector ? cards.flatMap((card) => [...card.querySelectorAll(PAGE.fileDraftImageSelector)])
+      : cardSelector ? cards.flatMap(collectImages) : [...root.querySelectorAll('img')]
+    const images = previewImages.filter((img) => /^(blob:|data:)/.test(img.currentSrc || img.src || '') || (img.naturalWidth >= 40 && img.naturalHeight >= 40))
+    // Claude renders PDF filenames in thumbnail alt text; even a small or not-yet-loaded
+    // preview carries valid name evidence inside its measured native attachment card.
+    const labelImages = cardSelector ? previewImages : images
+    const imageLabels = labelImages.map((img) => [img.alt, img.title, img.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
     const cardLabels = [...clone.querySelectorAll('[title], [aria-label]')].map((node) => [node.getAttribute('title'), node.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
     return {
       rootFound: true,
-      text: collapse(clone.textContent || '') + ' ' + cardLabels + ' ' + imageLabels,
+      text: PAGE.fileDraftCardSelector ? cards.map((card) => attachmentCardText(card, PAGE.fileDraftNameReferenceAttribute)).join(' ')
+        : collapse(clone.textContent || '') + ' ' + cardLabels + ' ' + imageLabels,
       images: images.length,
-      uploading: !!root.querySelector('[role="progressbar"], [aria-busy="true"]'),
+      cards: cards.length,
+      uploading: cardSelector
+        ? cards.some((card) => card.matches('[role="progressbar"], [aria-busy="true"]') || card.querySelector('[role="progressbar"], [aria-busy="true"]') ||
+          (PAGE.fileUploadProgressSelector && card.querySelector(PAGE.fileUploadProgressSelector)))
+        : !!root.querySelector('[role="progressbar"], [aria-busy="true"]'),
       error: !!root.querySelector('[role="alert"], [aria-invalid="true"]'),
-      inputFiles: [...document.querySelectorAll('input[type="file"]')].reduce((sum, input) => sum + (input.files?.length || 0), 0)
+      inputFiles
     }
   }
   const normalizeAttachmentName = (text) => String(text || '').normalize('NFC')
@@ -2476,9 +2515,12 @@
     }
     return evidence
   }
-  const draftAttachmentEvidence = () => {
-    const snapshot = attachmentSnapshot()
-    return snapshot.inputFiles > 0 || snapshot.images > 0 || snapshot.uploading || /[^\s]+\.[a-z0-9]{1,10}(?:\s|$)/i.test(snapshot.text) || /\S{12,}(?:…+|\.{3,})(?:\s|$)/.test(snapshot.text)
+  const draftAttachmentEvidence = (snapshot = attachmentSnapshot()) => {
+    if (snapshot.inputFiles > 0 || snapshot.images > 0 || snapshot.uploading || snapshot.cards > 0) return true
+    // Claude has measured native cards, including extensionless files after
+    // FileList resets. Toolbar text such as "Sonnet 5.5" is not file evidence.
+    if (PAGE.fileAttachmentCardSelector) return false
+    return /[^\s]+\.[a-z0-9]{1,10}(?:\s|$)/i.test(snapshot.text) || /\S{12,}(?:…+|\.{3,})(?:\s|$)/.test(snapshot.text)
   }
   // ChatGPT exposes separate media/image inputs alongside a general attachment
   // input. A picture matches all three; prefer the unique unrestricted input.
@@ -2537,13 +2579,14 @@
   const fileTurnText = (root) => String(root.textContent || root.innerText || '') + ' ' +
     [root, ...(root.querySelectorAll?.('[title], [aria-label]') || [])].map((node) =>
       [node.getAttribute('title'), node.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+  const fileTurnPositionNode = (node) => PAGE.fileTurnPositionSelector ? node?.closest?.(PAGE.fileTurnPositionSelector) : node
   const fileUserTurnKey = (node) => (PAGE.fileUserTurnKeyAttr ? node?.getAttribute(PAGE.fileUserTurnKeyAttr) : '') ||
     node?.getAttribute('data-content-search-unit-key') || messageIdOf(node) ||
-    (PAGE.fileTurnPositionAttr ? String(node?.getAttribute(PAGE.fileTurnPositionAttr) || '').trim() : '')
+    (PAGE.fileTurnPositionAttr ? String(fileTurnPositionNode(node)?.getAttribute(PAGE.fileTurnPositionAttr) || '').trim() : '')
   // DeepSeek's row key is useful only for the short interval around a send.
   // It must never become the persistent identity used to deduplicate commands.
   const fileUserTurnPosition = (node) => {
-    const value = PAGE.fileTurnPositionAttr ? node?.getAttribute(PAGE.fileTurnPositionAttr) : null
+    const value = PAGE.fileTurnPositionAttr ? fileTurnPositionNode(node)?.getAttribute(PAGE.fileTurnPositionAttr) : null
     return value != null && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null
   }
   const isNewFileUserTurn = (newest, turns, baseline) => {
@@ -2563,9 +2606,13 @@
   const turnShowsFiles = (node, files) => {
     if (!node || !files.length) return false
     const root = fileAttachmentRoot(node)
-    const images = collectImages(root).filter(imageLooksLikeAttachment)
-    const labels = images.map((image) => [image.alt, image.title, image.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
-    const text = fileTurnText(root) + ' ' + labels
+    const cards = PAGE.fileAttachmentCardSelector
+      ? [...(root.matches?.(PAGE.fileAttachmentCardSelector) ? [root] : []), ...root.querySelectorAll(PAGE.fileAttachmentCardSelector)] : [root]
+    const allImages = [...new Set(PAGE.fileSentImageSelector ? cards.flatMap((card) => [...card.querySelectorAll(PAGE.fileSentImageSelector)]) : cards.flatMap(collectImages))]
+    const images = allImages.filter(imageLooksLikeAttachment)
+    const labelImages = PAGE.fileAttachmentCardSelector ? allImages : images
+    const labels = labelImages.map((image) => [image.alt, image.title, image.getAttribute('aria-label')].filter(Boolean).join(' ')).join(' ')
+    const text = cards.map(fileTurnText).join(' ') + ' ' + labels
     const imagesExpected = files.filter((file) => file.mimeType.startsWith('image/')).length
     const names = attachmentNameEvidence(text, files)
     if (PAGE.fileImagesMayUseNames && names.every((name) => name.method !== 'missing')) return true
@@ -2639,22 +2686,76 @@
         state.programmatic = true
         const snapshot = attachmentSnapshot()
         if (fileSend.files.length && !snapshot.images && !snapshot.inputFiles && !snapshot.uploading && attachmentNameEvidence(snapshot.text, fileSend.files).every((name) => name.method === 'missing')) fileSend.selected = false
+        if (!fileSend.selected) { fileSend.chooserControls = new WeakSet(); fileSend.chooserSteps = {} }
         return fileSend.selected ? 'resume' : 'ok'
       }
       if (state.programmatic || findStopButton() || collapse(readComposer(composer)) !== '' || draftAttachmentEvidence()) return 'busy'
       if (!attachmentRoot()) return 'no-composer'
-      const input = files.length ? findAttachmentInput(files) : null
-      if (files.length && !input) {
+      const input = PAGE.fileLocalUploadSelector ? null : files.length ? findAttachmentInput(files) : null
+      if (files.length && !input && !PAGE.fileLocalUploadSelector) {
         const candidates = [...document.querySelectorAll('input[type="file"]')].filter((item) => !item.disabled && (files.length === 1 || item.multiple))
         if (candidates.length && candidates.every((item) => !chooseAttachmentInput(files, [item], [item]))) return 'unsupported-file-type'
         return 'no-file-input'
       }
       input?.setAttribute('data-codex-file-input', token)
       state.programmatic = true
-      fileSend = { token, files, input, selected: false, edited: false, submitted: false, baselineUser: null, baselineAssistant: null }
+      fileSend = { token, files, input, selected: false, edited: false, submitted: false, baselineUser: null, baselineAssistant: null, chooserControls: new WeakSet(), chooserSteps: {} }
       return 'ok'
     },
     fileSendStatus,
+    openFileChooser(token) {
+      const active = () => fileSend?.token === token && !fileSend.selected && !fileSend.submitted && !fileSend.edited &&
+        state.programmatic && composerMatches(getComposer(), '') && !findStopButton() && !draftAttachmentEvidence()
+      if (!PAGE.fileLocalUploadSelector || !active()) return false
+      const visibleControl = (node) => node && node.getClientRects().length > 0 &&
+        !node.closest?.('[aria-hidden="true"]') && !controlDisabled(node)
+      const unused = (node) => visibleControl(node) && !fileSend.chooserControls.has(node)
+      const clickOnce = (kind, node, result) => {
+        fileSend.chooserSteps[kind] = true
+        fileSend.chooserControls.add(node)
+        pressButton(node)
+        return result
+      }
+      const local = [...document.querySelectorAll(PAGE.fileLocalUploadSelector)].filter(visibleControl)
+      if (local.length === 1 && !fileSend.chooserSteps.native && unused(local[0])) return clickOnce('native', local[0], true)
+      const labels = PAGE.fileLocalUploadLabels || []
+      const menus = [...document.querySelectorAll('[role="menu"]')].filter((node) => node.getClientRects().length > 0 && !node.closest?.('[aria-hidden="true"]'))
+      const candidates = [...new Set(menus.flatMap((menu) => [...menu.querySelectorAll(CONTROL_SELECTOR + ',[role="menuitem"]')]))].filter((node) => {
+        if (!visibleControl(node)) return false
+        const clone = node.cloneNode(true)
+        clone.querySelectorAll('svg, mat-icon, gem-icon, [aria-hidden="true"]').forEach((icon) => icon.remove())
+        return labels.includes(collapse(node.getAttribute('aria-label') || '')) || labels.includes(collapse(clone.textContent || ''))
+      })
+      // Only the unique Files entry in a visible menu qualifies. Drive/photos,
+      // hidden helper buttons and filenames mentioned in history cannot qualify.
+      // It can open a chooser directly OR expose the measured local submenu;
+      // the main process polls until the native chooser event arrives.
+      if (candidates.length === 1 && !fileSend.chooserSteps.caption && unused(candidates[0])) return clickOnce('caption', candidates[0], 'waiting')
+      if (!menus.length && !local.length && !fileSend.chooserSteps.menu) {
+        const root = attachmentRoot()
+        const menu = (PAGE.fileUploadMenuSelectors || []).flatMap((selector) => [...(root?.querySelectorAll(selector) || [])]).find(unused)
+        if (!menu) return 'waiting'
+        // The main process has already intercepted file chooser dialogs.
+        return clickOnce('menu', menu, 'waiting')
+      }
+      return 'waiting'
+    },
+    fileChooserDiagnostics() {
+      const root = attachmentRoot()
+      const visibleControl = (node) => node.getClientRects().length > 0 && !node.closest?.('[aria-hidden="true"]') && !controlDisabled(node)
+      const menus = [...document.querySelectorAll('[role="menu"]')].filter(visibleControl)
+      const native = PAGE.fileLocalUploadSelector ? [...document.querySelectorAll(PAGE.fileLocalUploadSelector)].filter(visibleControl) : []
+      const captions = [...new Set(menus.flatMap((menu) => [...menu.querySelectorAll(CONTROL_SELECTOR + ',[role="menuitem"]')]))].filter((node) => {
+        if (!visibleControl(node)) return false
+        const clone = node.cloneNode(true)
+        clone.querySelectorAll('svg, mat-icon, gem-icon, [aria-hidden="true"]').forEach((icon) => icon.remove())
+        return (PAGE.fileLocalUploadLabels || []).includes(collapse(node.getAttribute('aria-label') || '')) ||
+          (PAGE.fileLocalUploadLabels || []).includes(collapse(clone.textContent || ''))
+      })
+      return { rootFound: !!root, menuCount: menus.length, localEntryCount: native.length, captionEntryCount: captions.length,
+        entryAmbiguous: native.length > 1 || captions.length > 1,
+        entryClicked: !!(fileSend?.chooserSteps.caption || fileSend?.chooserSteps.native) }
+    },
     fileSelectionApplied(token) {
       if (fileSend?.token === token) fileSend.selected = true
     },
@@ -2776,7 +2877,7 @@
         // read/write path decides from the ELEMENT (see readComposer), so a site that
         // changes its composer still works without a descriptor update.
         const { composerKind: _kind, ...selectors } = config.page
-        PAGE = { ...PAGE, disabledControlSelectors: [], fileTurnPositionAttr: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, ...selectors }
+        PAGE = { ...PAGE, disabledControlSelectors: [], fileTurnPositionAttr: '', fileTurnPositionSelector: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, fileAttachmentCardSelector: '', fileDraftCardSelector: '', fileDraftImageSelector: '', fileSentImageSelector: '', fileDraftNameReferenceAttribute: '', fileUploadProgressSelector: '', fileComposerRootSelector: '', fileUploadMenuSelectors: [], fileLocalUploadSelector: '', fileLocalUploadLabels: [], ...selectors }
       }
       // A freshly (re)loaded page has no message of ours outstanding, so nothing
       // it renders can be a reply to us.
@@ -2876,12 +2977,27 @@
     sendRaw(text, ownedDraft = null) {
       const element = getComposer()
       if (!element) return Promise.resolve('no-composer')
-      if (state.programmatic || findStopButton()) return Promise.resolve('busy')
-      if (hasDraftImageAttachment() || draftAttachmentEvidence()) return Promise.resolve('busy')
+      const blocked = (reason, details = {}) => {
+        // Log only counts/flags at the guard that actually refused this send.
+        // Never include the user's draft, command output or toolbar labels.
+        report({ event: 'raw-busy', reason, composerTextLength: readComposer(element).length, ...details })
+        return Promise.resolve('busy')
+      }
+      if (state.programmatic) return blocked('programmatic-send')
+      if (findStopButton()) return blocked('model-generating', { stopButtonFound: true })
+      if (hasDraftImageAttachment()) return blocked('image-draft')
+      const attachments = attachmentSnapshot()
+      if (draftAttachmentEvidence(attachments)) return blocked('attachment-draft', {
+        attachmentRootFound: attachments.rootFound,
+        attachmentCards: attachments.cards,
+        attachmentInputFiles: attachments.inputFiles,
+        attachmentImages: attachments.images,
+        attachmentUploading: attachments.uploading
+      })
       // Never clobber something the user is in the middle of typing.
       const existing = readComposer(element)
       if (collapse(existing) !== '') {
-        if (!ownedDraft || !composerMatches(element, ownedDraft)) return Promise.resolve('busy')
+        if (!ownedDraft || !composerMatches(element, ownedDraft)) return blocked('text-draft')
       }
 
       const payload = normalizeLineEndings(text)

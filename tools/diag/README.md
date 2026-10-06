@@ -47,6 +47,28 @@ For live acceptance, the user starts the app with `npm run dev`, connects SSH an
 
 These offline checks do not establish live SSH behavior or visual correctness.
 
+## Automatic raw-send guard logs
+
+When a command result or question answer is blocked before insertion, the app
+automatically appends metadata to
+`%TEMP%\gpt-login-diag\<platform>-raw-send-<timestamp>-<pid>.log`.
+This does not require `DSH_APP_LOG=1`. Reasons distinguish `programmatic-send`,
+`model-generating`, `image-draft`, `attachment-draft` and `text-draft`.
+The record contains only counts/flags and an allowlisted reason; it excludes
+draft text, command output, filenames, toolbar labels, URLs and cookie values.
+Old runs without these guard events cannot be reconstructed from the new logger.
+
+The user runs `node tools/diag/task-prompt-check.cjs` for offline guard and logger
+checks. The real main/page bridge is exercised with Electron and file writes
+stubbed; blocked sends preserve drafts, empty drafts still accept a result,
+untrusted content is filtered, and log-write failures remain harmless.
+
+For live acceptance, start the app with `npm run dev`. In Claude with an empty
+composer and a model version shown in its toolbar, complete a harmless command
+and wait for its response to finish. The result should be returned. A real text
+or attachment draft must still block a return. If blocked, retain the corresponding
+`claude-raw-send-*.log`; its reason identifies the guard used at that moment.
+
 ## attachments-probe.js / read-files-check.cjs
 
 Attachment observation and offline checks for AI-selected file uploads. See
@@ -55,10 +77,18 @@ Attachment observation and offline checks for AI-selected file uploads. See
 The user runs `node tools/diag/read-files-check.cjs` for offline checks. It never
 starts Electron or accesses the network; fixtures and logs are created under `%TEMP%`.
 It covers original file bytes (including text/source files), upload limits, SSH routing,
-and both platforms' CDP file-selection path with a fake page.
+and all four supported platforms' CDP file-selection path with a fake page.
+Gemini fixtures cover transient chooser backend nodes, enabling interception before
+opening local upload, compact Files tiles that open the chooser directly or expand
+the measured local submenu, single clicks across polling/DOM rebuilds, retries,
+hidden/ambiguous entry rejection, single submission and interception cleanup on failure/cancellation.
+They also distinguish resumable upload errors from unrelated Google service errors.
+Claude draft checks include version text such as `Sonnet 5.5`, truncated toolbar
+labels and old-message images: none is a new attachment. Native selections,
+extensionless cards, small PDF previews and uploading cards remain protected.
 
 The tool allows 1–3 files per call. Boundary checks exercise the real injected and
-main-process request parsers, both platform prompts, and rejection of oversized
+main-process request parsers, all supported platform prompts, and rejection of oversized
 stored requests before any file is read. Larger byte-preservation fixture sets
 are read in separate calls of at most three files.
 
@@ -92,6 +122,12 @@ unit, text hydration without duplicate messages, old-wrapper rerenders, wrapper
 DOM reuse and the website's `hosts(1)` filename suffix. Full-wrapper keys are used
 only during attachment acknowledgement; command selectors and persistent IDs stay
 unchanged.
+Claude checks use the user-captured outer ms-auto message wrapper and native
+file-thumbnail cards, including missing/hydrated text units, repeated filenames,
+old-row rerenders, surrounding transcript-row positions, recycled rows, image/PDF
+alt filenames, missing batch members and exclusion of plain filename claims.
+They cover extensionless draft cards after FileList resets, small/not-yet-loaded PDF
+previews and preservation of original transport names and bytes.
 DeepSeek checks also cover extensionless UTF-8 text snapshots (including .gitconfig),
 the .txt transport filename without byte changes, original ChatGPT names, SSH routing,
 binary/non-UTF-8 rejection and the distinction between missing inputs and unsupported types.
@@ -101,7 +137,7 @@ checks do not verify the live website.
 
 Normal application attachment sends also append a small phase log automatically to
 `%TEMP%\gpt-login-diag\<platform>-file-send-<timestamp>-<pid>.log`, without `DSH_APP_LOG`.
-The prefix is `chatgpt` or `deepseek`, and each platform has its own log file.
+The prefix is `chatgpt`, `deepseek`, `claude` or `gemini`, and each platform has its own log file.
 Look for `begin-result`, `page-diagnostics`, `cdp-start` / `cdp-done`, `upload-state`, `confirm-state`, `release-result`,
 and the final `finish` stage/reason. Only structural state and upload metadata are
 recorded; message text, file contents, image bytes and cookies are excluded.
@@ -184,6 +220,283 @@ serializes it into the inspected page and never runs it against a browser by its
 
 This diagnostic is an evidence-gathering step, not a website compatibility verdict.
 The agent writes it and reads the user's log; only the user runs and drives Electron.
+
+## claude-attachments-probe.js / claude-attachments-check.cjs
+
+Claude attachment discovery for `read_files`. The 2026-10-06 user-run capture established
+the unrestricted multiple-file input, native file-thumbnail cards, ms-auto full user
+wrapper, aria-busy upload state and PDF alt filenames. The production adapter now uses
+those structures; application CDP selection and automatic delivery still require user
+acceptance. The observer does not install the application's send
+interceptor, run terminal commands, choose files, upload or send a message. The user
+performs every website action.
+
+The user runs the offline checks first:
+
+```powershell
+node tools/diag/claude-attachments-check.cjs
+```
+
+They serialize the real capture function into an in-memory DOM using the shipped
+Claude descriptor. Checks cover hidden file inputs, separation of composer cards and
+conversation history, stable node/key aliases, DOM recycling, route aliases, native
+FileList capture before the page clears it, manual send observations, composer
+replacement, one-time listener registration, upload-marker transitions between polling
+ticks and exclusion of conversation/file/label/key/route values. No Electron or network
+is started. Prompt checks require Claude to share the same generic tool description as
+the other supported platforms, without platform/model names in its title or body.
+
+Close the normal application before running the live probe from the repository root:
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\claude-attachments-probe.js
+```
+
+It uses `persist:claude` and the app's userData directory, so an existing login is reused.
+The process proxy defaults to `http://127.0.0.1:7897`. `PROBE_PROXY`, `PROBE_USER_DATA`,
+`PROBE_PARTITION` and `PROBE_START_URL` override this probe process only; the start URL
+must have Claude's origin. The Chrome identity rewrite is installed once for the whole
+partition, matching the current app; it is not combined with a second header listener.
+
+The terminal prints the log path and a new sample directory under `%TEMP%`. It creates
+only harmless local fixtures: `.txt`, `.js` (never executed), a generated PNG, a small
+PDF, an extensionless `hosts` and a long-named text file. The same instructions are
+saved as `操作说明.txt` in that directory.
+
+1. Log in if necessary and enter a diagnostic conversation. Wait five seconds.
+2. Open the attachment menu, wait three seconds, select `sample.txt`, then wait five
+   seconds after upload. With an empty composer, try sending only the attachment.
+   If the website blocks this, keep that state briefly and then add `只回复 OK` to send;
+   report that attachment-only sending was blocked.
+3. After the reply ends, select `sample.js`, `sample.png` and `sample.pdf` together
+   (three files). Remove `sample.js`, wait three seconds, then add it again. Wait five
+   seconds after upload and send.
+4. After the reply ends, select `hosts` and the `long-` text file. Type `只回复 OK`,
+   leave the draft for five seconds, then send. If a type is rejected, keep the error
+   visible for five seconds before removing it; do not intentionally disrupt the network.
+5. After the reply ends, upload and send `sample.txt` again. Then visit another
+   conversation, wait five seconds, and return. This captures repeated names and history
+   rerenders as well as the new-chat to conversation transition.
+6. Wait five seconds and close the window. Send the `.log` file to the agent.
+
+Each selection contains at most three files. Use the generated samples rather than
+private documents. The probe records structural snapshots on changes and native events
+before website handlers reset FileList. A read-only MutationObserver also records
+semantic upload markers that may appear and disappear between the 500 ms polling ticks.
+The final snapshot is taken before webContents is destroyed, with a bounded close timeout.
+
+`SNAPSHOT` includes current selector counts, safe `data-testid` markers, native input
+accept/multiple/disabled/visibility, bounded composer/menu/message trees, status semantics,
+filename match indices and possible truncated-name evidence. Arbitrary filenames remain
+inside the page; their indices/lengths and selected-file MIME/size metadata leave it.
+Node aliases, key aliases and route aliases distinguish new nodes, recycled nodes, changed
+attributes and navigation without logging raw IDs or conversation URLs. Visible text,
+file bytes, input values, title/aria-label values and href/src values are excluded. Cookies
+are logged only as names and value lengths.
+The updated capture directly discovers full user wrappers and normalizes nested text
+units; filename ancestors extend to sixteen levels so virtual transcript-row indices
+remain visible even when a card is deeply nested. The initial capture's
+`filenameInUserMessage=false` reflected its text-only user selector, not failed uploads.
+
+`REQUEST`, `RESPONSE` and `REQUEST-FAILED` correlate mutation requests on first-party
+hosts and possible upload requests on storage hosts using local aliases, method,
+resource type, upload-body/path flags and response status. Request/response bodies,
+headers, URLs and opaque request identifiers are never logged. `COVERAGE` says which
+states were observed; missing evidence remains inconclusive. In particular, a visible
+file input is not proof that CDP selection or production attachment delivery works.
+
+Logs: `%TEMP%\gpt-login-diag\claude-attachments-<timestamp>-<pid>.log` and
+`%TEMP%\gpt-login-diag\claude-attachments-check-<timestamp>.log`.
+Samples: `%TEMP%\gpt-login-diag\claude-attachment-samples-<timestamp>-<pid>\`.
+The agent writes these probes and reads the user's logs; only the user runs them.
+
+## gemini-attachments-probe.js / gemini-attachments-check.cjs
+
+Evidence gathering for Gemini `read_files`. Gemini's ordinary composer and message
+descriptor already exist. Two user-driven captures established local upload controls,
+transient file inputs, attachment-only submission, surrounding message IDs and deep
+draft/image-card structures. The production file tool is now enabled; automatic
+application delivery still awaits user acceptance. Synthetic fixture tags in the
+observer checks are not live evidence. Native selectors are taken from the captures.
+
+The user runs the offline observer/network checks:
+
+```powershell
+node tools/diag/gemini-attachments-check.cjs
+```
+
+They serialize the actual shared read-only observer into a fake Quill/Angular page
+using the shipped Gemini descriptor. Checks cover an empty composer, hidden file input,
+local/Drive menu semantics, disabled send, nested assistant markers, pure-attachment
+user messages, HTML `id` aliases, node recycling, remounted composers and route changes.
+Native FileList is captured before the website clears it. ARIA and Angular/class-based
+status transitions are observed between polling ticks; custom status candidates are
+discovery evidence, not upload-success/failure verdicts. Repeated filenames, Chinese/
+space names, truncated-name candidates and privacy are covered. Request fixtures
+exercise Google resumable uploads, non-Gemini Google API POSTs, PUTs, RPC requests,
+invalid URLs and allowlisted header metadata without network or Electron access.
+Additional fixtures cover deep native card roots, split basename/extension flags,
+linked and missing ARIA tooltip references, scoped image dimensions/source categories,
+and file inputs created/removed between polling ticks. Partial-name flags and image
+dimensions are discovery metadata, not an upload-ready verdict.
+
+Log: `%TEMP%\gpt-login-diag\gemini-attachments-check-<timestamp>.log`.
+
+Close the normal app, then run the live probe from the repository root:
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\gemini-attachments-probe.js
+```
+
+It reuses the app's `persist:gemini` partition and userData directory, with the
+process proxy defaulting to `http://127.0.0.1:7897`. An existing Gemini login should be
+available. If a Google login/availability wall appears, retain it for five seconds
+and close the probe; do not repeatedly sign in or supply cookie values to the agent.
+`PROBE_PROXY`, `PROBE_USER_DATA`, `PROBE_PARTITION` and `PROBE_START_URL` override only
+this process; the start URL must have Gemini's origin. The Chrome identity rewrite
+uses one `onBeforeSendHeaders` handler for the partition, matching the application.
+
+The probe prints the exact log path, sample directory and **absolute sample.txt path**.
+It generates harmless `.txt`, `.js` (never executed), PNG, PDF, extensionless `hosts`,
+long `.txt` and Chinese/space `.md` files, plus `操作说明.txt`, under `%TEMP%`.
+Every selection, upload, removal, input and send is performed by the user:
+
+1. Open a diagnostic conversation and wait five seconds. Open the attachment/menu
+   controls and wait three seconds before selecting **local computer upload**.
+2. Upload `sample.txt`, wait five seconds after completion, and try sending without
+   text. If this is unavailable, keep the attachment and empty composer visible for
+   five seconds, then type `只回复 OK`, wait five seconds and send.
+3. After the response ends, select `sample.js`, `sample.png`, `sample.pdf` together.
+   If `sample.js` uploads, remove it, wait three seconds and add it again. Preserve
+   any rejected-file UI for five seconds, remove that file, and send accepted files.
+4. After the response ends, select `hosts`, the `long-` text and `样本 空格.md`
+   (three files). Keep any rejection visible five seconds before removing the file.
+   Type `只回复 OK`, wait five seconds and send accepted files.
+5. Send `sample.txt` again after the response ends, then visit another conversation,
+   wait five seconds and return to the diagnostic conversation. This captures same-name
+   old/new cards and DOM rebuilding without treating a rerender as a send.
+6. Wait five more seconds and close the probe. Share its `.log` path/file with the agent.
+
+Live log: `%TEMP%\gpt-login-diag\gemini-attachments-<timestamp>-<pid>.log`.
+`SNAPSHOT` carries selector hit counts, composer/toolbar/card trees, file inputs,
+custom-element counts, status candidates, filename indices and stable node/key/route
+aliases. `REQUEST`/`RESPONSE`/`REQUEST-FAILED` report request aliases, method/type,
+origin category, upload-protocol/command enums and status codes. No URLs, bodies,
+filenames, raw message/route IDs, draft/message text, file bytes or header values
+outside those enums are logged. Cookie records contain names and lengths only.
+The observer never installs the app's send interceptor, calls a terminal, selects files,
+uploads or submits. The `COVERAGE` line is evidence completeness, not a compatibility
+verdict; absent markers may require another capture. Close captures are bounded and
+occur before the webContents is destroyed.
+
+`attachment-capture.cjs` is the standalone browser observer shared with Claude;
+`claude-attachment-capture.cjs` retains its existing entry point and default state.
+Neither module starts a browser. Only the user runs tests and drives the probe.
+
+### First Gemini capture and focused follow-up
+
+The user's `gemini-attachments-2026-10-06T06-57-33-030Z-25752.log` contains 100
+snapshots and 27 file-related HTTP responses, all 200. Native selection events at
+lines 153, 237, 278, 363 and 457 cover all seven generated samples, including an
+extensionless file and a Chinese/space filename. An empty composer accompanies the
+first attachment-only send. Coverage is recorded at line 569.
+
+The menu exposes restricted document and image inputs (line 214); the local upload
+control additionally creates an unrestricted `accept=""`, `multiple=true` input
+(line 443). These inputs disappear with the menu. The observed local control is
+`button[data-test-id="local-images-files-uploader-button"]`, distinct from Drive's
+`button[data-test-id="uploader-drive-button"]`. Existing production selection only
+searches for an input, so enabling the platform gate alone cannot handle this lifecycle.
+
+Draft cards have `uploader-file-preview` roots and sent cards live inside
+`user-query-file-carousel`. The original five-level tree limit truncated draft card
+children and the sent image card. Full filenames also appear in CDK tooltip nodes,
+linked from draft `file-preview-container` by `aria-describedby`; this relationship
+must be captured rather than treating a global tooltip as a draft attachment.
+Sent document buttons contain full filenames in aria-label. The user-query itself
+has no ID; surrounding `.conversation-container` IDs keep the same aliases when
+the old messages are rebuilt after returning to the conversation (line 545).
+
+The updated observer independently records bounded deeper `attachmentDetails.draft`
+and `attachmentDetails.sent` trees from those native roots. It resolves ARIA IDREFs
+internally and emits only aliases, presence and filename-match flags. Filename parts
+remain flags/indices; image sources remain categories, with dimensions and load state.
+The same single MutationObserver records `file-inputs` creation/removal events. No
+tooltip text, ID value, image URL or extra page action is logged or performed.
+
+Only one additional three-file send is needed:
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\gemini-attachments-probe.js --focused
+```
+
+Close the normal app, open the existing diagnostic conversation and wait five seconds.
+Open the upload menu and wait three seconds before choosing local upload. Select
+`sample.txt`, `sample.png` and `sample.pdf` from the **new sample directory printed by
+this run**. Wait ten seconds after upload; hover each document card for three seconds
+to capture filename hints. Send without text, wait for the response to finish, wait ten
+more seconds, then close and share the new log path. There is no need to repeat removal,
+extensionless/long-name uploads or conversation switching. `START.captureMode` identifies
+this short run; the default command retains the full sequence for future diagnostics.
+
+Manual upload evidence does not establish CDP selection, automatic readiness checks
+or application submission. The user runs the updated offline checks and live capture;
+the agent only reads the logs and runs the build.
+
+The user completed the focused capture in
+`gemini-attachments-2026-10-06T08-54-37-950Z-34612.log`. Lines 169 and 206 show all
+three native draft cards, with complete filenames in their linked `role="tooltip"`
+nodes. A document renders separate extension/basename spans, while a media card
+has a blob image. Line 211 shows the attachment-only pending-request user turn;
+line 235 shows its final surrounding conversation ID, full document aria-labels
+and `img[data-test-id="uploaded-img"]`. All nine file-related responses are 200.
+`filenameInDraft=false` at line 247 belongs to the older leaf-name metric, which
+does not follow ARIA references; the independent attachmentDetails contain the names.
+The user's updated observer check log has ten PASS groups.
+
+Production now scopes draft cards to the measured fieldset, reads linked tooltip
+names only from the current cards and scopes sent document/image evidence to
+user-query. It waits for the final surrounding conversation ID, excluding pending
+placeholders and old-row rebuilds. Local selection enables CDP chooser interception
+before opening the upload menu, then sets files on the reported backend node. The
+protocol parameters were checked against the
+[Chrome DevTools protocol definition](https://github.com/ChromeDevTools/devtools-protocol/blob/master/json/browser_protocol.json).
+Interception is released on success, cancellation or exception. Resumable upload
+requests are tracked by their upload headers; unrelated Google RPC errors are not
+classified as attachment failures.
+
+Run `node tools/diag/read-files-check.cjs`, then `npm run dev` for application
+acceptance. In a new Gemini terminal task, request one text file and a three-file
+text/PNG/PDF batch. Confirm there is no system picker, a single attachment-only
+message appears, the local record becomes successful and the next model command
+continues. Repeat a filename and check that old messages cannot confirm the new
+send; existing text or native draft cards must be preserved. Further cases and
+`gemini-file-send-*.log` stages are listed in [AI file reading](../../docs/ai-file-reading.md).
+
+### Compact Gemini menu regression
+
+The application's first automatic attempt is recorded in
+`gemini-file-send-2026-10-06T09-35-03-849Z-40276.log`. Line 9 finishes at
+`file-chooser / local-upload-entry-missing` with `submitted=false`; the CDP
+interception commands succeeded, but there is no chooser-opened event or file
+selection. The screenshot shows a compact menu with a visible Files tile labelled
+`文件`, rather than the previously captured local upload marker.
+
+The adapter now accepts the unique visible `文件` / `Files` control inside a
+visible role=menu, after removing icon text, as well as the measured local marker.
+This is a semantic fallback based on the screenshot's caption, not a new claim
+about the compact tile's unobserved test-id. Each menu step is clicked once;
+main waits for Page.fileChooserOpened whether Files opens the chooser directly or
+reveals the local submenu. Retry resets the steps; polling and remounted controls
+cannot repeat them. The offline fixtures cover these paths plus English captions,
+history/Drive/photos boundaries and hidden/ambiguous entries.
+
+Chooser failures append `chooser-diagnostics` counts/flags for visible menus,
+native/caption candidates, ambiguity and whether an entry was clicked, without
+recording menu text. Run the offline check above and restart with `npm run dev`;
+request the same two files again to check the compact layout. After a process
+restart, unsent snapshots are not reread automatically. Keep the new automatic
+log if the attempt still stops. Build success does not establish live upload success.
 
 ## task-prompt-check.cjs
 

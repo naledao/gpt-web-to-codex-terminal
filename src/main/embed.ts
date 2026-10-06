@@ -2,6 +2,7 @@ import { BrowserWindow, WebContentsView, session, shell } from 'electron'
 import interceptorSource from './injected/send-interceptor.js?raw'
 import themeSource from './injected/theme.js?raw'
 import { sendPageFiles } from './page-files'
+import { writeRawSendDiagnostic } from './raw-send-log'
 import { parseReadFilesRequest } from '../shared/file-requests'
 import type { FileSendOutcome } from '../shared/file-requests'
 import type { PreparedFileResult } from './file-access'
@@ -966,8 +967,8 @@ export class ChatGptEmbed {
    * the system prompt: the prompt is already established by the first user message
    * of the task, and re-sending it every round would bloat the context.
    *
-   * `busy` means the user is typing — we must never clobber their draft.
-   * `stuck` means the text went in but ChatGPT never accepted the submit.
+   * `busy` means a send/generation is in progress or a user draft exists.
+   * `stuck` means the text went in but the page never accepted the submit.
    */
   async sendRaw(
     text: string
@@ -1357,6 +1358,11 @@ export class ChatGptEmbed {
         console.warn(`[embed:${this.platform.id}] parse-failed ${JSON.stringify(payload)}`)
         this.handlers.onParseFailed(payload.text ?? '')
         break
+      case 'raw-busy': {
+        const logPath = writeRawSendDiagnostic(this.platform.id, payload)
+        console.warn(`[embed:${this.platform.id}] raw send blocked; log: ${logPath ?? 'unavailable'}`)
+        break
+      }
       /*
        * The scan notes: one line per (turn, reason) saying why a settled reply produced no
        * command. Without them, "the model answered with JSON and nothing happened" is

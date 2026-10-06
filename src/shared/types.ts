@@ -636,7 +636,7 @@ const ASK_USER_SECTION = [
 ].join('\n')
 
 export interface FileReadingPlatform {
-  id: 'chatgpt' | 'deepseek'
+  id: 'chatgpt' | 'deepseek' | 'claude' | 'gemini'
   label: string
 }
 
@@ -644,6 +644,8 @@ export interface FileReadingPlatform {
 export function fileReadingPlatform(platformId: string): FileReadingPlatform | null {
   if (platformId === 'chatgpt') return { id: 'chatgpt', label: 'ChatGPT' }
   if (platformId === 'deepseek') return { id: 'deepseek', label: 'DeepSeek' }
+  if (platformId === 'claude') return { id: 'claude', label: 'Claude' }
+  if (platformId === 'gemini') return { id: 'gemini', label: 'Gemini' }
   return null
 }
 
@@ -1014,6 +1016,13 @@ export interface InterceptorPageEvent {
   /** Which recovery action the failing pass used, or null when none had run yet. */
   recoveryTried?: string | null
   composerKind?: string | null
+  /** Content-free raw-send guard diagnostics. No draft text or toolbar labels. */
+  composerTextLength?: number
+  attachmentRootFound?: boolean
+  attachmentCards?: number
+  attachmentInputFiles?: number
+  attachmentImages?: number
+  attachmentUploading?: boolean
   /** What was still sitting in the composer, truncated. */
   composerLeft?: string
   sendButtonFound?: boolean

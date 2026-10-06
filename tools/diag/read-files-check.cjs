@@ -23,7 +23,7 @@ const { parseReadFilesRequest } = load('src/shared/file-requests.ts')
 const { prepareFiles, resolveFilePath, MAX_FILE_BYTES } = load('src/main/file-access.ts')
 const { sendPageFiles } = load('src/main/page-files.ts')
 const { toolPromptForPlatform, fileReadingPlatform } = load('src/shared/types.ts')
-const { CHATGPT_PAGE, DEEPSEEK_PAGE } = load('src/shared/platforms.ts')
+const { CHATGPT_PAGE, DEEPSEEK_PAGE, CLAUDE_PAGE, GEMINI_PAGE } = load('src/shared/platforms.ts')
 // Keep the existing sender regressions on ChatGPT and exercise DeepSeek separately.
 const sendChatGptFiles = (page, ...args) => sendPageFiles(page, 'chatgpt', ...args)
 const { EventEmitter } = require('node:events')
@@ -34,9 +34,11 @@ const log = text => { fs.appendFileSync(logFile, text + '\n'); console.log(text)
 
 async function main() {
   assert.equal(toolPromptForPlatform('chatgpt'), toolPromptForPlatform('deepseek'))
-  for (const platform of ['chatgpt', 'deepseek']) {
+  assert.equal(toolPromptForPlatform('chatgpt'), toolPromptForPlatform('claude'))
+  assert.equal(toolPromptForPlatform('chatgpt'), toolPromptForPlatform('gemini'))
+  for (const platform of ['chatgpt', 'deepseek', 'claude', 'gemini']) {
     assert.match(toolPromptForPlatform(platform), /^【工具：read_files】/)
-    assert.doesNotMatch(toolPromptForPlatform(platform), /ChatGPT|DeepSeek/)
+    assert.doesNotMatch(toolPromptForPlatform(platform), /ChatGPT|DeepSeek|Claude|Gemini/)
     assert.match(toolPromptForPlatform(platform), /files 为 1–3 个/)
     assert.match(toolPromptForPlatform(platform), /每次 1–3 个非空普通文件/)
   }
@@ -73,15 +75,21 @@ async function main() {
   class Element {
     constructor(tag, attributes = {}, text = '', children = []) {
       this.tagName = tag.toUpperCase(); this.attributes = attributes; this.text = text; this.children = children
+      this.shown = true
       children.forEach(child => { child.parentElement = this })
     }
     get textContent() { return this.text + this.children.map(child => child.textContent).join(' ') }
+    getClientRects() { return this.shown ? [{}] : [] }
     getAttribute(name) { return this.attributes[name] ?? null }
     matches(selector) {
       return selector.split(',').some(raw => {
         const rule = raw.trim()
+        const classRule = rule.match(/^([a-z][a-z0-9-]*)?\.([\w-]+)$/i)
+        if (classRule) return (!classRule[1] || this.tagName.toLowerCase() === classRule[1]) && String(this.attributes.class || '').split(/\s+/).includes(classRule[2])
         const negation = rule.match(/^(.*):not\(([^)]+)\)$/)
         if (negation) return this.matches(negation[1]) && !this.matches(negation[2])
+        const tagged = rule.match(/^([a-z][a-z0-9-]*)(\[.*)$/i)
+        if (tagged) return this.tagName.toLowerCase() === tagged[1].toLowerCase() && this.matches(tagged[2])
         if (!rule.startsWith('[')) return this.tagName.toLowerCase() === rule
         const parts = rule.match(/\[[^\]]+\]/g)
         if (!parts || parts.join('') !== rule) return false
@@ -109,12 +117,17 @@ async function main() {
   const body = new Element('body', {}, '', [layout])
   const scopeContext = {
     PAGE: DEEPSEEK_PAGE, CONTROL_SELECTOR: 'button,[role="button"]', getComposer: () => editor,
-    collapse: text => String(text).trim(), document: { body, querySelectorAll: selector => body.querySelectorAll(selector) }
+    collapse: text => String(text).trim(), collectImages: node => node.querySelectorAll('img'),
+    document: { body, querySelectorAll: selector => body.querySelectorAll(selector) }
   }
   vm.createContext(scopeContext)
   const rootStart = injectedSource.indexOf('  const attachmentHasMessages =')
   assert.ok(rootStart >= 0 && rootStart < pickerStart)
   const scopeApi = vm.runInContext(injectedSource.slice(rootStart, pickerStart) + '\n({attachmentRoot, attachmentSnapshot, draftAttachmentEvidence, attachmentNameEvidence})', scopeContext)
+  const imageDraftStart = injectedSource.indexOf('  const hasDraftImageAttachment =')
+  const imageDraftEnd = injectedSource.indexOf('  const beginUserImageCapture =', imageDraftStart)
+  assert.ok(imageDraftStart >= 0 && imageDraftEnd > imageDraftStart)
+  const hasDraftImage = vm.runInContext(injectedSource.slice(imageDraftStart, imageDraftEnd) + '\nhasDraftImageAttachment', scopeContext)
   assert.equal(scopeApi.attachmentRoot(), panel)
   assert.match(scopeApi.attachmentSnapshot().text, /codex_can_do\.md/)
   assert.match(scopeApi.attachmentSnapshot().text, /full-document-name\.md/)
@@ -193,7 +206,7 @@ async function main() {
   let clickAction = () => { draftImages = 0; turns.push(mockTurn('new-turn', [thumbnail])) }
   const scheduledChecks = []
   const pageContext = {
-    window: {}, STATE_KEY: '__files', state: { programmatic: false }, PAGE: CHATGPT_PAGE,
+    window: {}, STATE_KEY: '__files', state: { programmatic: false }, PAGE: CHATGPT_PAGE, CONTROL_SELECTOR: 'button,[role="button"]',
     document: { querySelectorAll: selector => selector === 'input[type="file"]' ? [mediaInput, imageInput, fileInput] : pageContext.document.body?.querySelectorAll(selector) || [] },
     attachmentRoot: () => ({ querySelectorAll: () => [mediaInput, imageInput, fileInput] }),
     attachmentSnapshot: () => ({ rootFound: true, text: draftText, images: draftImages, uploading: false, error: false, inputFiles: 0 }),
@@ -365,9 +378,262 @@ async function main() {
   assert.equal(fileApi.submitFileSend('captured-wrapper-reuse'), true)
   assert.equal(fileApi.fileSendStatus('captured-wrapper-reuse').status, 'sent')
   log('PASS captured ChatGPT full user wrappers, missing/hydrated text units, renamed hosts cards and stable rerender/reuse identity')
+  // Claude capture 2026-10-06: attachment-only messages lack user-message;
+  // file-thumbnail cards are siblings of optional text inside the ms-auto wrapper.
+  // PDF names can exist only in an img alt, including a small/unloaded preview.
+  pageContext.PAGE = CLAUDE_PAGE
+  assert.equal(CLAUDE_PAGE.messageIdAttr, '', 'List positions must not become command IDs')
+  assert.equal(fileReadingPlatform('claude').id, 'claude')
+  const claudeCard = (name, isImage = false) => {
+    const content = new Element(isImage ? 'img' : 'span', isImage ? { alt: name } : { title: name }, isImage ? '' : name)
+    if (isImage) { content.alt = name; content.title = ''; content.attachment = false }
+    return new Element('div', { 'data-testid': 'file-thumbnail' }, '', [content])
+  }
+  const claudeRow = (position, cards = [], text = '') => {
+    const children = [...cards]
+    if (text) children.push(new Element('div', { 'data-testid': 'user-message' }, text))
+    return new Element('div', { 'data-testid': 'transcript-row', 'data-rs-index': String(position) }, '', [
+      new Element('div', { class: 'group/message-row ms-auto flex w-full items-end' }, '', children)
+    ])
+  }
+  const oldClaudeRow = claudeRow(0, [claudeCard('hosts')])
+  const claudeList = new Element('div', { 'data-testid': 'transcript-list' }, '', [oldClaudeRow])
+  pageContext.document.body = new Element('body', {}, '', [claudeList])
+  turns.splice(0, turns.length)
+  assert.equal(vm.runInContext('fileUserTurns().length', pageContext), 1)
+  assert.equal(fileApi.beginFileSend('claude-repeated-name', [hostsFile]), 'ok')
+  fileApi.fileSelectionApplied('claude-repeated-name')
+  draftText = 'hosts'
+  clickAction = () => { draftText = ''; claudeList.children[0] = oldClaudeRow.cloneNode(); claudeList.children[0].parentElement = claudeList }
+  assert.equal(fileApi.submitFileSend('claude-repeated-name'), true)
+  assert.equal(fileApi.fileSendStatus('claude-repeated-name').status, 'confirming', 'Old same-name card rerender is not a new send')
+  const newClaudeRow = claudeRow(2, [claudeCard('hosts')])
+  claudeList.children.push(newClaudeRow); newClaudeRow.parentElement = claudeList
+  assert.equal(fileApi.fileSendStatus('claude-repeated-name').status, 'sent')
+  const claudeUser = newClaudeRow.children[0]
+  const claudeText = new Element('div', { 'data-testid': 'user-message' }, 'user text')
+  claudeUser.children.push(claudeText); claudeText.parentElement = claudeUser; turns.push(claudeText)
+  assert.equal(vm.runInContext('fileUserTurns().length', pageContext), 2, 'Hydrated text must normalize to one full wrapper')
+  assert.equal(vm.runInContext('fileUserTurnPosition', pageContext)(claudeUser), 2)
+  assert.equal(fileApi.beginFileSend('claude-row-reuse', [hostsFile]), 'ok')
+  fileApi.fileSelectionApplied('claude-row-reuse'); draftText = 'hosts'
+  clickAction = () => { draftText = ''; newClaudeRow.attributes['data-rs-index'] = '4' }
+  assert.equal(fileApi.submitFileSend('claude-row-reuse'), true)
+  assert.equal(fileApi.fileSendStatus('claude-row-reuse').status, 'sent')
+  const sourceFile = { fileName: 'sample.js', mimeType: 'text/plain' }
+  const pdfFile = { fileName: 'sample.pdf', mimeType: 'application/pdf' }
+  const pngFile = { fileName: 'sample.png', mimeType: 'image/png' }
+  const mixedClaudeRow = claudeRow(6, [claudeCard(sourceFile.fileName), claudeCard(pdfFile.fileName, true), claudeCard(pngFile.fileName, true)])
+  assert.equal(turnShowsFiles(mixedClaudeRow.children[0], [sourceFile, pdfFile, pngFile]), true)
+  mixedClaudeRow.children[0].children.pop()
+  assert.equal(turnShowsFiles(mixedClaudeRow.children[0], [sourceFile, pdfFile, pngFile]), false, 'Every file needs evidence inside its own user message')
+  const userClaim = claudeRow(8, [], 'sample.js sample.pdf sample.png')
+  assert.equal(turnShowsFiles(userClaim.children[0], [sourceFile, pdfFile, pngFile]), false, 'Plain filename mentions are not native attachment cards')
+  const assistantClaim = new Element('div', { 'data-testid': 'assistant-message' }, 'hosts')
+  claudeList.children.push(assistantClaim); assistantClaim.parentElement = claudeList
+  turns.push(assistantClaim)
+  assert.equal(turnShowsFiles(claudeUser, [pdfFile]), false, 'Do not widen into another user or assistant message')
+  const noPosition = claudeRow(10, [claudeCard('hosts')]); delete noPosition.attributes['data-rs-index']
+  const baselineClaude = { node: claudeUser, count: 2, keys: new Set(['0', '4']), maxPosition: 4 }
+  assert.equal(vm.runInContext('isNewFileUserTurn', pageContext)(noPosition.children[0], [claudeUser, noPosition.children[0]], baselineClaude), false, 'Missing row positions cannot confirm a rerender')
+  log('PASS Claude attachment-only wrappers, repeated names, old-row rejection, ancestor positions, recycled rows and native PNG/PDF/source-card evidence')
+  // Exercise the actual draft/scope helpers too: an extensionless card remains
+  // protected even after FileList resets, and PDF alt contributes name evidence.
+  const claudeEditor = new Element('div', { contenteditable: 'true', 'data-testid': 'chat-input' })
+  const previewPdf = claudeCard(pdfFile.fileName, true)
+  const previewImage = previewPdf.children[0]
+  previewImage.naturalWidth = 16; previewImage.naturalHeight = 16; previewImage.src = 'https://example.invalid/preview'
+  const modelButton = new Element('button', {}, 'Sonnet 5.5 中等')
+  const menuButton = new Element('button', { 'aria-label': 'long-toolbar-label…' })
+  const claudePanel = new Element('fieldset', {}, '', [claudeCard('hosts'), previewPdf, claudeEditor, modelButton, menuButton])
+  const claudeBody = new Element('body', {}, '', [new Element('main', {}, '', [oldClaudeRow, claudePanel])])
+  scopeContext.PAGE = CLAUDE_PAGE; scopeContext.getComposer = () => claudeEditor
+  scopeContext.document = { body: claudeBody, querySelectorAll: selector => claudeBody.querySelectorAll(selector) }
+  assert.equal(scopeApi.attachmentRoot(), claudePanel)
+  assert.equal(scopeApi.draftAttachmentEvidence(), true)
+  assert.equal(hasDraftImage(), true, 'A PDF preview in the second native card still protects the draft')
+  assert.match(scopeApi.attachmentSnapshot().text, /sample\.pdf/)
+  claudePanel.children = [claudeEditor, modelButton, menuButton]
+  claudePanel.children.forEach(child => { child.parentElement = claudePanel })
+  assert.match(scopeApi.attachmentSnapshot().text, /Sonnet 5\.5/)
+  assert.equal(scopeApi.draftAttachmentEvidence(), false, 'Model version and truncated toolbar label are not attachments')
+  const oldPreview = claudeCard('old-image.png', true)
+  oldPreview.children[0].src = 'https://example.invalid/old-image'
+  oldPreview.children[0].naturalWidth = 100; oldPreview.children[0].naturalHeight = 100
+  oldClaudeRow.children[0].children.push(oldPreview); oldPreview.parentElement = oldClaudeRow.children[0]
+  const toolbarImage = new Element('img')
+  toolbarImage.src = 'https://example.invalid/toolbar-icon'; toolbarImage.naturalWidth = 80; toolbarImage.naturalHeight = 80
+  claudePanel.children.push(toolbarImage); toolbarImage.parentElement = claudePanel
+  assert.equal(hasDraftImage(), false, 'History and toolbar images cannot block an empty Claude draft')
+  assert.equal(scopeApi.attachmentSnapshot().images, 0)
+  assert.equal(scopeApi.draftAttachmentEvidence(), false)
+  const nativeInput = new Element('input', { type: 'file' })
+  nativeInput.files = [{ type: 'text/plain' }]
+  claudePanel.children.push(nativeInput); nativeInput.parentElement = claudePanel
+  assert.equal(scopeApi.draftAttachmentEvidence(), true, 'Protect a selection before native cards appear')
+  nativeInput.files = []
+  assert.equal(scopeApi.draftAttachmentEvidence(), false)
+  const uploadingCard = new Element('div', { 'data-testid': 'file-thumbnail', 'aria-busy': 'true' })
+  claudePanel.children.push(uploadingCard); uploadingCard.parentElement = claudePanel
+  assert.equal(scopeApi.attachmentSnapshot().uploading, true)
+  assert.equal(scopeApi.draftAttachmentEvidence(), true, 'Protect an uploading card before its filename appears')
+  uploadingCard.remove()
+  log('PASS Claude version/ellipsis toolbar text and old images do not block an empty draft; selected files, extensionless cards, PDF alt and uploading cards remain protected')
+  // Gemini's 08:54 focused capture: split text/extension, card-linked hidden
+  // tooltip, native uploaded-img, and opaque IDs on surrounding conversations.
+  const geminiEditor = new Element('div', { class: 'ql-editor', contenteditable: 'true' })
+  const geminiTooltip = new Element('div', { id: 'gemini-card-hint', role: 'tooltip' }, 'sample.txt')
+  const unrelatedTooltip = new Element('div', { id: 'unrelated-hint', role: 'tooltip' }, 'unrelated.md')
+  const geminiDraftCard = new Element('uploader-file-preview', {}, '', [
+    new Element('div', { 'aria-describedby': 'gemini-card-hint' }, '', [
+      new Element('span', { class: 'gem-attachment-text' }, 'sample'), new Element('span', { class: 'gem-attachment-extension-label' }, 'TXT')
+    ])
+  ])
+  const geminiPanel = new Element('fieldset', { class: 'input-area-fieldset' }, '', [geminiEditor, geminiDraftCard, new Element('button'), new Element('button', {}, 'toolbar filename.md')])
+  const geminiBody = new Element('body', {}, '', [geminiPanel, geminiTooltip, unrelatedTooltip])
+  scopeContext.PAGE = GEMINI_PAGE; scopeContext.getComposer = () => geminiEditor
+  scopeContext.document = { body: geminiBody, querySelectorAll: selector => geminiBody.querySelectorAll(selector), getElementById: id => geminiBody.querySelectorAll('[id]').find(node => node.getAttribute('id') === id) || null }
+  assert.equal(scopeApi.attachmentRoot(), geminiPanel)
+  assert.match(scopeApi.attachmentSnapshot().text, /sample\.txt/)
+  assert.doesNotMatch(scopeApi.attachmentSnapshot().text, /unrelated\.md|toolbar filename/)
+  geminiDraftCard.children[0].attributes['aria-describedby'] = 'missing-hint'
+  assert.equal(scopeApi.attachmentNameEvidence(scopeApi.attachmentSnapshot().text, [textFile])[0].method, 'missing', 'Do not guess full filenames from separate basename/extension')
+  assert.equal(scopeApi.draftAttachmentEvidence(), true, 'Protect native cards even before linked names become available')
+  geminiDraftCard.children[0].attributes['aria-describedby'] = 'unrelated-hint'
+  unrelatedTooltip.attributes.role = 'article'
+  assert.doesNotMatch(scopeApi.attachmentSnapshot().text, /unrelated\.md/, 'References to arbitrary conversation content are not filename evidence')
+  const geminiDraftImage = new Element('img', { class: 'gem-attachment-style-img' })
+  geminiDraftImage.src = 'blob:diagnostic'; geminiDraftImage.naturalWidth = 64; geminiDraftImage.naturalHeight = 64
+  const geminiMedia = new Element('uploader-file-preview', {}, '', [new Element('gem-media-attachment', {}, '', [geminiDraftImage])])
+  geminiPanel.children.push(geminiMedia); geminiMedia.parentElement = geminiPanel
+  assert.equal(scopeApi.attachmentSnapshot().images, 1)
+  assert.equal(hasDraftImage(), true)
+  const geminiSpinner = new Element('mat-progress-spinner')
+  geminiDraftCard.children.push(geminiSpinner); geminiSpinner.parentElement = geminiDraftCard
+  assert.equal(scopeApi.attachmentSnapshot().uploading, true)
+  geminiDraftCard.remove(); geminiMedia.remove()
+  assert.equal(scopeApi.draftAttachmentEvidence(), false, 'Stale tooltip/toolbar names cannot block an empty Gemini draft')
+  log('PASS Gemini draft scope, split names with linked tooltips, unrelated/missing references, native images, Angular upload progress and empty-draft protection')
+
+  pageContext.PAGE = GEMINI_PAGE
+  const geminiSentCard = (name, isImage = false) => {
+    const child = isImage ? new Element('img', { 'data-test-id': 'uploaded-img' }) : new Element('button', { 'aria-label': name })
+    if (isImage) child.attachment = true
+    return new Element('user-query-file-preview', {}, '', [child])
+  }
+  const geminiRow = (id, cards = [], text = '') => new Element('div', { class: 'conversation-container', ...(id ? { id } : {}) }, '', [new Element('user-query', {}, text, [new Element('user-query-file-carousel', {}, '', cards)])])
+  const geminiOld = geminiRow('opaque-old', [geminiSentCard('sample.txt')])
+  const geminiList = new Element('div', {}, '', [geminiOld])
+  pageContext.document.body = new Element('body', {}, '', [geminiList])
+  turns.splice(0, turns.length)
+  const geminiMixed = [textFile, pdfFile, pngFile]
+  assert.equal(fileReadingPlatform('gemini').id, 'gemini')
+  assert.equal(fileApi.beginFileSend('gemini-cards', geminiMixed), 'ok')
+  fileApi.fileSelectionApplied('gemini-cards'); draftText = geminiMixed.map(file => file.fileName).join(' '); draftImages = 1
+  clickAction = () => { draftText = ''; draftImages = 0; geminiList.children[0] = geminiOld.cloneNode(); geminiList.children[0].parentElement = geminiList }
+  assert.equal(fileApi.submitFileSend('gemini-cards'), true)
+  assert.equal(fileApi.fileSendStatus('gemini-cards').status, 'confirming', 'Same-ID old card rerender is not a new send')
+  const pendingGemini = geminiRow('', [geminiSentCard('sample.txt'), geminiSentCard('sample.pdf'), geminiSentCard('', true)])
+  geminiList.children.push(pendingGemini); pendingGemini.parentElement = geminiList
+  assert.equal(fileApi.fileSendStatus('gemini-cards').status, 'confirming', 'Wait for the final surrounding ID, not the pending-request placeholder')
+  pendingGemini.attributes.id = 'opaque-new'
+  assert.equal(fileApi.fileSendStatus('gemini-cards').status, 'sent')
+  assert.equal(turnShowsFiles(geminiRow('plain-claim', [], 'sample.txt sample.pdf sample.png').children[0], geminiMixed), false)
+  const partialGemini = geminiRow('partial', [geminiSentCard('sample.txt'), geminiSentCard('sample.pdf')])
+  const icon = new Element('img'); icon.attachment = true
+  partialGemini.children[0].children[0].children[1].children.push(icon)
+  assert.equal(turnShowsFiles(partialGemini.children[0], geminiMixed), false, 'Document icons do not stand in for uploaded-img')
+  log('PASS Gemini mixed attachment-only messages, native document/image evidence, opaque ancestor IDs, old-row rerenders and pending placeholders')
+
+  const savedRoot = pageContext.attachmentRoot, savedPress = pageContext.pressButton, savedQueries = pageContext.document.querySelectorAll
+  let menuOpened = false, localClicks = 0
+  const nativeControl = () => ({ disabled: false, getClientRects: () => [{}] })
+  const uploadMenu = nativeControl(), uploadLocal = nativeControl(), uploadDrive = nativeControl()
+  pageContext.attachmentRoot = () => ({ querySelectorAll: selector => GEMINI_PAGE.fileUploadMenuSelectors.includes(selector) ? [uploadMenu] : [] })
+  pageContext.document.querySelectorAll = selector => selector === GEMINI_PAGE.fileLocalUploadSelector && menuOpened ? [uploadLocal] : []
+  pageContext.pressButton = node => {
+    assert.notEqual(node, uploadDrive)
+    if (node === uploadMenu) menuOpened = true
+    if (node === uploadLocal) localClicks++
+  }
+  composer.text = 'user draft'
+  assert.equal(fileApi.beginFileSend('gemini-native-chooser', geminiMixed), 'busy')
+  composer.text = ''
+  assert.equal(fileApi.beginFileSend('gemini-native-chooser', geminiMixed), 'ok', 'A permanent file input is not required')
+  assert.equal(await fileApi.openFileChooser('wrong-token'), false)
+  assert.equal(await fileApi.openFileChooser('gemini-native-chooser'), 'waiting')
+  assert.equal(await fileApi.openFileChooser('gemini-native-chooser'), true)
+  assert.equal(menuOpened, true); assert.equal(localClicks, 1)
+  fileApi.releaseFileSend('gemini-native-chooser')
+  assert.equal(await fileApi.openFileChooser('gemini-native-chooser'), false, 'A released run must not reopen a chooser')
+  const filesTile = new Element('button', {}, '文件', [new Element('mat-icon', {}, 'attach_file')])
+  const driveTile = new Element('button', {}, '云端硬盘')
+  const photosTile = new Element('button', {}, 'Google 相册')
+  const localSubmenu = new Element('button', { 'data-test-id': 'local-images-files-uploader-button' }, 'Upload from computer')
+  const popup = new Element('div', { role: 'menu' }, '', [filesTile, driveTile, photosTile])
+  const outsideFiles = new Element('button', {}, '文件')
+  const chooserBody = new Element('body', {}, '', [popup, outsideFiles])
+  pageContext.document.querySelectorAll = selector => chooserBody.querySelectorAll(selector)
+  let tileClicks = 0, submenuClicks = 0
+  const clickedChooserNodes = []
+  pageContext.pressButton = node => {
+    clickedChooserNodes.push(node)
+    assert.notEqual(node, driveTile); assert.notEqual(node, photosTile); assert.notEqual(node, outsideFiles)
+    if (node === filesTile) tileClicks++
+    if (node === localSubmenu) submenuClicks++
+  }
+  assert.equal(fileApi.beginFileSend('gemini-compact-direct', geminiMixed), 'ok')
+  assert.equal(fileApi.openFileChooser('gemini-compact-direct'), 'waiting', 'Compact Files can open the native chooser directly')
+  assert.equal(tileClicks, 1)
+  assert.equal(fileApi.openFileChooser('gemini-compact-direct'), 'waiting')
+  assert.equal(tileClicks, 1, 'Polling cannot repeatedly click or toggle a Files entry')
+  const rebuiltTile = filesTile.cloneNode()
+  popup.children[0] = rebuiltTile; rebuiltTile.parentElement = popup
+  assert.equal(fileApi.openFileChooser('gemini-compact-direct'), 'waiting')
+  assert.equal(clickedChooserNodes.includes(rebuiltTile), false, 'A remounted Files tile cannot trigger the same step again')
+  popup.children[0] = filesTile; filesTile.parentElement = popup
+  fileApi.releaseFileSend('gemini-compact-direct')
+  assert.equal(fileApi.beginFileSend('gemini-compact-direct', geminiMixed), 'ok')
+  assert.equal(fileApi.openFileChooser('gemini-compact-direct'), 'waiting')
+  assert.equal(tileClicks, 2, 'A retry can reuse the same menu DOM after resetting clicked-control state')
+  fileApi.releaseFileSend('gemini-compact-direct')
+  assert.equal(fileApi.beginFileSend('gemini-compact-submenu', geminiMixed), 'ok')
+  assert.equal(fileApi.openFileChooser('gemini-compact-submenu'), 'waiting')
+  popup.children.push(localSubmenu); localSubmenu.parentElement = popup
+  assert.equal(fileApi.openFileChooser('gemini-compact-submenu'), true, 'Files can reveal the measured local submenu on the next tick')
+  assert.equal(submenuClicks, 1)
+  assert.equal(fileApi.openFileChooser('gemini-compact-submenu'), 'waiting')
+  assert.equal(submenuClicks, 1)
+  fileApi.releaseFileSend('gemini-compact-submenu')
+  localSubmenu.remove()
+  filesTile.text = 'Files'
+  assert.equal(fileApi.beginFileSend('gemini-compact-english', geminiMixed), 'ok')
+  assert.equal(fileApi.openFileChooser('gemini-compact-english'), 'waiting')
+  assert.equal(tileClicks, 4)
+  fileApi.releaseFileSend('gemini-compact-english')
+  const duplicateTile = new Element('button', {}, 'Files')
+  popup.children.push(duplicateTile); duplicateTile.parentElement = popup
+  assert.equal(fileApi.beginFileSend('gemini-compact-ambiguous', geminiMixed), 'ok')
+  assert.equal(fileApi.openFileChooser('gemini-compact-ambiguous'), 'waiting')
+  assert.equal(tileClicks, 4)
+  const chooserDiagnostics = fileApi.fileChooserDiagnostics()
+  assert.equal(chooserDiagnostics.captionEntryCount, 2)
+  assert.equal(chooserDiagnostics.entryAmbiguous, true)
+  assert.equal(chooserDiagnostics.entryClicked, false)
+  assert.doesNotMatch(JSON.stringify(chooserDiagnostics), /文件|Files|云端硬盘|Google|Upload/)
+  fileApi.releaseFileSend('gemini-compact-ambiguous')
+  duplicateTile.attributes['aria-hidden'] = 'true'
+  filesTile.attributes['aria-hidden'] = 'true'
+  assert.equal(fileApi.beginFileSend('gemini-compact-hidden', geminiMixed), 'ok')
+  assert.equal(fileApi.openFileChooser('gemini-compact-hidden'), 'waiting')
+  assert.equal(tileClicks, 4, 'Hidden helpers and history captions must not trigger local upload')
+  fileApi.releaseFileSend('gemini-compact-hidden')
+  pageContext.attachmentRoot = savedRoot; pageContext.pressButton = savedPress; pageContext.document.querySelectorAll = savedQueries
+  log('PASS Gemini desktop/compact Files entries, direct chooser/submenu paths, single clicks, retries, hidden/ambiguous rejection, safe diagnostics and draft/stale-token boundaries')
   // DeepSeek can recycle rows and keep the same number of visible user turns.
   // A greater numeric position or a fresh opaque key plus files is required.
   pageContext.PAGE = DEEPSEEK_PAGE
+  pageContext.document.body = null
   const disabledStart = injectedSource.indexOf('  const controlDisabled =')
   const disabledEnd = injectedSource.indexOf('/**', disabledStart)
   const isDisabled = vm.runInContext(injectedSource.slice(disabledStart, disabledEnd) + '\ncontrolDisabled', pageContext)
@@ -572,20 +838,33 @@ async function main() {
     { ...base, files: [{ path: 42 }] }, { ...base, files: [{ path: 'x'.repeat(4097) }] }
   ]) assert.equal(parseReadFilesRequest(invalid), null)
   log('PASS path-only request validation, legacy normalization and injected-script syntax')
-  function fakePage(begin, afterSubmit, url = 'https://chatgpt.com/c/test') {
+  function fakePage(begin, afterSubmit, url = 'https://chatgpt.com/c/test', options = {}) {
     const debug = new EventEmitter()
     let attached = false
     const selected = []
+    const commands = []
     debug.isAttached = () => attached
     debug.attach = () => { attached = true }
     debug.detach = () => { attached = false }
     debug.sendCommand = async (method, params) => {
+      commands.push({ method, params })
       if (method === 'DOM.getDocument') return { root: { nodeId: 1 } }
       if (method === 'DOM.querySelector') return { nodeId: 2 }
-      if (method === 'DOM.setFileInputFiles') selected.push(params.files)
+      if (method === 'DOM.setFileInputFiles') {
+        selected.push(params.files)
+        if (options.chooser) assert.equal(params.backendNodeId, 45)
+        if (options.uploadFailure || options.unrelatedFailure) {
+          const requestId = 'fake-network-request'
+          debug.emit('message', {}, 'Network.requestWillBeSent', { requestId, request: { method: 'POST', headers: options.uploadFailure ? { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Goog-Upload-Protocol': 'resumable', 'X-Goog-Upload-Command': 'upload, finalize' } : {} } })
+          debug.emit('message', {}, 'Network.responseReceived', { requestId, response: { status: 401 } })
+          debug.emit('message', {}, 'Network.loadingFinished', { requestId })
+        }
+        if (options.selectionException) throw new Error('fixture selection failed')
+      }
       return {}
     }
     let submits = 0
+    let chooserCalls = 0
     const begins = []
     const page = {
       debugger: debug, getURL: () => url, isDestroyed: () => false,
@@ -594,12 +873,21 @@ async function main() {
           begins.push(JSON.parse('[' + code.slice(code.indexOf('.beginFileSend(') + '.beginFileSend('.length, -1) + ']'))
           return begin
         }
+        if (code.includes('.openFileChooser(')) {
+          chooserCalls++
+          assert.equal(commands.findLast(command => command.method === 'Page.setInterceptFileChooserDialog').params.enabled, true, 'Intercept before opening local native chooser')
+          options.onChooser?.()
+          if (options.noLocalEntry) return false
+          if (chooserCalls <= (options.menuSteps || 0)) return 'waiting'
+          debug.emit('message', {}, 'Page.fileChooserOpened', { backendNodeId: 45, mode: options.singleChooser ? 'selectSingle' : 'selectMultiple' })
+          return options.directTile ? 'waiting' : true
+        }
         if (code.includes('.submitFileSend(')) { submits++; afterSubmit?.(); return true }
         if (code.includes('.fileSendStatus(')) return { status: submits ? 'sent' : 'ready' }
         return true
       }
     }
-    return { page, selected, begins, submits: () => submits }
+    return { page, selected, begins, commands, submits: () => submits, chooserCalls: () => chooserCalls }
   }
   const mockAttachment = { path: path.join(os.tmpdir(), 'gpt-read-files-mock.txt'), fileName: 'mock.txt', mimeType: 'text/plain', sizeBytes: 1, sha256: '' }
   const empty = fakePage('ok')
@@ -630,6 +918,49 @@ async function main() {
   assert.deepEqual(deepseek.selected, [[mockAttachment.path]])
   assert.equal(deepseek.page.debugger.isAttached(), false)
   assert.equal(deepseek.page.debugger.listenerCount('message'), 0)
+  const claude = fakePage('ok', null, 'https://claude.ai/chat/test')
+  assert.equal(await sendPageFiles(claude.page, 'claude', [mockAttachment], 'files-test-claude', () => true, new AbortController().signal), 'ok')
+  assert.equal(claude.submits(), 1)
+  assert.deepEqual(claude.begins[0], ['files-test-claude', [{ fileName: 'mock.txt', mimeType: 'text/plain', sizeBytes: 1 }]])
+  assert.deepEqual(claude.selected, [[mockAttachment.path]])
+  assert.equal(claude.page.debugger.isAttached(), false)
+  assert.equal(claude.page.debugger.listenerCount('message'), 0)
+  const gemini = fakePage('ok', null, 'https://gemini.google.com/app/test', { chooser: true, unrelatedFailure: true })
+  assert.equal(await sendPageFiles(gemini.page, 'gemini', [mockAttachment], 'files-test-gemini', () => true, new AbortController().signal), 'ok')
+  assert.equal(gemini.submits(), 1)
+  assert.deepEqual(gemini.selected, [[mockAttachment.path]])
+  assert.equal(gemini.commands.some(command => command.method === 'DOM.querySelector'), false, 'Use the transient chooser backend node, not a guessed permanent input')
+  assert.equal(gemini.commands.findLast(command => command.method === 'Page.setInterceptFileChooserDialog').params.enabled, false)
+  for (const [name, options, expectedCalls] of [
+    ['compact-direct', { chooser: true, directTile: true }, 1],
+    ['compact-submenu', { chooser: true, menuSteps: 2 }, 3]
+  ]) {
+    const compact = fakePage('ok', null, 'https://gemini.google.com/app/test', options)
+    assert.equal(await sendPageFiles(compact.page, 'gemini', [mockAttachment], `files-test-gemini-${name}`, () => true, new AbortController().signal), 'ok')
+    assert.equal(compact.chooserCalls(), expectedCalls)
+    assert.equal(compact.submits(), 1)
+    assert.deepEqual(compact.selected, [[mockAttachment.path]])
+    assert.equal(compact.commands.findLast(command => command.method === 'Page.setInterceptFileChooserDialog').params.enabled, false)
+  }
+  const geminiAbort = new AbortController()
+  for (const [name, options, outcome, signal] of [
+    ['missing-local-entry', { chooser: true, noLocalEntry: true }, 'upload-failed', new AbortController().signal],
+    ['selection-exception', { chooser: true, selectionException: true }, 'upload-failed', new AbortController().signal],
+    ['resumable-upload-failure', { chooser: true, uploadFailure: true }, 'upload-failed', new AbortController().signal],
+    ['cancelled-chooser', { chooser: true, onChooser: () => geminiAbort.abort() }, 'cancelled', geminiAbort.signal]
+  ]) {
+    const candidate = fakePage('ok', null, 'https://gemini.google.com/app/test', options)
+    assert.equal(await sendPageFiles(candidate.page, 'gemini', [mockAttachment], `files-test-gemini-${name}`, () => true, signal), outcome)
+    assert.equal(candidate.submits(), 0)
+    assert.equal(candidate.commands.findLast(command => command.method === 'Page.setInterceptFileChooserDialog').params.enabled, false, 'Release chooser interception even when selection fails/cancels')
+    assert.equal(candidate.page.debugger.isAttached(), false)
+    assert.equal(candidate.page.debugger.listenerCount('message'), 0)
+  }
+  const singleChooser = fakePage('ok', null, 'https://gemini.google.com/app/test', { chooser: true, singleChooser: true })
+  assert.equal(await sendPageFiles(singleChooser.page, 'gemini', [mockAttachment, mockAttachment], 'files-test-gemini-not-multiple', () => true, new AbortController().signal), 'upload-failed')
+  assert.equal(singleChooser.selected.length, 0)
+  assert.equal(singleChooser.submits(), 0)
+  log('PASS Gemini transient CDP chooser selection, direct Files/submenu polling, unrelated Google errors, resumable upload failures, cancellation/exception cleanup and single submission')
   const unsupported = fakePage('unsupported-file-type', null, 'https://chat.deepseek.com/a/chat/s/test')
   assert.equal(await sendPageFiles(unsupported.page, 'deepseek', [mockAttachment], 'files-test-unsupported', () => true, new AbortController().signal), 'unsupported-file-type')
   assert.equal(unsupported.selected.length, 0)
@@ -695,6 +1026,7 @@ async function main() {
     const configRequest = { ...valid, files: ['.gitconfig', 'Makefile', 'rawbinary', 'nonutf8', 'sample.ts'].map(file => ({ path: file })), context: request.context }
     const nativeConfigs = await prepareFixtureBatches(configRequest, 'chatgpt')
     const deepseekConfigs = await prepareFixtureBatches(configRequest, 'deepseek')
+    const claudeConfigs = await prepareFixtureBatches(configRequest, 'claude')
     assert.equal(deepseekConfigs.failed, false)
     assert.deepEqual(deepseekConfigs.attachments.map(file => file.fileName), ['.gitconfig.txt', 'Makefile.txt', 'rawbinary', 'nonutf8', 'sample.ts'])
     assert.equal(deepseekConfigs.attachments[0].mimeType, 'text/plain')
@@ -702,6 +1034,11 @@ async function main() {
     assert.equal(deepseekConfigs.attachments[2].textNameAlias, false)
     assert.equal(deepseekConfigs.attachments[3].textNameAlias, false)
     assert.deepEqual(nativeConfigs.attachments.map(file => file.fileName), ['.gitconfig', 'Makefile', 'rawbinary', 'nonutf8', 'sample.ts'])
+    assert.deepEqual(claudeConfigs.attachments.map(file => file.fileName), nativeConfigs.attachments.map(file => file.fileName))
+    for (const [index, file] of claudeConfigs.attachments.entries()) {
+      assert.equal(file.textNameAlias, false)
+      assert.deepEqual(fs.readFileSync(file.path), fs.readFileSync(path.join(root, configRequest.files[index].path)))
+    }
     for (const [index, file] of deepseekConfigs.attachments.entries()) assert.deepEqual(fs.readFileSync(file.path), fs.readFileSync(path.join(root, configRequest.files[index].path)))
     assert.deepEqual(fs.readFileSync(path.join(root, '.gitconfig')), configBytes)
     assert.match(deepseekConfigs.text, /临时附件增加 \.txt 后缀/)

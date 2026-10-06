@@ -139,6 +139,8 @@ export interface PageAdapter {
   disabledControlSelectors?: string[]
   /** Attachment acknowledgements only; never used as command message identities. */
   fileTurnPositionAttr?: string
+  /** The list position can live on a surrounding row rather than the user wrapper. */
+  fileTurnPositionSelector?: string
   /** Exclude reasoning-only assistant rows from attachment acknowledgements. */
   fileAssistantSelectors?: string[]
   /** Normalize nested attachment message nodes to this user-only wrapper. */
@@ -149,6 +151,21 @@ export interface PageAdapter {
   fileUserTurnKeyAttr?: string
   /** A site may render uploaded images as filename cards rather than thumbnails. */
   fileImagesMayUseNames?: boolean
+  /** Restrict file evidence to measured native attachment cards, excluding message text. */
+  fileAttachmentCardSelector?: string
+  /** Some sites use different native cards in the composer and sent message. */
+  fileDraftCardSelector?: string
+  fileDraftImageSelector?: string
+  fileSentImageSelector?: string
+  /** Read filename hints only through references on the current native card. */
+  fileDraftNameReferenceAttribute?: string
+  fileUploadProgressSelector?: string
+  fileComposerRootSelector?: string
+  /** Local upload creates a transient file chooser rather than a persistent input. */
+  fileUploadMenuSelectors?: string[]
+  fileLocalUploadSelector?: string
+  /** Compact upload menus may expose a Files tile before the local submenu. */
+  fileLocalUploadLabels?: string[]
   /** How this site's page is told which theme to render. See `PageThemeRules`. */
   theme: PageThemeRules
 }
@@ -721,6 +738,19 @@ export const CLAUDE_PAGE: PageAdapter = {
    * function exists for.
    */
   messageIdAttr: '',
+  /*
+   * Attachment-only messages have no user-message text node. Measured 2026-10-06:
+   * the ms-auto group/message-row contains sibling native file-thumbnail cards
+   * and (only when present) user-message text. The surrounding transcript-row
+   * carries data-rs-index; this is a temporary send position, not a command ID.
+   * PDF previews can expose the original filename only in an image's alt.
+   */
+  fileUserTurnSelector: '[class~="group/message-row"][class~="ms-auto"]',
+  fileUserTurnFallbackSelector: '[data-testid="user-message"]',
+  fileTurnPositionSelector: '[data-testid="transcript-row"]',
+  fileTurnPositionAttr: 'data-rs-index',
+  fileAttachmentCardSelector: '[data-testid="file-thumbnail"]',
+  fileImagesMayUseNames: true,
   // Not measured yet; DeepSeek is the platform the theme probe runs against first.
   theme: THEME_UNMEASURED
 }
@@ -850,6 +880,22 @@ export const GEMINI_PAGE: PageAdapter = {
    * often elsewhere on an Angular page and so re-arms the settle timer more than it needs to.
    */
   messageIdAttr: 'id',
+  // User-driven captures 2026-10-06: draft chips expose full names through
+  // linked CDK tooltips; sent document labels and uploaded-img are in user-query.
+  fileComposerRootSelector: 'fieldset.input-area-fieldset',
+  fileDraftCardSelector: 'uploader-file-preview',
+  fileDraftImageSelector: 'img[class~="gem-attachment-style-img"]',
+  fileDraftNameReferenceAttribute: 'aria-describedby',
+  fileUploadProgressSelector: 'mat-progress-spinner, mat-spinner',
+  fileAttachmentCardSelector: 'user-query-file-preview',
+  fileSentImageSelector: 'img[data-test-id="uploaded-img"]',
+  fileUserTurnSelector: 'user-query',
+  fileAssistantSelectors: ['model-response', 'message-content'],
+  fileTurnPositionSelector: '[class~="conversation-container"]',
+  fileTurnPositionAttr: 'id',
+  fileUploadMenuSelectors: ['button[aria-label="上传和工具"]', 'button[aria-label="Upload files"]'],
+  fileLocalUploadSelector: 'button[data-test-id="local-images-files-uploader-button"]',
+  fileLocalUploadLabels: ['文件', 'Files'],
   // Not measured yet; DeepSeek is the platform the theme probe runs against first.
   theme: THEME_UNMEASURED
 }

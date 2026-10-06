@@ -876,7 +876,7 @@ export class CommandRunner {
     } else if (outcome === 'busy') {
       this.appendLine({
         kind: 'error',
-        text: '输入框里有内容，结果未回传（避免覆盖你正在输入的文字）——清空输入框后可在待处理条里重试'
+        text: '网页正在生成、发送或存在草稿，结果暂未回传。待生成结束或处理草稿后，可在待处理条里重试；具体拦截原因记录在 %TEMP%\\gpt-login-diag\\<平台>-raw-send-*.log'
       })
     } else if (outcome === 'stuck') {
       this.appendLine({

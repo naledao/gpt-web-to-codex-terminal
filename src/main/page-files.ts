@@ -27,7 +27,7 @@ function diagnosticSnapshot(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object') return { available: false }
   const snapshot = value as Record<string, unknown>
   const result: Record<string, unknown> = {}
-  for (const key of ['status', 'rootFound', 'rootIsForm', 'images', 'imagesExpected', 'namesSeen', 'uploading', 'error', 'inputFiles', 'composerFound', 'sendFound', 'sendDisabled', 'draftEmpty', 'stopFound', 'draftCleared', 'newTurnSeen', 'turnFilesSeen', 'edited', 'turnPosition', 'baselinePosition', 'turnKeyPresent', 'turnKeyKnown', 'baselineKeyCount', 'userTurnCount', 'baselinePositionAvailable']) {
+  for (const key of ['status', 'rootFound', 'rootIsForm', 'images', 'imagesExpected', 'namesSeen', 'uploading', 'error', 'inputFiles', 'composerFound', 'sendFound', 'sendDisabled', 'draftEmpty', 'stopFound', 'draftCleared', 'newTurnSeen', 'turnFilesSeen', 'edited', 'turnPosition', 'baselinePosition', 'turnKeyPresent', 'turnKeyKnown', 'baselineKeyCount', 'userTurnCount', 'baselinePositionAvailable', 'menuCount', 'localEntryCount', 'captionEntryCount', 'entryAmbiguous', 'entryClicked']) {
     if (typeof snapshot[key] === 'boolean' || typeof snapshot[key] === 'number' || (key === 'status' && typeof snapshot[key] === 'string')) result[key] = snapshot[key]
   }
   if (Array.isArray(snapshot.nameEvidence)) result.nameEvidence = snapshot.nameEvidence.slice(0, 5).map((raw) => {
@@ -75,6 +75,8 @@ export async function sendPageFiles(
   let submitted = false
   let detached = false
   let uploadError = false
+  let chooserIntercepted = false
+  let chooser: { backendNodeId: number; mode: string } | null = null
   const ownerUrl = contents.getURL()
   const started = Date.now()
   let stage = 'begin'
@@ -88,7 +90,7 @@ export async function sendPageFiles(
   const pending = new Set<string>()
   const call = async (method: string, ...args: unknown[]): Promise<unknown> => {
     if (!current() || signal.aborted || contents.isDestroyed()) throw new Error('cancelled')
-    return contents.executeJavaScript(`window.__cmdTerminalInterceptor?.${method}(${args.map((arg) => JSON.stringify(arg)).join(',')})`)
+    return contents.executeJavaScript(`window.__cmdTerminalInterceptor?.${method}(${args.map((arg) => JSON.stringify(arg)).join(',')})`, method === 'openFileChooser')
   }
   const command = async (method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
     let timer: NodeJS.Timeout | undefined
@@ -105,10 +107,17 @@ export async function sendPageFiles(
   const onDetach = (): void => { detached = true; log('debugger-detached') }
   const onMessage = (_event: Electron.Event, method: string, params: Record<string, unknown>): void => {
     const id = String(params.requestId ?? '')
-    if (method === 'Network.requestWillBeSent') {
+    if (method === 'Page.fileChooserOpened' && chooserIntercepted && !chooser) {
+      if (typeof params.backendNodeId === 'number' && params.backendNodeId > 0) {
+        chooser = { backendNodeId: params.backendNodeId, mode: String(params.mode ?? '') }
+        log('file-chooser-opened', { multiple: chooser.mode === 'selectMultiple', inputFound: true })
+      }
+    } else if (method === 'Network.requestWillBeSent') {
       const request = params.request as { method?: string; headers?: Record<string, string> } | undefined
       const type = Object.entries(request?.headers ?? {}).find(([name]) => name.toLowerCase() === 'content-type')?.[1] ?? ''
-      if (request?.method === 'PUT' || (request?.method === 'POST' && /multipart\/form-data|application\/octet-stream|image\//i.test(type))) {
+      const resumable = platformId === 'gemini' && Object.entries(request?.headers ?? {}).some(([name, value]) => name.toLowerCase() === 'x-goog-upload-protocol' && value.toLowerCase() === 'resumable')
+      const uploadCommand = platformId === 'gemini' && Object.entries(request?.headers ?? {}).some(([name, value]) => name.toLowerCase() === 'x-goog-upload-command' && /(?:^|,)\s*(?:start|upload|finalize)\s*(?:,|$)/i.test(value))
+      if (request?.method === 'PUT' || (request?.method === 'POST' && (resumable || uploadCommand || /multipart\/form-data|application\/octet-stream|image\//i.test(type)))) {
         pending.add(id)
         log('upload-request', { requestId: id, method: request.method, pending: pending.size })
       }
@@ -147,14 +156,53 @@ export async function sendPageFiles(
     if (attachments.length && begin === 'ok') {
       stage = 'file-input'
       if (!current() || signal.aborted) return finish('cancelled', 'context-changed')
-      if (await call('refreshFileInput', token) !== true) return finish('upload-failed', 'file-input-refresh-failed')
-      const document = await command('DOM.getDocument', { depth: 0 })
-      const root = document.root as { nodeId: number }
-      const input = await command('DOM.querySelector', { nodeId: root.nodeId, selector: `input[data-codex-file-input="${token}"]` })
-      if (!input.nodeId) return finish('upload-failed', 'file-input-node-missing')
-      if (!current() || signal.aborted) return finish('cancelled', 'context-changed')
-      stage = 'file-selection'
-      await command('DOM.setFileInputFiles', { nodeId: input.nodeId, files: attachments.map((file) => file.path) })
+      if (platformId === 'gemini') {
+        stage = 'file-chooser'
+        await command('Page.enable')
+        chooserIntercepted = true
+        await command('Page.setInterceptFileChooserDialog', { enabled: true })
+        const chooserDeadline = Date.now() + 8000
+        let entryActivated = false
+        let lastEntryState = ''
+        while (!chooser && Date.now() < chooserDeadline) {
+          if (!current() || signal.aborted) return finish('cancelled', 'context-changed')
+          if (detached) return finish('upload-failed', 'debugger-detached')
+          if (!entryActivated) {
+            const result = await call('openFileChooser', token)
+            const entryState = result === true ? 'activated' : result === 'waiting' ? 'waiting' : 'blocked'
+            if (entryState !== lastEntryState) { log('chooser-entry-state', { state: entryState }); lastEntryState = entryState }
+            if (result !== true && result !== 'waiting') {
+              try { log('chooser-diagnostics', diagnosticSnapshot(await call('fileChooserDiagnostics'))) } catch { log('chooser-diagnostics-unavailable') }
+              return finish('upload-failed', 'local-upload-entry-blocked')
+            }
+            entryActivated = result === true
+          }
+          if (chooser) break
+          await pause(50)
+        }
+        // The browser reports the transient input directly, even if it has no
+        // selector/id and the website closes the menu immediately afterwards.
+        const selectedChooser = chooser as { backendNodeId: number; mode: string } | null
+        if (!selectedChooser) {
+          try { log('chooser-diagnostics', diagnosticSnapshot(await call('fileChooserDiagnostics'))) } catch { log('chooser-diagnostics-unavailable') }
+          return finish('upload-failed', entryActivated ? 'file-chooser-timeout' : 'local-upload-entry-missing')
+        }
+        if (attachments.length > 1 && selectedChooser.mode !== 'selectMultiple') return finish('upload-failed', 'file-chooser-not-multiple')
+        if (!current() || signal.aborted) return finish('cancelled', 'context-changed')
+        stage = 'file-selection'
+        await command('DOM.setFileInputFiles', { backendNodeId: selectedChooser.backendNodeId, files: attachments.map((file) => file.path) })
+        await command('Page.setInterceptFileChooserDialog', { enabled: false })
+        chooserIntercepted = false
+      } else {
+        if (await call('refreshFileInput', token) !== true) return finish('upload-failed', 'file-input-refresh-failed')
+        const document = await command('DOM.getDocument', { depth: 0 })
+        const root = document.root as { nodeId: number }
+        const input = await command('DOM.querySelector', { nodeId: root.nodeId, selector: `input[data-codex-file-input="${token}"]` })
+        if (!input.nodeId) return finish('upload-failed', 'file-input-node-missing')
+        if (!current() || signal.aborted) return finish('cancelled', 'context-changed')
+        stage = 'file-selection'
+        await command('DOM.setFileInputFiles', { nodeId: input.nodeId, files: attachments.map((file) => file.path) })
+      }
       await call('fileSelectionApplied', token)
       log('files-selected', { count: attachments.length })
     }
@@ -226,6 +274,9 @@ export async function sendPageFiles(
       } catch { log('release-unavailable') }
     }
     if (attached) {
+      if (chooserIntercepted && !detached && !contents.isDestroyed()) {
+        try { await command('Page.setInterceptFileChooserDialog', { enabled: false }) } catch { /* detach also releases interception */ }
+      }
       debuggerApi.removeListener('message', onMessage)
       debuggerApi.removeListener('detach', onDetach)
       try { if (!detached && debuggerApi.isAttached()) debuggerApi.detach() } catch { /* destroyed contents */ }

@@ -30,7 +30,7 @@ function page(kind = 'contenteditable', snapshot = {}) {
   const submissions = []
   const composer = { tagName: kind === 'textarea' ? 'TEXTAREA' : 'DIV', text: '' }
   const button = { disabled: false }
-  const controls = { accept: true, write: true, image: false, writes: 0, selector: true, replyId: 'old-reply', reply: '' }
+  const controls = { accept: true, write: true, image: false, attachment: false, generating: false, writes: 0, selector: true, replyId: 'old-reply', reply: '' }
   const context = {
     Date: class extends Date { static now() { return now } },
     setTimeout: (run, delay) => { const id = ++timerSerial; timers.push({ id, run, at: now + delay }); return id },
@@ -43,7 +43,7 @@ function page(kind = 'contenteditable', snapshot = {}) {
     beginUserImageCapture: () => `capture-${++imageSerial}`,
     discardUserImageCapture: () => {},
     findSendButton: () => controls.selector ? button : null,
-    findStopButton: () => null,
+    findStopButton: () => controls.generating ? button : null,
     lastAssistantId: () => controls.replyId,
     scheduleScrollToBottom: () => {},
     diagnoseSendFailure: () => ({}),
@@ -68,7 +68,8 @@ function page(kind = 'contenteditable', snapshot = {}) {
     toolbarSnapshot: () => ({}),
     describeControl: () => ({}),
     normalizeLineEndings: text => text.replace(/\r\n/g, '\n'),
-    draftAttachmentEvidence: () => controls.image,
+    attachmentSnapshot: () => ({ rootFound: true, cards: controls.attachment ? 1 : 0, inputFiles: 0, images: 0, uploading: false }),
+    draftAttachmentEvidence: () => controls.image || controls.attachment,
     composerMatches: (element, text) => element.text === text,
     window: {},
     STATE_KEY: '__cmdTerminalInterceptor'
@@ -121,8 +122,31 @@ function page(kind = 'contenteditable', snapshot = {}) {
   }
 }
 
-function embed(livePage = null) {
+function rawSendLogFixture() {
   const exports = {}
+  const writes = []
+  const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/main/raw-send-log.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText
+  const fakeFs = {
+    mkdirSync() {},
+    appendFileSync(file, value) { writes.push({ file, value }) }
+  }
+  vm.runInNewContext(code, {
+    exports, process: { pid: 12345 },
+    require: name => {
+      if (name === 'node:fs') return fakeFs // No real diagnostic files from this fixture.
+      if (name === 'node:os') return { tmpdir: () => 'C:\\diag-fixture' }
+      if (name === 'node:path') return path.win32
+      throw new Error(`Unexpected diagnostic dependency: ${name}`)
+    }
+  })
+  return { ...exports, writes, failWrites: () => { fakeFs.appendFileSync = () => { throw new Error('fixture disk failure') } } }
+}
+
+function embed(livePage = null, platformId = 'fixture') {
+  const exports = {}
+  const rawLog = rawSendLogFixture()
   const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/main/embed.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
   }).outputText
@@ -137,10 +161,11 @@ function embed(livePage = null) {
         buildTerminalPromptParts: () => ({ basePrompt: 'base', toolPrompt: '', prefix: 'prefix' })
       }
       if (name === './page-files' || name === '../shared/file-requests') return {}
+      if (name === './raw-send-log') return rawLog
       throw new Error(`Unexpected dependency: ${name}`)
     }
   })
-  const instance = new exports.ChatGptEmbed({ id: 'fixture', homeUrl: 'https://example.invalid', page: {} }, {
+  const instance = new exports.ChatGptEmbed({ id: platformId, homeUrl: 'https://example.invalid', page: {} }, {
     onInterceptor() {}, onAssistantMessage() {}, onUserMessage() {}
   })
   const configurations = []
@@ -157,7 +182,7 @@ function embed(livePage = null) {
     return true
   } } }
   if (livePage) livePage.onReport(event => instance.handlePageReport('[cmd-terminal] ' + JSON.stringify(event)))
-  return { instance, configurations }
+  return { instance, configurations, rawLog }
 }
 
 function questionSession(kind = 'contenteditable') {
@@ -337,6 +362,58 @@ async function remaining() {
   await instance.installInterceptor()
   assert.equal(configurations.at(-1).taskPromptInjected, false)
   log('PASS real main-process methods restore confirmed prompt state, reset tasks without baselining new replies and ignore stale confirmations')
+}
+
+async function rawSendGuardChecks() {
+  const scenarios = [
+    { reason: 'programmatic-send', setup: p => { p.state.programmatic = true } },
+    { reason: 'model-generating', setup: p => { p.controls.generating = true } },
+    { reason: 'image-draft', setup: p => { p.controls.image = true } },
+    { reason: 'attachment-draft', setup: p => { p.controls.attachment = true } },
+    { reason: 'text-draft', setup: p => { p.composer.text = 'private user draft' } }
+  ]
+  for (const kind of ['contenteditable', 'textarea']) {
+    for (const scenario of scenarios) {
+      const p = page(kind)
+      const fixture = embed(p, 'claude')
+      scenario.setup(p)
+      const originalDraft = p.composer.text
+      assert.equal(await fixture.instance.sendRaw('private command output'), 'busy')
+      assert.equal(p.controls.writes, 0, 'A blocked send cannot write to the composer')
+      assert.equal(p.submissions.length, 0)
+      assert.equal(p.composer.text, originalDraft)
+      assert.equal(p.events.at(-1).reason, scenario.reason)
+      assert.equal(p.events.at(-1).composerTextLength, originalDraft.length)
+      assert.equal(fixture.rawLog.writes.length, 1, 'The real console bridge persists guard metadata')
+      const record = fixture.rawLog.writes[0]
+      assert.match(record.file, /claude-raw-send-/)
+      assert.match(record.value, new RegExp(scenario.reason))
+      assert.doesNotMatch(record.value, /private user draft|private command output/)
+      if (scenario.reason === 'attachment-draft') assert.match(record.value, /"attachmentCards":1/)
+    }
+  }
+  const empty = page()
+  const { instance, rawLog } = embed(empty, 'claude')
+  const result = instance.sendRaw('harmless result')
+  empty.flush()
+  assert.equal(await result, 'ok')
+  assert.equal(empty.submissions.length, 1)
+  assert.equal(rawLog.writes.length, 0, 'Successful sends do not create blocked-send logs')
+  const logger = rawSendLogFixture()
+  const logPath = logger.writeRawSendDiagnostic('claude', {
+    event: 'raw-busy', reason: 'untrusted-secret-value', composerTextLength: 0,
+    attachmentCards: -1, attachmentInputFiles: 'private-filename', attachmentImages: NaN,
+    attachmentRootFound: true, stopButtonFound: 'private label',
+    text: 'private output', composerLeft: 'private draft', toolbar: [{ aria: 'private toolbar' }]
+  })
+  assert.ok(logPath)
+  const record = JSON.parse(logger.writes[0].value.slice(logger.writes[0].value.indexOf('{')))
+  assert.deepEqual(record, { event: 'raw-busy', reason: 'unknown', composerTextLength: 0, attachmentRootFound: true })
+  assert.equal(logger.writeRawSendDiagnostic('../../unsafe', { event: 'raw-busy' }), null)
+  assert.equal(logger.writeRawSendDiagnostic('claude', { event: 'sent-raw', text: 'private output' }), null)
+  logger.failWrites()
+  assert.equal(logger.writeRawSendDiagnostic('claude', { event: 'raw-busy', reason: 'text-draft' }), null, 'Logging failure does not break the send guard')
+  log('PASS exact raw-send guard reasons, empty-composer sends, draft preservation and content-free automatic logs through the real main/page bridge')
 }
 
 function questionMarkdownChecks() {
@@ -610,5 +687,5 @@ async function cancelQuestionChecks() {
 }
 
 log(`Log: ${logFile}`)
-main().then(remaining).then(questionMarkdownChecks).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
+main().then(remaining).then(rawSendGuardChecks).then(questionMarkdownChecks).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
   .catch(error => { log(`FAIL ${error.stack || error}`); process.exitCode = 1 })
