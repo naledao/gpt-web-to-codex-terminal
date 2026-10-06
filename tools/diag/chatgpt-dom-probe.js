@@ -80,15 +80,20 @@ const INSPECT = `(() => {
     composer: [
       'div[contenteditable="true"][data-composer-markdown]',
       'div[contenteditable="true"][role="textbox"]',
+      'textarea#pending-home-input',
       '#prompt-textarea',
       'div[contenteditable="true"]'
     ],
     sendButton: [
+      '[data-composer-footer-responsive] button[aria-label="发送"]',
+      'button[aria-label="发送"]',
       '[data-testid="send-button"]',
       'button[aria-label="Send message"]',
       'button[aria-label="发送消息"]'
     ],
     stopButton: [
+      '[data-composer-footer-responsive] button[aria-label="停止"]',
+      'button[aria-label="停止"]',
       '[data-testid="stop-button"]',
       'button[aria-label="Stop generating"]',
       'button[aria-label="Stop streaming"]',

@@ -41,6 +41,7 @@
     composerSelectors: [
       'div[contenteditable="true"][data-composer-markdown]',
       'div[contenteditable="true"][role="textbox"]',
+      'textarea#pending-home-input',
       '#prompt-textarea',
       'div[contenteditable="true"]'
     ],
@@ -206,7 +207,33 @@
     return null
   }
 
-  const getComposer = () => queryFirst(PAGE.composerSelectors)
+  const isVisibleElement = (element) => {
+    if (!element || !element.isConnected || element.getClientRects().length === 0) return false
+    if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false
+    const visibility = getComputedStyle(element).visibility
+    return visibility !== 'hidden' && visibility !== 'collapse'
+  }
+
+  const queryFirstVisible = (selectors, root = document) => {
+    for (const selector of selectors) {
+      const found = [...root.querySelectorAll(selector)].find(isVisibleElement)
+      if (found) return found
+    }
+    return null
+  }
+
+  const getComposer = (target = null) => {
+    // The bootstrap textarea and full editor can coexist during hydration.
+    // Resolve the actual event/focus owner before falling back to document order.
+    for (const node of [target, document.activeElement]) {
+      if (!node || typeof node.closest !== 'function') continue
+      for (const selector of PAGE.composerSelectors) {
+        const found = node.closest(selector)
+        if (isVisibleElement(found)) return found
+      }
+    }
+    return queryFirstVisible(PAGE.composerSelectors)
+  }
 
   /**
    * Read the composer.
@@ -405,7 +432,7 @@
     return composerMatches(element, text)
   }
 
-  const findSendButton = () => queryFirst(PAGE.sendButtonSelectors)
+  const findSendButton = () => findComposerControl(PAGE.sendButtonSelectors)
 
   /**
    * Fallback for textarea-based composers whose send button has no stable selector.
@@ -425,7 +452,7 @@
     }
   }
 
-  const findStopButton = () => queryFirst(PAGE.stopButtonSelectors)
+  const findStopButton = () => findComposerControl(PAGE.stopButtonSelectors)
 
   /* ------------------------------------------------------------------ *
    * Site-specific element lookup
@@ -1068,18 +1095,32 @@
    */
   const CONTROL_SELECTOR = 'button, [role="button"]'
 
-  const composerToolbarControls = () => {
+  const composerToolbarRoot = () => {
     const element = getComposer()
-    if (!element) return []
+    if (!element) return null
     let node = element
     let hops = 0
     while (node && node !== document.body && hops < 10) {
-      if (node.querySelectorAll(CONTROL_SELECTOR).length >= 2) break
+      if ([...node.querySelectorAll(CONTROL_SELECTOR)].filter(isVisibleElement).length >= 2) break
       node = node.parentElement
       hops += 1
     }
-    if (!node || node === document.body) return []
-    return [...node.querySelectorAll(CONTROL_SELECTOR)]
+    if (!node || node === document.body || hops >= 10) return null
+    return node
+  }
+
+  const composerToolbarControls = () => {
+    const root = composerToolbarRoot()
+    return root ? [...root.querySelectorAll(CONTROL_SELECTOR)].filter(isVisibleElement) : []
+  }
+
+  const findComposerControl = (selectors) => {
+    // After returning home ChatGPT can retain an older disabled send button.
+    // The user's 2026-10-06 failure found that button while the active toolbar's
+    // send button was enabled. The current composer scope is authoritative,
+    // including when its own send button is disabled or temporarily absent.
+    const root = composerToolbarRoot()
+    return queryFirstVisible(selectors, root || document)
   }
 
   const describeControl = (el) => ({
@@ -1148,9 +1189,12 @@
       attempts,
       recoveryTried,
       composerKind: element ? element.tagName.toLowerCase() : null,
+      composerTextLength: readComposer(element).length,
       composerLeft: collapse(readComposer(element)).slice(0, 80),
       sendButtonFound: button !== null,
       sendButtonDisabled: button ? controlDisabled(button) : null,
+      sendButtonVisible: !!button && isVisibleElement(button),
+      sendButtonInComposer: !!button && !!composerToolbarRoot()?.contains(button),
       sendButton: button ? describeControl(button) : null,
       stopButtonFound: findStopButton() !== null,
       ...toolbarSnapshot()
@@ -1311,6 +1355,7 @@
 
     const button = findSendButton()
     const element = getComposer()
+    const generating = findStopButton() !== null
     // A textarea site has no send-button selector worth trusting, so Enter is its real
     // submit path rather than a fallback — which is why this one is not gated on anything.
     const textControl =
@@ -1341,11 +1386,11 @@
     const fallbackDue =
       recovery < RECOVERY_ACTIONS.length && element !== null && Date.now() >= graceUntil
 
-    if (button && !button.disabled) {
+    if (button && !generating && !controlDisabled(button)) {
       pressButton(button)
-    } else if (button === null && textControl) {
+    } else if (button === null && !generating && textControl) {
       pressEnter(element)
-    } else if (button === null && fallbackDue) {
+    } else if (button === null && !generating && fallbackDue) {
       /*
        * The selector never matched and the grace period is over — go structural NOW.
        *
@@ -1504,16 +1549,53 @@
     return text.slice(at + USER_TEXT_SENTINEL.length)
   }
 
+  /** Metadata only; synthetic result sends must not masquerade as user attempts. */
+  const noteUserSend = (event, reason, element) => {
+    if (!event.isTrusted) return
+    report({
+      event: 'send-observed',
+      trigger: event.type === 'keydown' ? 'enter' : 'click',
+      reason,
+      enabled: state.enabled,
+      prefixLength: state.prefix.length,
+      programmatic: state.programmatic,
+      taskPromptInjected: state.taskPromptInjected,
+      taskPromptGeneration: state.taskPromptGeneration,
+      composerFound: !!element,
+      composerKind: element ? element.tagName.toLowerCase() : null,
+      composerTextLength: readComposer(element).length,
+      targetMatchesComposer: !!element && element.contains(event.target),
+      defaultPrevented: event.defaultPrevented === true,
+      isComposing: event.isComposing === true
+    })
+  }
+
   const intercept = (event) => {
+    const element = getComposer(event.target)
     // Our own sends must pass through untouched: no prefix, no interception.
-    if (state.programmatic) return false
-    if (!state.enabled || !state.prefix) return false
+    if (state.programmatic) {
+      noteUserSend(event, 'programmatic-send', element)
+      return false
+    }
+    if (!state.enabled) {
+      noteUserSend(event, 'terminal-disabled', element)
+      return false
+    }
+    if (!state.prefix) {
+      noteUserSend(event, 'missing-prefix', element)
+      return false
+    }
     // This draft already failed to compose. Attempting again on every keystroke is how the
     // injected counter ran away; the user's text sends as-is instead.
-    if (draftRejected) return false
+    if (draftRejected) {
+      noteUserSend(event, 'draft-rejected', element)
+      return false
+    }
 
-    const element = getComposer()
-    if (!element) return false
+    if (!element) {
+      noteUserSend(event, 'composer-missing', element)
+      return false
+    }
     const draft = readComposer(element)
     // A failed submit can leave our full draft in the editor. Reuse it on a user retry,
     // while still confirming the send and recording only the user's words.
@@ -1534,7 +1616,12 @@
      * empty composer should do nothing, which is what the site does once we stop stealing the
      * event.
      */
-    if (text === '' && !draftHasImage) return false
+    if (text === '' && !draftHasImage) {
+      noteUserSend(event, 'empty-draft', element)
+      return false
+    }
+
+    noteUserSend(event, 'accepted', element)
 
     // Always track a real user send, even when the pre-send thumbnail detector misses the
     // attachment. ChatGPT commonly clears its file input after upload, while the sent turn
@@ -1625,6 +1712,7 @@
       event: 'injected',
       count: state.injectedCount,
       prefixLength: state.prefix.length,
+      taskPromptGeneration: state.taskPromptGeneration,
       /*
        * A LONG head, because the opening of the prompt is boilerplate that both the probed
        * prompt and the generic fallback share — the machine-specific lines come later. A short
@@ -1655,10 +1743,21 @@
   document.addEventListener(
     'keydown',
     (event) => {
-      if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
-      if (event.defaultPrevented || event.repeat) return
-      const element = getComposer()
-      if (!element || !element.contains(event.target)) return
+      if (event.key !== 'Enter') return
+      const element = getComposer(event.target)
+      if (!element || !element.contains(event.target)) {
+        const target = event.target
+        // Ignore unrelated shortcuts, but record a real editor the adapter missed.
+        if (target && typeof target.closest === 'function' && target.closest('textarea, [contenteditable="true"], [role="textbox"]')) {
+          noteUserSend(event, element ? 'composer-target-mismatch' : 'composer-missing', element)
+        }
+        return
+      }
+      if (event.shiftKey || event.isComposing || event.defaultPrevented || event.repeat) {
+        const reason = event.isComposing ? 'ime-composition' : event.shiftKey ? 'shift-enter' : event.repeat ? 'repeat-key' : 'event-prevented'
+        noteUserSend(event, reason, element)
+        return
+      }
       intercept(event)
     },
     true
@@ -2895,7 +2994,9 @@
       report({
         event: 'configured',
         enabled: state.enabled,
-        prefixLength: state.prefix.length
+        prefixLength: state.prefix.length,
+        taskPromptInjected: state.taskPromptInjected,
+        taskPromptGeneration: state.taskPromptGeneration
       })
       scheduleRenderedAssistantHistory()
       return { ...state }

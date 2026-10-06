@@ -82,6 +82,59 @@ in the model selector, run a harmless command, and confirm its result returns.
 Then retain a real text or attachment draft and confirm automatic return does
 not overwrite it. If blocked with an empty draft, retain `chatgpt-raw-send-*.log`.
 
+## Automatic prompt/send boundary logs
+
+The app also writes `%TEMP%\gpt-login-diag\<platform>-prompt-<timestamp>-<pid>.log`
+without `DSH_APP_LOG=1`. These retain `configured`, trusted-user `send-observed`,
+`injected`, `sent`, `inject-failed`, `send-failed` and `send-recovery`, including prompt lengths,
+editor kind/length, page/main task generation and injection flags. Early returns
+name missing/mismatched composers, disabled terminal mode, an empty prefix,
+programmatic sends, rejected drafts, empty drafts, IME, Shift+Enter, repeats or
+previously prevented events. Synthetic app feedback does not emit user-attempt
+records. The logger independently allowlists fields and values; it excludes
+drafts, prompt text, filenames, conversation IDs, URLs, cookie values and toolbar
+text. Writes use `fs.appendFileSync`; disk failures cannot interrupt a send.
+Failure/recovery records also retain retry counts, editor length, whether the
+matched Send is visible, inside the composer toolbar and disabled, whether Stop
+is present, and the allowlisted recovery action. Button labels, draft snippets
+and toolbar contents remain excluded from this automatic log.
+
+The user's `chatgpt-enter-2026-10-06T12-10-36-683Z.log` showed the home-page
+bootstrap `textarea#pending-home-input` at line 2 with no shipped composer match.
+At lines 4–5 the editor had become ProseMirror and Enter reached both window and
+document capture, with a matching target and `defaultPrevented=false`. This is
+evidence of a bootstrap selector gap, not proof that every failed send used it.
+The app now accepts this measured textarea and resolves an event/focused editor
+before document-order fallback, including overlap while the full editor mounts.
+
+After the user runs `node tools/diag/task-prompt-check.cjs`, start the normal app
+with `npm run dev`. In a new ChatGPT conversation, send a terminal task once as
+soon as the home input is available, then check a normal hydrated-editor send.
+The prompt log should show `send-observed`/`accepted`, then `injected` and
+`sent promptInjected=true` for a new task. An ordinary follow-up in that task
+should have `promptInjected=false` and `mainTaskPromptInjected=true`. A remaining
+bypass is diagnosed from the same automatically saved file; no second standalone
+probe is needed. User-run checks and build success do not verify live injection.
+
+The later `chatgpt-prompt-2026-10-06T12-25-30-882Z-24348.log` showed successful
+sends first, then `injected` at 12:27:26Z and 12:27:40Z followed by `send-failed`
+about eight seconds later. The user's terminal buffer held the full diagnosis:
+91 waits, `sendButtonFound=true`, `sendButtonDisabled=true`, no Stop, while the
+current toolbar inventory held a Send with `disabled=false`. The lookup was
+document-wide and selected an older disabled control after navigation home.
+The app now resolves visible Send/Stop controls within the current composer
+toolbar. An existing local scope is authoritative even when its Send is disabled
+or absent; a document fallback only runs without a local scope and also filters
+hidden/detached controls. The keyboard and composer-clear confirmation still
+determine whether a user send is accepted and completed.
+
+For this regression, run the offline command above, then restart with
+`npm run dev`. Send a CPU task, wait for its completion, use Home/new chat and
+send the task again by Enter. Expect a new `sent promptInjected=true` record
+after each task's injection; the composed draft must clear and the reply begin.
+Repeat once with the visible Send button. An active reply or a genuinely
+disabled current button must still block submission.
+
 ## attachments-probe.js / read-files-check.cjs
 
 Attachment observation and offline checks for AI-selected file uploads. See
@@ -530,6 +583,11 @@ deterministic timer queue. It covers both textarea and contenteditable submissio
 failed prefix writes and prepared-draft retries, multiline follow-ups, image-only
 messages, live command tracking, clarification pauses, completion/manual termination,
 configuration/mode changes, reload restoration and stale task callbacks. It also
+checks bootstrap/fully mounted editor ownership, real keyboard-handler guards and
+the automatic prompt logger's metadata filtering and confirmation bridge. It
+checks an old disabled document-wide Send alongside an enabled current-toolbar
+Send, hidden/detached editor/control copies, local disabled/aria/CSS guards and
+visible Stop protection through the actual submit/retry path. It
 transpiles the real main-process embed methods with Electron stubbed out, checking
 that successful sends are restored after reload and late confirmations stay ignored.
 Question checks connect those real embed methods to the actual injected answer path:
@@ -829,6 +887,39 @@ node --experimental-sqlite tools\diag\clear-embed-cookies.mjs
 > `__Secure-next-auth.session-token` **and** left `oai-sc` behind, so neither "the
 > session cookie is gone" nor "auth cookies are present" tells you anything on its own —
 > the import path therefore verifies by probing the page, not by reading the jar.
+
+## chatgpt-enter-probe.js
+
+Use this focused, read-only capture when the app reports `configured enabled=true`
+and matching prompt lengths but a user Enter send produces no `injected`, `sent`
+or `inject-failed` record. The agent does not run this probe; the user does.
+
+Close the normal app first, then run from the repository root:
+
+```powershell
+node_modules\electron\dist\electron.exe tools\diag\chatgpt-enter-probe.js
+```
+
+Wait for the ChatGPT home page, type `当前cpu状态`, wait three seconds, press Enter
+once, and close the probe after the reply finishes. The probe never types, clicks,
+submits, prevents events, or installs the application's interceptor. It records
+`native-enter`, `window-capture` and `document-capture`, the Enter flags, selected
+composer/actual target metadata, selector counts and candidate visibility. The
+event observers install once per document, including full reloads.
+
+Logs are appended synchronously to
+`%TEMP%\gpt-login-diag\chatgpt-enter-<timestamp>.log`. Only DOM metadata and text
+lengths are recorded; no drafts, conversation text, cookie values or request URLs.
+The proxy defaults to `http://127.0.0.1:7897`; `PROBE_PROXY` can override it for this
+probe process. The composer/send selectors are independent copies of the shipped
+ChatGPT descriptor and must remain synchronized with it.
+
+A missing selected composer or a selected composer that does not contain the
+event target explains the keyboard interceptor's early return. An Enter reaching
+document capture with `defaultPrevented=true` also explains its current early
+return. A native Enter with no page report only establishes that page listeners
+did not observe it; it does not by itself prove which listener consumed it.
+These observations establish DOM/event behavior, not successful app injection.
 
 ## chatgpt-dom-probe.js
 

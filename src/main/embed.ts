@@ -3,6 +3,7 @@ import interceptorSource from './injected/send-interceptor.js?raw'
 import themeSource from './injected/theme.js?raw'
 import { sendPageFiles } from './page-files'
 import { writeRawSendDiagnostic } from './raw-send-log'
+import { writePromptDiagnostic } from './prompt-log'
 import { parseReadFilesRequest } from '../shared/file-requests'
 import type { FileSendOutcome } from '../shared/file-requests'
 import type { PreparedFileResult } from './file-access'
@@ -1223,6 +1224,9 @@ export class ChatGptEmbed {
             `${payload.prefixLength === this.interceptor.prefix.length ? 'MATCH' : 'MISMATCH'}`
         )
         break
+      case 'send-observed':
+        console.info(`[embed:${this.platform.id}] user send ${payload.trigger ?? '?'} ${payload.reason ?? 'unknown'}`)
+        break
       case 'user-message': {
         const text = typeof payload.text === 'string' ? payload.text : ''
         const attachmentToken =
@@ -1417,6 +1421,10 @@ export class ChatGptEmbed {
         break
     }
 
+    writePromptDiagnostic(this.platform.id, payload, {
+      taskPromptInjected: this.taskPromptInjected,
+      taskPromptGeneration: this.taskPromptGeneration
+    })
     this.handlers.onInterceptor(this.getInterceptorStatus())
   }
 

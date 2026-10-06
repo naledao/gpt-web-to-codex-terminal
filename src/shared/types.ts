@@ -946,6 +946,7 @@ export interface InterceptorPageEvent {
     | 'configured'
     | 'injected'
     | 'sent'
+    | 'send-observed'
     | 'user-message'
     | 'user-image-capture'
     | 'assistant-message'
@@ -977,6 +978,14 @@ export interface InterceptorPageEvent {
   promptInjected?: boolean
   /** Present on `sent`: ignore confirmations from an already-ended task. */
   taskPromptGeneration?: number
+  /** User-send diagnostics contain flags/counts, never draft or prompt text. */
+  taskPromptInjected?: boolean
+  trigger?: 'enter' | 'click'
+  programmatic?: boolean
+  composerFound?: boolean
+  targetMatchesComposer?: boolean
+  defaultPrevented?: boolean
+  isComposing?: boolean
   /**
    * Opening words of the prompt the PAGE holds, on `injected`.
    *
@@ -1014,6 +1023,8 @@ export interface InterceptorPageEvent {
    * on it.
    */
   attempts?: number
+  /** Present on `send-recovery`: retry index before the recovery action. */
+  attempt?: number
   /** Which recovery action the failing pass used, or null when none had run yet. */
   recoveryTried?: string | null
   composerKind?: string | null
@@ -1028,6 +1039,8 @@ export interface InterceptorPageEvent {
   composerLeft?: string
   sendButtonFound?: boolean
   sendButtonDisabled?: boolean | null
+  sendButtonVisible?: boolean
+  sendButtonInComposer?: boolean
   sendButton?: InterceptorControl | null
   stopButtonFound?: boolean
   /** Present on `end-task`: what the stop button was, when one was found at all. */

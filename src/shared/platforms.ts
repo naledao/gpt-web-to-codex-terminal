@@ -416,12 +416,14 @@ export const CHATGPT_PAGE: PageAdapter = {
    * the historical one is now dead weight. `[data-composer-markdown]` is the attribute the
    * probe found on the single composer (count=1); `[role="textbox"]` is the structural
    * restatement of the same element without depending on a ChatGPT-specific name;
-   * `#prompt-textarea` and the loose `div[contenteditable="true"]` stay last so an older or
-   * not-yet-migrated render still resolves.
+   * The 2026-10-06 Enter probe also measured textarea#pending-home-input before the
+   * full editor mounts. Include that exact bootstrap control so early user sends
+   * cannot bypass injection. The historical/general selectors remain last.
    */
   composerSelectors: [
     'div[contenteditable="true"][data-composer-markdown]',
     'div[contenteditable="true"][role="textbox"]',
+    'textarea#pending-home-input',
     '#prompt-textarea',
     'div[contenteditable="true"]'
   ],

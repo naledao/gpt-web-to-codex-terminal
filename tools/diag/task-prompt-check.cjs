@@ -28,15 +28,22 @@ function page(kind = 'contenteditable', snapshot = {}) {
   const timers = []
   const events = []
   const submissions = []
-  const composer = { tagName: kind === 'textarea' ? 'TEXTAREA' : 'DIV', text: '' }
+  const buttonClicks = []
+  const composer = {
+    tagName: kind === 'textarea' ? 'TEXTAREA' : 'DIV', text: '',
+    contains(node) { return node === this },
+    closest(selector) { return selector.includes('textarea') || selector.includes('contenteditable') ? this : null }
+  }
+  const listeners = new Map()
   const button = { disabled: false }
-  const controls = { accept: true, write: true, image: false, attachment: false, generating: false, writes: 0, selector: true, replyId: 'old-reply', reply: '' }
+  const controls = { accept: true, write: true, image: false, attachment: false, generating: false, writes: 0, selector: true, composerFound: true, replyId: 'old-reply', reply: '' }
   const context = {
     Date: class extends Date { static now() { return now } },
     setTimeout: (run, delay) => { const id = ++timerSerial; timers.push({ id, run, at: now + delay }); return id },
     clearTimeout: id => { const at = timers.findIndex(timer => timer.id === id); if (at >= 0) timers.splice(at, 1) },
-    getComposer: () => composer,
-    readComposer: element => element.text,
+    getComposer: () => controls.composerFound ? composer : null,
+    document: { addEventListener: (type, listener) => listeners.set(type, listener) },
+    readComposer: element => element ? element.text : '',
     collapse: text => String(text || '').replace(/\s+/g, ' ').trim(),
     insertText: (element, text) => { controls.writes++; if (!controls.write) return false; element.text = text; return true },
     hasDraftImageAttachment: () => controls.image,
@@ -44,6 +51,7 @@ function page(kind = 'contenteditable', snapshot = {}) {
     discardUserImageCapture: () => {},
     findSendButton: () => controls.selector ? button : null,
     findStopButton: () => controls.generating ? button : null,
+    controlDisabled: node => node.disabled === true,
     lastAssistantId: () => controls.replyId,
     scheduleScrollToBottom: () => {},
     diagnoseSendFailure: () => ({}),
@@ -81,7 +89,7 @@ function page(kind = 'contenteditable', snapshot = {}) {
     submissions.push(composer.text)
     if (controls.accept) { composer.text = ''; controls.image = false; controls.replyId = `new-reply-${++replySerial}` }
   }
-  context.pressButton = submit
+  context.pressButton = target => { buttonClicks.push(target); submit() }
   context.pressEnter = submit
   vm.createContext(context)
   const publicStart = source.indexOf('    configure(config) {')
@@ -102,6 +110,7 @@ function page(kind = 'contenteditable', snapshot = {}) {
     'window[STATE_KEY] = lifecycle;',
     'globalThis.api = { state, intercept, lifecycle, checkForCommand, armBaseline, USER_TEXT_SENTINEL };'
   ].join('\n'), context)
+  vm.runInContext(section('  // Capture phase, on', '  /* ------------------------------------------------------------------ *'), context)
   context.api.lifecycle.configure({ enabled: true, prefix: '【角色】终端助手\n\n', taskPromptGeneration: 0, taskPromptInjected: false, ...snapshot })
   const flush = () => {
     let steps = 0
@@ -116,16 +125,31 @@ function page(kind = 'contenteditable', snapshot = {}) {
   const send = text => { composer.text = text; assert.equal(context.api.intercept(event()), true); flush() }
   const reply = text => { controls.reply = text; controls.replyId += '-reply'; context.api.checkForCommand(); flush() }
   return {
-    ...context.api, composer, controls, events, submissions, send, reply, flush, event,
+    ...context.api, composer, controls, events, submissions, buttonClicks, send, reply, flush, event,
+    useControlLookup: lookup => {
+      context.findSendButton = lookup.send
+      context.findStopButton = lookup.stop
+      context.controlDisabled = lookup.disabled
+    },
+    keyDown: (flags = {}) => {
+      const input = {
+        key: 'Enter', type: 'keydown', isTrusted: true, target: composer,
+        defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true }, stopImmediatePropagation() {},
+        ...flags
+      }
+      listeners.get('keydown')(input)
+      return input
+    },
     evaluate: script => vm.runInContext(script, context),
     onReport: listener => { context.report = event => { events.push(event); listener(event) } }
   }
 }
 
-function rawSendLogFixture() {
+function rawSendLogFixture(relativePath = 'src/main/raw-send-log.ts') {
   const exports = {}
   const writes = []
-  const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/main/raw-send-log.ts'), 'utf8'), {
+  const code = ts.transpileModule(fs.readFileSync(path.join(root, relativePath), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
   }).outputText
   const fakeFs = {
@@ -147,6 +171,7 @@ function rawSendLogFixture() {
 function embed(livePage = null, platformId = 'fixture') {
   const exports = {}
   const rawLog = rawSendLogFixture()
+  const promptLog = rawSendLogFixture('src/main/prompt-log.ts')
   const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/main/embed.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
   }).outputText
@@ -162,6 +187,7 @@ function embed(livePage = null, platformId = 'fixture') {
       }
       if (name === './page-files' || name === '../shared/file-requests') return {}
       if (name === './raw-send-log') return rawLog
+      if (name === './prompt-log') return promptLog
       throw new Error(`Unexpected dependency: ${name}`)
     }
   })
@@ -182,7 +208,192 @@ function embed(livePage = null, platformId = 'fixture') {
     return true
   } } }
   if (livePage) livePage.onReport(event => instance.handlePageReport('[cmd-terminal] ' + JSON.stringify(event)))
-  return { instance, configurations, rawLog }
+  return { instance, configurations, rawLog, promptLog }
+}
+
+function composerBoundaryChecks() {
+  const adapters = {}
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root, 'src/shared/platforms.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText, { exports: adapters, require: () => ({ isConversationId: () => true }) })
+  const rendered = { isConnected: true, visible: true, getClientRects() { return this.visible ? [{}] : [] } }
+  const rich = { ...rendered, closest: selector => selector.startsWith('div[contenteditable="true"]') ? rich : null }
+  const pending = { ...rendered, closest: selector => selector === 'textarea#pending-home-input' ? pending : null }
+  const oldRich = { ...rich, visible: false, closest: selector => selector.startsWith('div[contenteditable="true"]') ? oldRich : null }
+  const document = {
+    activeElement: pending,
+    querySelectorAll: selector => selector.startsWith('div[contenteditable="true"]') ? [oldRich, rich] : selector === 'textarea#pending-home-input' ? [pending] : []
+  }
+  const context = { PAGE: adapters.CHATGPT_PAGE, document, getComputedStyle: () => ({ visibility: 'visible' }) }
+  vm.createContext(context)
+  vm.runInContext(section('  const queryFirst =', '  const readComposer =') + '\nglobalThis.resolve = getComposer;', context)
+  assert.equal(context.resolve(pending), pending, 'An active bootstrap textarea must win over a coexisting rich editor')
+  assert.equal(context.resolve(), pending, 'Programmatic writes resolve the focused bootstrap control')
+  document.activeElement = rich
+  assert.equal(context.resolve({ closest: selector => rich.closest(selector) }), rich, 'Nested editor events resolve the full editor after hydration')
+  document.activeElement = null
+  assert.equal(context.resolve(), rich, 'A hidden old editor cannot win the document-order fallback')
+  document.activeElement = oldRich
+  assert.equal(context.resolve(), rich, 'A hidden focus owner cannot win over the visible editor')
+  for (const kind of ['textarea', 'contenteditable']) {
+    const p = page(kind)
+    p.composer.text = '读取当前cpu状态'
+    assert.equal(p.keyDown().defaultPrevented, true)
+    p.flush()
+    assert.equal(p.events.filter(event => event.event === 'injected').length, 1)
+    assert.equal(p.events.find(event => event.event === 'send-observed').reason, 'accepted')
+    assert.equal(p.events.find(event => event.event === 'sent').promptInjected, true)
+    for (const flags of [{ shiftKey: true }, { isComposing: true }, { repeat: true }, { defaultPrevented: true }]) {
+      const skipped = page(kind)
+      skipped.composer.text = '保留草稿'
+      skipped.keyDown(flags)
+      assert.equal(skipped.controls.writes, 0)
+      assert.equal(skipped.submissions.length, 0)
+      assert.equal(skipped.composer.text, '保留草稿')
+      assert.equal(skipped.events.at(-1).event, 'send-observed')
+    }
+  }
+  const missing = page('textarea')
+  missing.controls.composerFound = false
+  missing.keyDown()
+  assert.equal(missing.events.at(-1).reason, 'composer-missing')
+  assert.equal(missing.controls.writes, 0)
+  const synthetic = page('textarea')
+  synthetic.state.programmatic = true
+  synthetic.keyDown({ isTrusted: false })
+  assert.equal(synthetic.events.length, 1, 'Only the initial configuration is reported; synthetic sends cannot create user-attempt records')
+  log('PASS bootstrap/rich-editor ownership, real Enter interception, preserved IME/newline/repeat handling and metadata-only bypass reasons')
+}
+
+function composerControlFixture(composer) {
+  const selectors = {
+    composerSelectors: [], sendButtonSelectors: ['button[aria-label="发送"]'],
+    stopButtonSelectors: ['button[aria-label="停止"]'], disabledControlSelectors: ['.fixture-disabled']
+  }
+  const control = (label, flags = {}) => ({
+    isConnected: true, visible: true, disabled: false, ariaDisabled: false, cssDisabled: false,
+    getClientRects() { return this.visible ? [{}] : [] },
+    closest() { return this.hiddenAncestor ? {} : null },
+    getAttribute(name) { return name === 'aria-disabled' ? String(this.ariaDisabled) : null },
+    matches(selector) { return selector === `button[aria-label="${label}"]` || selector === '.fixture-disabled' && this.cssDisabled },
+    ...flags
+  })
+  const stale = control('发送', { disabled: true })
+  const hiddenLocal = control('发送', { visible: false, disabled: true })
+  const send = control('发送')
+  const stop = control('停止', { visible: false })
+  const attach = control('添加')
+  const model = control('模型')
+  const outside = control('发送')
+  let local = [hiddenLocal, attach, model, send, stop]
+  const query = (nodes, selector) => selector === 'button, [role="button"]' ? nodes : nodes.filter(node => node.matches(selector))
+  const scope = {
+    querySelectorAll: selector => query(local, selector),
+    contains: node => local.includes(node)
+  }
+  const document = {
+    body: {},
+    querySelectorAll: selector => query([stale, ...local, outside], selector)
+  }
+  composer.parentElement = scope
+  composer.querySelectorAll = () => []
+  const context = { PAGE: selectors, document, getComposer: () => composer, getComputedStyle: () => ({ visibility: 'visible' }) }
+  vm.createContext(context)
+  vm.runInContext([
+    section('  const isVisibleElement =', '  const getComposer ='),
+    section('  const controlDisabled =', '  const describeControl ='),
+    section('  const findSendButton =', '  const pressEnter ='),
+    section('  const findStopButton =', '  /* ------------------------------------------------------------------ *'),
+    'globalThis.lookup = { send: findSendButton, stop: findStopButton, disabled: controlDisabled };'
+  ].join('\n'), context)
+  return { ...context.lookup, sendControl: send, stopControl: stop, stale, outside, hiddenLocal, attach, model,
+    setLocal: nodes => { local = nodes }, scope, document }
+}
+
+function composerControlChecks() {
+  const p = page()
+  const lookup = composerControlFixture(p.composer)
+  assert.equal(lookup.send(), lookup.sendControl, 'The current toolbar wins over the earlier disabled document match')
+  assert.equal(lookup.stop(), null, 'Hidden stop buttons do not block an idle composer')
+  p.useControlLookup(lookup)
+  p.composer.text = '当前cpu状态'
+  p.keyDown()
+  p.flush()
+  assert.equal(p.buttonClicks.length, 1)
+  assert.equal(p.buttonClicks[0], lookup.sendControl)
+  assert.equal(p.events.find(event => event.event === 'sent').promptInjected, true)
+  assert.equal(p.events.filter(event => event.event === 'injected').length, 1)
+
+  for (const flags of [{ disabled: true }, { ariaDisabled: true }, { cssDisabled: true }]) {
+    const blocked = page()
+    const controls = composerControlFixture(blocked.composer)
+    Object.assign(controls.sendControl, flags)
+    blocked.useControlLookup(controls)
+    blocked.send('等待当前按钮可用')
+    assert.equal(controls.send(), controls.sendControl, 'A disabled current control must not fall back to an enabled control elsewhere')
+    assert.equal(blocked.submissions.length, 0)
+    assert.equal(blocked.events.at(-1).event, 'send-failed')
+    assert.equal(blocked.state.taskPromptInjected, false)
+    assert.match(blocked.composer.text, /等待当前按钮可用/)
+  }
+  const generating = page()
+  const controls = composerControlFixture(generating.composer)
+  controls.stopControl.visible = true
+  generating.useControlLookup(controls)
+  generating.send('等待上一条回复结束')
+  assert.equal(generating.buttonClicks.length, 0, 'A visible Stop blocks submission even when a Send also remains mounted')
+  assert.equal(generating.events.at(-1).event, 'send-failed')
+  controls.setLocal([controls.hiddenLocal, controls.attach, controls.model, controls.stopControl])
+  assert.equal(controls.send(), null, 'A visible document-wide Send outside the active toolbar cannot replace a missing local Send')
+  lookup.sendControl.hiddenAncestor = true
+  assert.equal(lookup.send(), null, 'Hidden/inert ancestor controls are excluded')
+  lookup.sendControl.hiddenAncestor = false
+  lookup.sendControl.isConnected = false
+  assert.equal(lookup.send(), null, 'Detached controls are excluded')
+  log('PASS visible current-toolbar Send selection after returning home, one confirmed submission, disabled guards and no clicks during generation')
+}
+
+function promptDiagnosticChecks() {
+  const fixture = embed(null, 'chatgpt')
+  const report = payload => fixture.instance.handlePageReport('[cmd-terminal] ' + JSON.stringify(payload))
+  report({ event: 'configured', enabled: true, prefixLength: 3000 })
+  report({ event: 'send-observed', trigger: 'enter', reason: 'accepted', composerKind: 'textarea', composerTextLength: 7, composerFound: true })
+  report({ event: 'injected', count: 1, prefixLength: 3000, prefixHead: 'private prompt', taskPromptGeneration: 0 })
+  report({ event: 'sent', text: 'private user text', promptInjected: true, taskPromptGeneration: 0 })
+  const records = fixture.promptLog.writes.map(write => JSON.parse(write.value.slice(write.value.indexOf('{'))))
+  assert.deepEqual(records.map(record => record.event), ['configured', 'send-observed', 'injected', 'sent'])
+  assert.equal(records.at(-1).mainTaskPromptInjected, true, 'The main bridge records its updated confirmation state')
+  assert.ok(fixture.promptLog.writes.every(write => /chatgpt-prompt-/.test(write.file)))
+  assert.doesNotMatch(fixture.promptLog.writes.map(write => write.value).join(''), /private prompt|private user text/)
+  const logger = rawSendLogFixture('src/main/prompt-log.ts')
+  logger.writePromptDiagnostic('chatgpt', {
+    event: 'send-observed', reason: 'private reason', trigger: 'private trigger',
+    composerKind: 'private type', composerTextLength: -1, prefixLength: 'private length',
+    prefixHead: 'private prefix', text: 'private text', url: 'private url', cookie: 'private cookie',
+    toolbar: ['private toolbar'], composerFound: true
+  }, { taskPromptInjected: false, taskPromptGeneration: 0 })
+  assert.doesNotMatch(logger.writes[0].value, /private/)
+  assert.match(logger.writes[0].value, /"reason":"unknown"/)
+  assert.equal(logger.writePromptDiagnostic('../../unsafe', { event: 'configured' }, {}), null)
+  assert.equal(logger.writePromptDiagnostic('chatgpt', { event: 'assistant-message', text: 'private reply' }, {}), null)
+  logger.writePromptDiagnostic('chatgpt', {
+    event: 'send-failed', attempts: 91, composerTextLength: 3120, sendButtonFound: true,
+    sendButtonDisabled: true, sendButtonVisible: true, sendButtonInComposer: true, stopButtonFound: false,
+    recoveryTried: null, composerLeft: 'private draft', sendButton: { aria: 'private label' }, toolbar: ['private toolbar']
+  }, {})
+  const failure = JSON.parse(logger.writes.at(-1).value.slice(logger.writes.at(-1).value.indexOf('{')))
+  assert.equal(failure.attempts, 91)
+  assert.equal(failure.sendButtonDisabled, true)
+  assert.equal(failure.sendButtonInComposer, true)
+  assert.equal(failure.composerTextLength, 3120)
+  assert.doesNotMatch(logger.writes.at(-1).value, /private/)
+  logger.writePromptDiagnostic('chatgpt', { event: 'send-recovery', action: 'enter', attempt: 2, recoveryTried: 'enter' }, {})
+  assert.match(logger.writes.at(-1).value, /"action":"enter"/)
+  logger.writePromptDiagnostic('chatgpt', { event: 'send-failed', action: 'private action', recoveryTried: 'private recovery', attempts: 'private attempts' }, {})
+  assert.doesNotMatch(logger.writes.at(-1).value, /private/)
+  logger.failWrites()
+  assert.equal(logger.writePromptDiagnostic('chatgpt', { event: 'configured' }, {}), null)
+  log('PASS persisted prompt/send boundary, bridge confirmation state, allowlisted metadata and harmless diagnostic write failures')
 }
 
 function questionSession(kind = 'contenteditable') {
@@ -687,5 +898,5 @@ async function cancelQuestionChecks() {
 }
 
 log(`Log: ${logFile}`)
-main().then(remaining).then(rawSendGuardChecks).then(questionMarkdownChecks).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
+main().then(remaining).then(rawSendGuardChecks).then(composerBoundaryChecks).then(composerControlChecks).then(promptDiagnosticChecks).then(questionMarkdownChecks).then(questionChecks).then(cancelQuestionChecks).then(() => log('PASS all offline task-prompt checks; live website behavior still requires user testing'))
   .catch(error => { log(`FAIL ${error.stack || error}`); process.exitCode = 1 })
