@@ -26,6 +26,10 @@ export const IpcChannels = {
   embedImportCookieSet: 'embed:import-cookie-set',
   embedPreviewSession: 'embed:preview-session',
   embedGetAuthState: 'embed:get-auth-state',
+  nacosConnList: 'nacos-conn:list',
+  nacosConnSave: 'nacos-conn:save',
+  nacosConnRemove: 'nacos-conn:remove',
+  nacosConnChanged: 'nacos-conn:changed',
   nacosSetBounds: 'nacos:set-bounds',
   nacosSetVisible: 'nacos:set-visible',
   nacosOpen: 'nacos:open',
@@ -1567,6 +1571,63 @@ export interface MysqlSaveResult extends MysqlConnectionsState {
   id: string
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Saved Nacos consoles *
+ * ------------------------------------------------------------------ */
+
+/**
+ * One saved Nacos console.
+ *
+ * Shaped after MysqlConnection on purpose: same machine-scoped list, same id-keyed tabs,
+ * same "the row is the connection" reading. What it does NOT carry is credentials — a
+ * Nacos console signs in on its OWN login page, and those cookies live in the view
+ * partition, so there is nothing here to store or encrypt.
+ */
+export interface NacosConnection {
+  /** Stable row id. */
+  id: string
+  /** Which machine this console belongs to. */
+  scope: 'local' | 'ssh'
+  /** The saved host id when scope is ssh; the local machine id otherwise. */
+  hostId: string
+  /** What the user calls this console; shown on its tab. */
+  name: string
+  /** Full console address, scheme included. */
+  url: string
+  /**
+   * Nacos namespace id the console should open, empty for the public one.
+   *
+   * Kept as a plain string rather than a lookup: the app never calls the Nacos API, so it
+   * cannot enumerate namespaces — and it should not, because that would need credentials.
+   * The console itself offers the picker once it is signed in.
+   */
+  namespace: string
+  /** Epoch milliseconds of the last save. */
+  updatedAt: number
+}
+
+/** What the console form submits. id is empty for a console that was never saved. */
+export interface NacosConnectionDraft {
+  id: string
+  name: string
+  url: string
+  namespace: string
+}
+
+/** Every saved Nacos console for one machine, plus whose machine it is. */
+export interface NacosConnectionsState {
+  /** Display name of the machine these belong to, for the dialog header. */
+  machineLabel: string
+  connections: NacosConnection[]
+}
+
+/** Result of saving one console: the row written, and the machine list afterwards. */
+export interface NacosSaveResult extends NacosConnectionsState {
+  /** Id of the row that was written. A new console gets its id here. */
+  id: string
+}
+
 /* ------------------------------------------------------------------ *
  * Renderer API surface
  * ------------------------------------------------------------------ */
@@ -1787,6 +1848,10 @@ export interface AppApi {
    * A native view like the chat embed, so the rectangle is measured by the renderer and
    * reported with setNacosBounds; the URL is whatever the user typed (their Nacos address).
    */
+  listNacosConnections(): Promise<NacosConnectionsState>
+  saveNacosConnection(draft: NacosConnectionDraft): Promise<NacosSaveResult>
+  removeNacosConnection(id: string): Promise<NacosConnectionsState>
+  onNacosConnectionChanged(listener: (state: NacosConnectionsState) => void): () => void
   openNacosView(url: string): Promise<NacosViewState>
   navigateNacos(url: string): Promise<NacosViewState>
   sendNacosCommand(command: EmbedCommand): void

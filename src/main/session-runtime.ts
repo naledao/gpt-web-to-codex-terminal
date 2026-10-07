@@ -30,8 +30,12 @@ import type {
   MysqlConnectionsState,
   MysqlDatabaseList,
   MysqlTableData,
+  MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
+  NacosConnectionDraft,
+  NacosConnectionsState,
+  NacosSaveResult,
   ParsedAction,
   SshHost,
   SshHostDraft,
@@ -42,6 +46,7 @@ import type {
 } from '../shared/types'
 import { CommandRunner } from './commands'
 import { ConversationStore } from './db'
+import { normalizeNacosUrl } from './nacos-view'
 import { ChatGptEmbed } from './embed'
 import type { EmbedHandlers } from './embed'
 import { parseRemoteEnvironment, parseWindowsEnvironment } from './environment'
@@ -1257,11 +1262,73 @@ export class SessionRuntime {
   async queryMysqlTable(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> {
     const host = String(draft?.host ?? '').trim()
     const db = String(database ?? '').trim()
-    const target = String(table ?? '').trim()
-    if (host === '') return { ok: false, columns: [], rows: [], truncated: false, message: '请先填写主机地址。' }
-    if (db === '') return { ok: false, columns: [], rows: [], truncated: false, message: '请先选择默认数据库。' }
-    if (target === '') return { ok: false, columns: [], rows: [], truncated: false, message: '请先选择要查看的表。' }
+    const target = String(table ?? '')
+    const empty = { sql: '', columns: [], columnComments: [], columnCommentsMessage: '', rows: [], truncated: false }
+    if (host === '') return { ...empty, ok: false, message: '请先填写主机地址。' }
+    if (db === '') return { ...empty, ok: false, message: '请先选择默认数据库。' }
+    if (target.trim() === '') return { ...empty, ok: false, message: '请先选择要查看的表。' }
     const limit = 200
+    const quote = (name: string): string => '`' + name.replace(/`/g, '``') + '`'
+    const rawPort = Number(draft?.port)
+    const port = Number.isFinite(rawPort) && rawPort > 0 ? Math.trunc(rawPort) : 3306
+    let connection: Connection | null = null
+    let executedSql = ''
+    try {
+      connection = await createConnection({
+        host,
+        port,
+        user: String(draft?.username ?? '').trim(),
+        password: this.mysqlPasswordFor(draft),
+        database: db,
+        connectTimeout: 8000
+      })
+      executedSql = `SELECT * FROM ${quote(db)}.${quote(target)} LIMIT ${limit + 1}`
+      const [rows, fields] = await connection.query({ sql: executedSql, timeout: 8000 })
+      const raw = Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : []
+      const truncated = raw.length > limit
+      const page = truncated ? raw.slice(0, limit) : raw
+      const columns = (fields ?? []).map((field) => field.name)
+      const comments = new Map<string, string>()
+      let columnCommentsMessage = ''
+      try {
+        const [metadata] = await connection.query({
+          sql: 'SELECT COLUMN_NAME AS name, COLUMN_COMMENT AS comment FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION',
+          values: [db, target],
+          timeout: 8000
+        })
+        for (const record of Array.isArray(metadata) ? metadata as Array<Record<string, unknown>> : []) {
+          comments.set(String(record.name ?? ''), String(record.comment ?? ''))
+        }
+      } catch (error) {
+        columnCommentsMessage = `字段注释读取失败：${mysqlErrorMessage(error)}`
+      }
+      const columnComments = columns.map((column) => comments.get(column) ?? '')
+      const cells = page.map((row) =>
+        columns.map((column) => {
+          const value = row[column]
+          if (value === null || value === undefined) return null
+          if (value instanceof Date) return value.toISOString()
+          if (Buffer.isBuffer(value)) return '<' + value.length + ' bytes>'
+          if (typeof value === 'object') return JSON.stringify(value)
+          return String(value)
+        })
+      )
+      return { ok: true, sql: executedSql, columns, columnComments, columnCommentsMessage, rows: cells, truncated, message: '' }
+    } catch (error) {
+      return { ...empty, ok: false, sql: executedSql, message: mysqlErrorMessage(error) }
+    } finally {
+      if (connection) await connection.end().catch(() => undefined)
+    }
+  }
+
+  /** Read the CREATE statement returned by MySQL, including view definitions. */
+  async getMysqlTableDdl(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl> {
+    const host = String(draft?.host ?? '').trim()
+    const db = String(database ?? '').trim()
+    const target = String(table ?? '')
+    if (host === '') return { ok: false, ddl: '', message: '请先填写主机地址。' }
+    if (db === '') return { ok: false, ddl: '', message: '请先选择默认数据库。' }
+    if (target.trim() === '') return { ok: false, ddl: '', message: '请先选择要查看的表。' }
     const quote = (name: string): string => '`' + name.replace(/`/g, '``') + '`'
     const rawPort = Number(draft?.port)
     const port = Number.isFinite(rawPort) && rawPort > 0 ? Math.trunc(rawPort) : 3306
@@ -1275,29 +1342,73 @@ export class SessionRuntime {
         database: db,
         connectTimeout: 8000
       })
-      const [rows, fields] = await connection.query(
-        `SELECT * FROM ${quote(db)}.${quote(target)} LIMIT ${limit + 1}`
-      )
-      const raw = Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : []
-      const truncated = raw.length > limit
-      const page = truncated ? raw.slice(0, limit) : raw
-      const columns = (fields ?? []).map((field) => field.name)
-      const cells = page.map((row) =>
-        columns.map((column) => {
-          const value = row[column]
-          if (value === null || value === undefined) return null
-          if (value instanceof Date) return value.toISOString()
-          if (Buffer.isBuffer(value)) return '<' + value.length + ' bytes>'
-          if (typeof value === 'object') return JSON.stringify(value)
-          return String(value)
-        })
-      )
-      return { ok: true, columns, rows: cells, truncated, message: '' }
+      const [rows] = await connection.query({
+        sql: `SHOW CREATE TABLE ${quote(db)}.${quote(target)}`,
+        timeout: 8000
+      })
+      const record = Array.isArray(rows) ? rows[0] as Record<string, unknown> | undefined : undefined
+      const ddl = record?.['Create Table'] ?? record?.['Create View']
+      if (typeof ddl !== 'string' || ddl.trim() === '') {
+        return { ok: false, ddl: '', message: '服务器未返回该表的 DDL。' }
+      }
+      return { ok: true, ddl, message: '' }
     } catch (error) {
-      return { ok: false, columns: [], rows: [], truncated: false, message: mysqlErrorMessage(error) }
+      return { ok: false, ddl: '', message: mysqlErrorMessage(error) }
     } finally {
       if (connection) await connection.end().catch(() => undefined)
     }
+  }
+
+  /* ---------------- nacos connections ---------------- */
+
+  /** Every saved Nacos console for whichever machine the terminal is driving. */
+  listNacosConnections(): NacosConnectionsState {
+    return this.readNacosConnectionsState()
+  }
+
+  /**
+   * Persist one console for the machine in charge.
+   *
+   * Same id rule as MySQL: a draft with no id is new and gets one here, so the caller can
+   * open its tab without a second round trip. The address is normalized before it is
+   * stored, so a saved row is always a URL the view can actually load.
+   */
+  saveNacosConnection(draft: NacosConnectionDraft): NacosSaveResult {
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const id = typeof draft?.id === 'string' && draft.id.trim() !== '' ? draft.id.trim() : randomUUID()
+    const url = normalizeNacosUrl(String(draft?.url ?? '')) ?? ''
+    this.options.store.upsertNacosConnection({
+      id,
+      scope: this.environmentScope.scope,
+      hostId: machineKey,
+      name: String(draft?.name ?? '').trim(),
+      url,
+      namespace: String(draft?.namespace ?? '').trim()
+    })
+    const state = this.readNacosConnectionsState()
+    this.send(IpcChannels.nacosConnChanged, state)
+    return { ...state, id }
+  }
+
+  removeNacosConnection(id: string): NacosConnectionsState {
+    this.options.store.removeNacosConnection(String(id ?? ''))
+    const state = this.readNacosConnectionsState()
+    this.send(IpcChannels.nacosConnChanged, state)
+    return state
+  }
+
+  private readNacosConnectionsState(): NacosConnectionsState {
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const connections = this.options.store.listNacosConnections(this.environmentScope.scope, machineKey).map((row) => ({
+      id: row.id,
+      scope: this.environmentScope.scope,
+      hostId: machineKey,
+      name: row.name,
+      url: row.url,
+      namespace: row.namespace,
+      updatedAt: row.updatedAt
+    }))
+    return { machineLabel: this.environmentScope.label, connections }
   }
 
   private readMysqlConnectionsState(): MysqlConnectionsState {

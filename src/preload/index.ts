@@ -42,6 +42,9 @@ import type {
   TerminalNotes,
   TerminalState,
   UpdateStatus,
+  NacosConnectionDraft,
+  NacosConnectionsState,
+  NacosSaveResult,
   NacosViewState
 } from '../shared/types'
 
@@ -372,6 +375,22 @@ removeConversation: (id: string): Promise<Conversation[]> =>
     ipcRenderer.on(IpcChannels.mysqlConnChanged, handler)
     return () => {
       ipcRenderer.removeListener(IpcChannels.mysqlConnChanged, handler)
+    }
+  },
+
+  listNacosConnections: (): Promise<NacosConnectionsState> => ipcRenderer.invoke(IpcChannels.nacosConnList),
+
+  saveNacosConnection: (draft: NacosConnectionDraft): Promise<NacosSaveResult> =>
+    ipcRenderer.invoke(IpcChannels.nacosConnSave, draft),
+
+  removeNacosConnection: (id: string): Promise<NacosConnectionsState> =>
+    ipcRenderer.invoke(IpcChannels.nacosConnRemove, id),
+
+  onNacosConnectionChanged: (listener: (state: NacosConnectionsState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: NacosConnectionsState): void => listener(state)
+    ipcRenderer.on(IpcChannels.nacosConnChanged, handler)
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.nacosConnChanged, handler)
     }
   },
 

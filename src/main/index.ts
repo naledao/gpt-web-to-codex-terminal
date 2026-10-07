@@ -53,6 +53,9 @@ import type {
   MysqlTableList,
   MysqlSaveResult,
   UpdateStatus,
+  NacosConnectionDraft,
+  NacosConnectionsState,
+  NacosSaveResult,
   NacosViewState
 } from '../shared/types'
 import { embedAuthState, importCookieSet, importSessionToken, previewSessionImport } from './session-import'
@@ -1047,6 +1050,20 @@ function registerIpcHandlers(): void {
     if (!window || window.isDestroyed() || event.sender !== window.webContents) return EMPTY_NACOS_VIEW_STATE
     nacosView?.destroy(window)
     return EMPTY_NACOS_VIEW_STATE
+  })
+  ipcMain.handle(IpcChannels.nacosConnList, (event): NacosConnectionsState => {
+    const runtime = runtimeForEvent(event)
+    return runtime ? runtime.listNacosConnections() : { machineLabel: '', connections: [] }
+  })
+  ipcMain.handle(IpcChannels.nacosConnSave, (event, draft: NacosConnectionDraft): NacosSaveResult => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime) throw new Error('当前会话不可用。')
+    return runtime.saveNacosConnection(draft)
+  })
+  ipcMain.handle(IpcChannels.nacosConnRemove, (event, id: string): NacosConnectionsState => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime) return { machineLabel: '', connections: [] }
+    return runtime.removeNacosConnection(String(id ?? ''))
   })
   ipcMain.on(IpcChannels.openChatgptExternal, (event) => {
     const runtime = runtimeForEvent(event)

@@ -42,6 +42,28 @@ CREATE TABLE IF NOT EXISTS mysql_connections (
 
 CREATE INDEX IF NOT EXISTS idx_mysql_connections_machine ON mysql_connections (machine_scope, host_id, updated_at);`
 
+const NACOS_CONNECTIONS_TABLE = `-- Saved Nacos consoles for one machine -- a LIST, like mysql_connections.
+--
+-- Same reasoning: one server per machine is the exception, not the rule (dev, test,
+-- and production consoles are all reachable from one desk). The id is the row own
+-- identity and is what the dialog tabs are keyed by.
+--
+-- There is no password column. A Nacos console authenticates in its OWN page, with its
+-- own login form and its own cookies, kept in the view partition. The app never sees
+-- those credentials, so there is nothing here to encrypt.
+CREATE TABLE IF NOT EXISTS nacos_connections (
+  id            TEXT NOT NULL,
+  machine_scope TEXT NOT NULL,
+  host_id       TEXT NOT NULL DEFAULT '',
+  name          TEXT NOT NULL DEFAULT '',
+  url           TEXT NOT NULL DEFAULT '',
+  namespace     TEXT NOT NULL DEFAULT '',
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nacos_connections_machine ON nacos_connections (machine_scope, host_id, updated_at);`
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   id            TEXT PRIMARY KEY,
@@ -182,6 +204,7 @@ CREATE TABLE IF NOT EXISTS terminal_directory_notes (
 );
 
 ${MYSQL_CONNECTIONS_TABLE}
+${NACOS_CONNECTIONS_TABLE}
 `
 
 interface ConversationRow {
@@ -1167,6 +1190,64 @@ export class ConversationStore {
   removeMysqlConnection(id: string): void {
     this.db.prepare('DELETE FROM mysql_connections WHERE id = ?').run(id)
   }
+
+  /* ---------------- nacos connections ---------------- */
+
+  /** Every stored Nacos console for one machine, oldest first. */
+  listNacosConnections(scope: string, hostId: string): Array<{
+    id: string
+    name: string
+    url: string
+    namespace: string
+    updatedAt: number
+  }> {
+    const rows = this.db
+      .prepare(
+        'SELECT id, name, url, namespace, updated_at FROM nacos_connections WHERE machine_scope = ? AND host_id = ? ORDER BY updated_at ASC, id ASC'
+      )
+      .all(scope, hostId) as unknown as Array<{
+      id: string
+      name: string
+      url: string
+      namespace: string
+      updated_at: number
+    }>
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      url: row.url,
+      namespace: row.namespace,
+      updatedAt: row.updated_at
+    }))
+  }
+
+  /** Insert or update one Nacos console. The caller always supplies the id. */
+  upsertNacosConnection(record: {
+    id: string
+    scope: string
+    hostId: string
+    name: string
+    url: string
+    namespace: string
+  }): void {
+    const now = Date.now()
+    this.db
+      .prepare(
+        `INSERT INTO nacos_connections (id, machine_scope, host_id, name, url, namespace, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           url = excluded.url,
+           namespace = excluded.namespace,
+           updated_at = excluded.updated_at`
+      )
+      .run(record.id, record.scope, record.hostId, record.name, record.url, record.namespace, now)
+  }
+
+  removeNacosConnection(id: string): void {
+    this.db.prepare('DELETE FROM nacos_connections WHERE id = ?').run(id)
+  }
+
   listManagedSessions(): ManagedSessionRecord[] {
     const rows = this.db
       .prepare(
