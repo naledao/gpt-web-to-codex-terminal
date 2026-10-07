@@ -27,6 +27,9 @@ public class UserLoginController {
 
     @PostMapping
     public ResponseEntity<String> login(@RequestBody UserServiceClient.LoginRequest request) {
-        return userServiceClient.login(request);
+        ResponseEntity<String> downstream = userServiceClient.login(request);
+        // 只透传状态码和响应体，避免把 user-service 的响应头再次带到当前服务造成重复响应头。
+        return ResponseEntity.status(downstream.getStatusCode())
+                .body(downstream.getBody());
     }
 }
