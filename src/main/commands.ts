@@ -147,6 +147,8 @@ export interface CommandRunnerDeps {
    * can never disagree about which machine is in charge.
    */
   remoteShell: () => ExecutionShell | null
+  /** A web2term session renders its remote shell through the existing terminal state. */
+  terminalTransport?: () => TerminalState['transport']
   /** Mirror one line into the SSH transcript while the remote backend is in use. */
   onRemoteLine: (line: TerminalLine) => void
   /** Mirror streamed remote output the same way. */
@@ -361,6 +363,7 @@ export class CommandRunner {
   private activeShell: ExecutionShell | null = null
   /** Distinguishes consecutive runs that reuse the same persistent shell object. */
   private activeRunId = 0
+  private disposed = false
   /** Monotonic request id: if several commands arrive together, only the newest starts. */
   private executionRequest = 0
   private fileAbort: AbortController | null = null
@@ -754,6 +757,7 @@ export class CommandRunner {
     const conversationId = record.conversationId
     const messageId = record.messageId
     const shell = await this.prepareExecutionShell()
+    if (this.disposed) return
     if (!shell) {
       /*
        * No backend could be prepared — an SSH attach that failed, a shell that would not start.
@@ -773,6 +777,7 @@ export class CommandRunner {
     this.broadcastExecutions(conversationId)
 
     const result = await this.runOnShell(shell, record.command, record.timeoutSeconds)
+    if (this.disposed) return
 
     this.deps.store.finishExecution(messageId, {
       status: result.rejected
@@ -892,12 +897,21 @@ export class CommandRunner {
   /* ---------------- terminal ---------------- */
 
   getTerminalState(): TerminalState {
+    const transport = this.deps.terminalTransport?.()
+    const remote = transport ? this.deps.remoteShell() : null
     return {
-      alive: this.localShell?.alive ?? false,
-      cwd: this.localShell?.cwd ?? this.localCwd,
+      alive: remote ? remote.alive : this.localShell?.alive ?? false,
+      cwd: remote ? remote.cwd : this.localShell?.cwd ?? this.localCwd,
       lines: [...this.lines],
-      sendDelaySeconds: this.sendDelaySeconds
+      sendDelaySeconds: this.sendDelaySeconds,
+      ...(transport ? { transport } : {})
     }
+  }
+
+  pushRemoteOutput(chunk: string): void { this.appendOutput(chunk) }
+  refreshTerminal(message?: string): void {
+    if (message) this.appendLine({ kind: this.deps.terminalTransport?.()?.status === 'error' ? 'error' : 'notice', text: message })
+    else this.flushTerminal()
   }
 
   /**
@@ -978,12 +992,14 @@ export class CommandRunner {
    * (and useful) before a single chat has been opened.
    */
   async sendTerminalInput(text: string): Promise<void> {
+    if (this.disposed) return
     const command = text.trim()
     if (command === '') return
 
     const shell = this.ensureShell()
     this.appendLine({ kind: 'command', text: command })
     const result = await this.runOnShell(shell, command)
+    if (this.disposed) return
     this.appendLine(summariseResult(result))
     this.flushTerminal()
   }
@@ -1058,6 +1074,7 @@ export class CommandRunner {
   }
 
   disposeAll(): void {
+    this.disposed = true
     this.fileAbort?.abort()
     for (const result of this.fileResults.values()) void result.cleanup().catch((error) => console.warn('[files] cleanup:', error.message))
     this.fileResults.clear()
@@ -1109,13 +1126,21 @@ export class CommandRunner {
 
   /** Give a newly requested stored command priority over the command in flight. */
   private async prepareExecutionShell(): Promise<ExecutionShell | null> {
+    if (this.disposed) return null
     const active = this.activeShell
     if (!active || !active.running) {
       const remote = this.deps.remoteShell()
       // During a deliberate SSH interrupt main deliberately keeps the old, now
       // closed backend reference until SshManager has opened its replacement.
       // Wait here rather than treating that short gap as permission to run local.
-      if (remote && !remote.alive) return this.waitForRemoteReplacement(remote)
+      if (remote && !remote.alive) {
+        const transport = this.deps.terminalTransport?.()
+        if (transport && transport.status !== 'connecting') {
+          this.appendLine({ kind: 'error', text: '设备终端未连接，指令保持待执行，请重新连接后点击运行。' })
+          return null
+        }
+        return this.waitForRemoteReplacement(remote)
+      }
       return this.ensureShell()
     }
 
@@ -1140,8 +1165,9 @@ export class CommandRunner {
   private async waitForRemoteReplacement(previous: ExecutionShell): Promise<ExecutionShell | null> {
     const deadline = Date.now() + 10_000
     while (Date.now() < deadline) {
+      if (this.disposed) return null
       const next = this.deps.remoteShell()
-      if (next && next !== previous && next.alive && !next.running) return next
+      if (next && (next !== previous || this.deps.terminalTransport?.()) && next.alive && !next.running) return next
       await new Promise<void>((resolve) => setTimeout(resolve, 50))
     }
 

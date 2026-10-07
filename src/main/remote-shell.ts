@@ -1,9 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import type { ClientChannel } from 'ssh2'
+import { StringDecoder } from 'node:string_decoder'
+import type { EventEmitter } from 'node:events'
 import { IDLE_TIMEOUT_MS, MAX_RUNTIME_MS } from './shell'
 import type { ExecutionShell, ShellResult } from './shell'
 import { REMOTE_DETECT_COMMAND } from './environment'
 import type { EnvironmentKind } from '../shared/types'
+
+/** SSH exec channels and web2term PTYs share the command framing transport. */
+export interface RemoteShellChannel extends Pick<EventEmitter, 'on' | 'once'> {
+  write(data: string): unknown
+  close(): unknown
+  signal(name: string): unknown
+  stderr?: Pick<EventEmitter, 'on'>
+}
 
 interface PendingRun {
   seq: number
@@ -42,13 +51,13 @@ interface PendingRun {
  *
  * Exported so the protocol can be driven against a real shell without Electron.
  */
-export function buildEnvelope(token: string, seq: number, command: string): string {
+export function buildEnvelope(token: string, seq: number, command: string, separateOutput = false): string {
   return (
     [
       '{',
       command,
       '} </dev/null',
-      `printf '__CT_DONE_${token}_%s__ %s %s\\n' '${seq}' "$?" "$PWD"`
+      `printf '${separateOutput ? '\\n' : ''}__CT_DONE_${token}_%s__ %s %s\\n' '${seq}' "$?" "$PWD"`
     ].join('\n') + '\n'
   )
 }
@@ -76,13 +85,14 @@ export class RemoteShell implements ExecutionShell {
   private readonly token = randomUUID().replace(/-/g, '').slice(0, 10)
   private seq = 0
   private lineBuffer = ''
+  private readonly decoder = new StringDecoder('utf8')
   private pending: PendingRun | null = null
   private closed = false
   private disposed = false
   private currentCwd = ''
 
   constructor(
-    private readonly stream: ClientChannel,
+    private readonly stream: RemoteShellChannel,
     private readonly options: {
       /** Called with decoded output as it arrives, for live display. */
       onOutput?: (chunk: string) => void
@@ -158,7 +168,8 @@ export class RemoteShell implements ExecutionShell {
       this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, ceilingMs, timedOut: false, interrupted: false, silent }
 
       try {
-        this.stream.write(buildEnvelope(this.token, seq, cleaned))
+        // Leading newline separates the marker from output without a trailing LF.
+        this.stream.write(buildEnvelope(this.token, seq, cleaned, true))
       } catch {
         this.clearPending()
         resolve(this.reject('写入远端终端失败。'))
@@ -251,6 +262,8 @@ export class RemoteShell implements ExecutionShell {
   private handleClosed(): void {
     if (this.closed) return
     this.closed = true
+    this.lineBuffer += this.decoder.end()
+    if (this.lineBuffer) { this.handleLine(this.lineBuffer.replace(/\r$/, '')); this.lineBuffer = '' }
 
     const pending = this.pending
     const interrupted = pending?.interrupted ?? false
@@ -280,7 +293,15 @@ export class RemoteShell implements ExecutionShell {
    * splits wherever TCP felt like it — can never be mistaken for a complete one.
    */
   private handleData(chunk: Buffer): void {
-    this.lineBuffer += chunk.toString('utf8')
+    if (this.closed || this.disposed) return
+    if (this.pending) {
+      clearTimeout(this.pending.idleTimer)
+      this.pending.idleTimer = setTimeout(() => {
+        if (this.pending) this.pending.timedOut = 'idle'
+        this.terminate()
+      }, IDLE_TIMEOUT_MS)
+    }
+    this.lineBuffer += this.decoder.write(chunk)
 
     let newline = this.lineBuffer.indexOf('\n')
     while (newline !== -1) {
@@ -314,13 +335,6 @@ export class RemoteShell implements ExecutionShell {
     }
 
     if (this.pending) {
-      // Any output at all counts as progress; only silence means "stuck".
-      clearTimeout(this.pending.idleTimer)
-      this.pending.idleTimer = setTimeout(() => {
-        if (this.pending) this.pending.timedOut = 'idle'
-        this.terminate()
-      }, IDLE_TIMEOUT_MS)
-
       this.pending.output += `${line}\n`
     }
 

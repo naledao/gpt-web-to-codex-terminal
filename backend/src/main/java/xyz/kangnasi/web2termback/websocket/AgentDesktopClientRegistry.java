@@ -28,4 +28,11 @@ public class AgentDesktopClientRegistry {
     public String getDesktopClientId(String agentId) {
         return desktopClientsByAgent.get(agentId);
     }
+
+    /**
+     * 判断 Agent 是否已经被某个 Desktop 占用。
+     */
+    public boolean isBound(String agentId) {
+        return desktopClientsByAgent.containsKey(agentId);
+    }
 }

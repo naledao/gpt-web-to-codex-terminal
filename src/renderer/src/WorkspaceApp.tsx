@@ -8,6 +8,7 @@ import claudeIcon from './assets/Claude.svg'
 import geminiIcon from './assets/Gemini.svg'
 import { platformById } from '../../shared/platforms'
 import App from './App'
+import Web2termDeviceDialog from './components/Web2termDeviceDialog'
 import ConfirmDialog from './components/ConfirmDialog'
 
 const INITIAL_WORKSPACE: WorkspaceState = {
@@ -52,6 +53,7 @@ export default function WorkspaceApp(): ReactElement {
   const [transfers, setTransfers] = useState<SshTransferTask[]>([])
   const [transfersOpen, setTransfersOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const [web2termDeviceDialogOpen, setWeb2termDeviceDialogOpen] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ManagedSessionSummary | null>(null)
   const [appVersion, setAppVersion] = useState('')
@@ -62,6 +64,7 @@ export default function WorkspaceApp(): ReactElement {
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const [updateLive, setUpdateLive] = useState<{ phase: UpdateStatus['phase']; percent: number }>({ phase: 'idle', percent: 0 })
   const [theme, setTheme] = useState<AppTheme>('light')
+  const newSessionButton = useRef<HTMLButtonElement>(null)
   const noticedVersion = useRef('')
   const [navWidth, setNavWidth] = useState(() => {
     try {
@@ -136,6 +139,7 @@ export default function WorkspaceApp(): ReactElement {
     }
   }, [])
 
+
   useEffect(() => {
     const notice = (status: UpdateStatus): void => {
       setUpdateLive({ phase: status.phase, percent: status.percent })
@@ -176,6 +180,25 @@ export default function WorkspaceApp(): ReactElement {
     // For SSH the main process opens the connect dialog for us (createSession passes
     // openSshDialog = kind === 'ssh'), so there is nothing else to do here.
     await window.api.createManagedSession(kind)
+  }
+
+  const openWeb2termConnection = async (): Promise<void> => {
+    setNewSessionOpen(false)
+    const opened = await window.api.showWeb2termConnection()
+    if (!opened) throw new Error('无法打开设备会话，请重新选择设备连接。')
+    setWeb2termDeviceDialogOpen(false)
+  }
+
+  const openWeb2termDeviceDialog = (): void => {
+    setNewSessionOpen(false)
+    setWeb2termDeviceDialogOpen(true)
+    // Native embedded pages paint above DOM dialogs; hide them before rendering.
+    window.api.setEmbedVisible(false)
+  }
+
+  const closeWeb2termDeviceDialog = (): void => {
+    setWeb2termDeviceDialogOpen(false)
+    requestAnimationFrame(() => newSessionButton.current?.focus())
   }
 
   const activeTransfers = transfers.filter(
@@ -245,6 +268,7 @@ export default function WorkspaceApp(): ReactElement {
           <button
             type="button"
             className="workspace__new-session"
+            ref={newSessionButton}
             title="新建会话"
             aria-label="新建会话"
             onClick={() => setNewSessionOpen(true)}>
@@ -282,7 +306,7 @@ export default function WorkspaceApp(): ReactElement {
                 </span>
                 <span className="workspace__session-meta">
                   {item.taskRunning ? <span className="workspace__session-running"><svg viewBox="0 0 8 8" width="7" height="7" fill="currentColor"><circle cx="4" cy="4" r="3.2" /></svg> 执行中 · </span> : null}
-                  {item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
+                  {item.kind === 'web2term' ? 'web2term' : item.kind === 'ssh' ? 'SSH' : '本地'} · {item.target}
                 </span>
               </button>
               <button
@@ -314,10 +338,11 @@ export default function WorkspaceApp(): ReactElement {
           <App
             key={workspace.sessionId}
             sessionId={workspace.sessionId}
+            sessionKind={sessions.find(item => item.id === workspace.sessionId)?.kind}
             theme={theme}
             onThemeChange={setTheme}
             initialSshDialogOpen={workspace.openSshDialog}
-            globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen || updateNotice !== null}
+            globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen || web2termDeviceDialogOpen || updateNotice !== null}
             /*
              * Read from the session list rather than held as its own state: the main process
              * republishes the list whenever a session changes, including on a platform switch,
@@ -461,15 +486,26 @@ export default function WorkspaceApp(): ReactElement {
                 </span>
                 <span className="new-session-modal__arrow" aria-hidden="true">›</span>
               </button>
+              <button type="button" className="new-session-modal__option" onClick={openWeb2termDeviceDialog}>
+                <span className="new-session-modal__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="3" width="16" height="6" rx="1.5" /><path d="M12 9v5M6 14h12M6 14v3M18 14v3" /><rect x="3" y="17" width="6" height="4" rx="1" /><rect x="15" y="17" width="6" height="4" rx="1" /></svg>
+                </span>
+                <span className="new-session-modal__content">
+                  <span className="new-session-modal__title-row"><strong>web2term 连接</strong></span>
+                  <small>查看当前账号的设备，选择设备连接</small>
+                </span>
+                <span className="new-session-modal__arrow" aria-hidden="true">›</span>
+              </button>
             </div>
 
             <div className="new-session-modal__footer">
               <span className="new-session-modal__info" aria-hidden="true">i</span>
-              <span>创建后仍可在会话设置中修改连接方式</span>
+              <span>本地和 SSH 会话创建后可在会话设置中调整</span>
             </div>
           </div>
         </div>
       ) : null}
+      {web2termDeviceDialogOpen ? <Web2termDeviceDialog onClose={closeWeb2termDeviceDialog} onConnected={openWeb2termConnection} /> : null}
       <ConfirmDialog
         open={updateNotice !== null}
         title={updateLive.phase === 'downloaded' ? `新版本 v${updateNotice?.version ?? ''} 已下载` : `发现新版本 v${updateNotice?.version ?? ''}`}

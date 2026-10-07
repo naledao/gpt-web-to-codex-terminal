@@ -6,6 +6,9 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 /**
  * Agent 设备连接状态的数据访问层。
  */
@@ -63,6 +66,49 @@ public interface UserDeviceMapper {
     int markDisconnected(@Param("userId") long userId,
                          @Param("deviceId") String deviceId);
 
+    /**
+     * 查询当前用户的全部设备，供设备列表接口使用。
+     */
+    @Select("""
+            SELECT device_id AS deviceId,
+                   device_name AS deviceName,
+                   enabled,
+                   online_status AS onlineStatus,
+                   last_connected_at AS lastConnectedAt,
+                   last_heartbeat_at AS lastHeartbeatAt,
+                   last_disconnected_at AS lastDisconnectedAt,
+                   terminal_connection_status AS terminalConnectionStatus,
+                   terminal_session_id AS terminalSessionId,
+                   desktop_client_id AS desktopClientId,
+                   terminal_requested_at AS terminalRequestedAt,
+                   terminal_connected_at AS terminalConnectedAt,
+                   terminal_disconnected_at AS terminalDisconnectedAt,
+                   terminal_error AS terminalError,
+                   created_at AS createdAt,
+                   updated_at AS updatedAt
+            FROM user_device
+            WHERE user_id = #{userId}
+            ORDER BY updated_at DESC, id DESC
+            """)
+    List<UserDeviceRecord> findByUserId(@Param("userId") long userId);
+
+    record UserDeviceRecord(String deviceId,
+                            String deviceName,
+                            Integer enabled,
+                            Integer onlineStatus,
+                            LocalDateTime lastConnectedAt,
+                            LocalDateTime lastHeartbeatAt,
+                            LocalDateTime lastDisconnectedAt,
+                            Integer terminalConnectionStatus,
+                            String terminalSessionId,
+                            String desktopClientId,
+                            LocalDateTime terminalRequestedAt,
+                            LocalDateTime terminalConnectedAt,
+                            LocalDateTime terminalDisconnectedAt,
+                            String terminalError,
+                            LocalDateTime createdAt,
+                            LocalDateTime updatedAt) {
+    }
     record DeviceAuthRecord(Long id, Long userId, Integer enabled) {
     }
 }

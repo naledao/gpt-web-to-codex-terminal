@@ -1102,6 +1102,15 @@ body {
   background: var(--bg-chrome);
 }
 
+.terminal-pane__head--web2term {
+  flex-wrap: wrap;
+}
+
+.workspace:not(.workspace--manager) .terminal-pane__head .terminal__dot.terminal__dot--disconnected {
+  background: var(--text-muted);
+  box-shadow: none;
+}
+
 /* Conversation id and working directory, on their own line so a narrow column
    does not squeeze the header controls. */
 .terminal-pane__meta {
@@ -3433,6 +3442,37 @@ body {
 .settings-card__heading h2 { margin:0; font:inherit; }
 .settings-card__icon { width:31px; height:31px; display:grid; place-items:center; border-radius:10px; background:#eef2ff; color:#5667f0; font-size:19px; font-weight:700; }
 .settings-card__icon svg { width:20px; height:20px; }
+.settings-backend-description { margin:0 0 24px; color:#667085; font-size:14px; line-height:1.6; }
+.settings-backend-field { display:grid; gap:10px; min-width:0; }
+.settings-backend-field .settings-input { width:100%; min-width:0; }
+.settings-backend-hint { margin:0; color:#667085; font-size:13px; line-height:1.65; overflow-wrap:anywhere; }
+.settings-backend-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:6px; }
+.settings-backend-account:empty { display:none; }
+.settings-backend-account__status { display:grid; gap:4px; margin-top:10px; color:#344054; font-size:14px; overflow-wrap:anywhere; }
+.settings-backend-account__status span { color:#667085; font-size:13px; }
+.settings-backend-login { display:grid; gap:10px; margin-top:20px; }
+.settings-backend-login__email { display:flex; gap:12px; align-items:stretch; min-width:0; }
+.settings-backend-login__email .settings-input { flex:1; min-width:0; }
+.settings-backend-login__email button { flex:none; white-space:nowrap; }
+.settings-backend-login__code { max-width:320px; }
+.settings-backend-login__notice { margin:0; color:#344054; font-size:13px; line-height:1.6; }
+.settings-backend-login__log { user-select:text; }
+.settings-backend-submit { min-height:40px; }
+.settings-modal__close:disabled { opacity:.5; cursor:not-allowed; }
+.settings-feedback { margin:0; color:#b42318; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.settings-feedback--save { flex-basis:100%; }
+.settings-modal__foot:has(.settings-feedback--save) { flex-wrap:wrap; }
+.settings-backend-field .settings-input[aria-invalid='true'] { border-color:#b42318 !important; }
+.settings-backend-field .settings-input:disabled { opacity:.65; cursor:not-allowed; }
+.settings-backend-actions button:focus-visible,
+.settings-backend-login__email button:focus-visible { outline:2px solid #7767f4; outline-offset:3px; }
+.workspace[data-theme='dark'] .settings-backend-description,
+.workspace[data-theme='dark'] .settings-backend-hint,
+.workspace[data-theme='dark'] .settings-backend-account__status span { color:#b8b8b8; }
+.workspace[data-theme='dark'] .settings-backend-account__status,
+.workspace[data-theme='dark'] .settings-backend-login__notice { color:#e7edf7; }
+.workspace[data-theme='dark'] .settings-feedback { color:#ffb4a9; }
+.workspace[data-theme='dark'] .settings-backend-field .settings-input[aria-invalid='true'] { border-color:#ffb4a9 !important; }
 .settings-proxy-row { display:grid; grid-template-columns: 136px minmax(0,1fr) 80px 40px; align-items:center; gap:12px; min-height:56px; }
 .settings-avatar-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:42px; margin-top:4px; padding-top:4px; border-top:1px solid #edf0f5; }
 .settings-avatar-control { display:grid; justify-items:center; gap:6px; }

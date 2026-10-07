@@ -1,0 +1,49 @@
+.web2term-connect__device-list { margin: 0; padding: 0; list-style: none; }
+.web2term-connect__device { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 24px; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border); }
+.web2term-connect__device-info { display: grid; gap: 8px; min-width: 0; }
+.web2term-connect__device-info strong { overflow-wrap: anywhere; user-select: text; }
+.web2term-connect__device-info code { color: var(--web2term-muted); overflow-wrap: anywhere; user-select: text; }
+.web2term-connect__device-status { display: inline-flex; align-items: center; gap: 7px; color: var(--web2term-muted); white-space: nowrap; }
+.web2term-connect__device-status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.web2term-connect__device-status--online { color: #11704e; }
+.web2term-connect__device-status--disabled { color: #825407; }
+.web2term-connect__empty { padding: 32px 0; color: var(--web2term-muted); line-height: 1.75; }
+.web2term-connect__empty p { margin: 12px 0 0; }
+.web2term-connect__feedback--error { color: #b03240; }
+.web2term-connect__button { min-height: 40px; padding: 9px 18px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--bg-elevated); font: inherit; font-weight: 600; cursor: pointer; }
+.web2term-connect__button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
+.web2term-connect__button--primary { background: #3d5bd0; color: #fff; border-color: transparent; }
+.web2term-connect__button--primary:hover:not(:disabled) { background: #304bb8; border-color: transparent; }
+.web2term-connect__button:disabled { opacity: .55; cursor: default; }
+.web2term-connect__feedback { margin: 20px 0 0; line-height: 1.65; overflow-wrap: anywhere; }
+.web2term-connect__retry { padding: 2px 6px; border: 0; background: transparent; color: inherit; text-decoration: underline; text-underline-offset: 3px; font: inherit; cursor: pointer; }
+.workspace[data-theme='dark'] .web2term-connect__device-status--online { color: #67d6a7; }
+.workspace[data-theme='dark'] .web2term-connect__device-status--disabled { color: #e9bd68; }
+.workspace[data-theme='dark'] .web2term-connect__feedback--error { color: #ff8994; }
+.ssh-connect-modal.web2term-device-dialog {
+  --web2term-muted: #53647c;
+  width: min(820px, calc(100vw - 56px));
+  height: auto;
+  min-height: min(300px, calc(100vh - 56px));
+  max-height: min(640px, calc(100vh - 56px));
+}
+.web2term-device-dialog .web2term-device-dialog__head { gap: 16px; }
+.web2term-device-dialog__head > button { flex: none; }
+.web2term-device-dialog__head h2 { margin: 0 auto 0 0; font-size: 24px; }
+.web2term-device-dialog__head h2 span { color: var(--web2term-muted); font-size: 16px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.web2term-device-dialog__body { flex: 1; min-height: 0; padding: 0 28px 24px; overflow-y: auto; scrollbar-color: var(--border) transparent; }
+.web2term-device-dialog__body .web2term-connect__device:last-child { border-bottom: 0; }
+.web2term-device-dialog code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12px; }
+.web2term-device-dialog ::selection { background: var(--accent-soft); color: var(--text); }
+.web2term-device-dialog :is(button, h2):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.web2term-device-dialog .ssh-connect__close:disabled { opacity: .55; cursor: default; }
+.workspace[data-theme='dark'] .web2term-device-dialog { --web2term-muted: var(--text-muted); }
+
+@media (max-width: 780px) {
+  .web2term-connect__device { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .web2term-connect__device-info { grid-column: 1 / -1; }
+  .web2term-connect__device > button { justify-self: end; }
+  .web2term-device-dialog .web2term-device-dialog__head { padding-inline: 20px; gap: 10px; }
+  .web2term-device-dialog__head h2 { font-size: 20px; }
+  .web2term-device-dialog__body { padding-inline: 20px; }
+}

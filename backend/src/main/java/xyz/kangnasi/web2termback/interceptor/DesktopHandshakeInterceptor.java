@@ -12,6 +12,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import xyz.kangnasi.web2termback.feignclient.UserServiceClient;
 import xyz.kangnasi.web2termback.mapper.UserDeviceMapper;
+import xyz.kangnasi.web2termback.websocket.AgentDesktopClientRegistry;
 
 import java.util.Map;
 import java.util.UUID;
@@ -33,13 +34,16 @@ public class DesktopHandshakeInterceptor implements HandshakeInterceptor {
     private final UserServiceClient userServiceClient;
     private final UserDeviceMapper userDeviceMapper;
     private final ObjectMapper objectMapper;
+    private final AgentDesktopClientRegistry agentDesktopClientRegistry;
 
     public DesktopHandshakeInterceptor(UserServiceClient userServiceClient,
                                        UserDeviceMapper userDeviceMapper,
-                                       ObjectMapper objectMapper) {
+                                       ObjectMapper objectMapper,
+                                       AgentDesktopClientRegistry agentDesktopClientRegistry) {
         this.userServiceClient = userServiceClient;
         this.userDeviceMapper = userDeviceMapper;
         this.objectMapper = objectMapper;
+        this.agentDesktopClientRegistry = agentDesktopClientRegistry;
     }
 
     @Override
@@ -89,6 +93,11 @@ public class DesktopHandshakeInterceptor implements HandshakeInterceptor {
         }
         if (!Integer.valueOf(1).equals(agent.enabled())) {
             return reject(response, HttpStatus.FORBIDDEN);
+        }
+
+        // 一个 Agent 同一时间只允许一个 Desktop 建立控制连接；已存在绑定时拒绝本次握手。
+        if (agentDesktopClientRegistry.isBound(agentId)) {
+            return reject(response, HttpStatus.CONFLICT);
         }
 
         // 只保存经过服务端校验后的身份和目标设备，后续消息不得信任客户端自行声明的这些字段。

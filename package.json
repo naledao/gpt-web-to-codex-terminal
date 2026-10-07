@@ -26,19 +26,26 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.2",
     "@git-diff-view/react": "^0.1.7",
+    "@lezer/highlight": "^1.2.5",
     "@svar-ui/react-filemanager": "^2.6.0",
+    "@uiw/react-codemirror": "^4.25.12",
     "@uiw/react-md-editor": "^4.1.2",
     "electron-updater": "^6.8.9",
     "mysql2": "^3.24.5",
     "react-avatar-editor": "^15.1.0",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/ssh2": "^1.15.6",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.4.3",
     "electron-builder": "^26.15.3",

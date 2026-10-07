@@ -1352,6 +1352,18 @@ export class ConversationStore {
       .run(key, value)
   }
 
+  /** Keep a backend address and its encrypted login in the same commit. */
+  setSettings(values: Record<string, string>): void {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const [key, value] of Object.entries(values)) this.setSetting(key, value)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   close(): void {
     this.db.close()
   }

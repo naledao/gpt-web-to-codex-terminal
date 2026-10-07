@@ -53,6 +53,9 @@ import { parseRemoteEnvironment, parseWindowsEnvironment } from './environment'
 import { resolvePowerShell } from './shell'
 import { SshManager } from './ssh'
 import type { RemoteShell } from './remote-shell'
+import { Web2termShell } from './web2term-shell'
+import type { Web2termSessionBinding } from './web2term-shell'
+import type { Web2termConnection } from './web2term-connection'
 import { normalizeTerminalNotesDirectory } from './terminal-notes'
 
 const SETTING_EXECUTION_MODE = 'executionMode'
@@ -125,6 +128,7 @@ export const EMPTY_SSH_STATE: SshState = {
 }
 
 export interface SessionRuntimeOptions {
+  web2term?: { binding: Web2termSessionBinding; connection: Web2termConnection }
   /**
    * Which chat site this session starts on.
    *
@@ -265,6 +269,7 @@ export class SessionRuntime {
   private preferredSendDelaySeconds: number
   private promptInjectionEnabled: boolean
   private remoteShell: RemoteShell | null = null
+  readonly web2term: Web2termShell | null
   private customTitle: string
   private sshCwd: string
   private lastPersistedLocalCwd: string
@@ -304,6 +309,11 @@ export class SessionRuntime {
   >()
 
   constructor(private readonly options: SessionRuntimeOptions) {
+    this.web2term = options.web2term ? new Web2termShell(options.web2term.binding, options.web2term.connection) : null
+    if (this.web2term) {
+      this.environment = { ...FALLBACK_ENVIRONMENT, kind: 'posix', osCaption: 'Linux', shellPath: '/bin/sh', powerShellExe: '', workingDirectory: '', remoteName: this.web2term.binding.deviceName, remoteTarget: this.web2term.binding.agentId }
+      this.environmentScope = { scope: 'ssh', hostId: this.web2term.hostId, label: this.web2term.binding.deviceName || this.web2term.binding.agentId }
+    }
     this.id = options.id ?? randomUUID()
     this.createdAt = options.createdAt ?? Date.now()
     this.customTitle = options.customTitle?.trim() ?? ''
@@ -334,16 +344,17 @@ export class SessionRuntime {
 
     this.runner = new CommandRunner({
       store: options.store,
-      currentConversationId: () => this.embed.getState().conversationId,
+      currentConversationId: () => this.disposed ? null : this.embed.getState().conversationId,
       sendRawToPage: (text) => this.embed.sendRaw(text),
       fileContext: () => this.fileReadContext(),
-      filePlatform: () => fileReadingPlatform(this.activePlatform.id),
+      filePlatform: () => this.web2term ? null : fileReadingPlatform(this.activePlatform.id),
       prepareFiles: (request, signal) => prepareFiles(request, signal, (path, limit, abort) => this.ssh.readFileForModel(path, request.context.hostId, limit, abort), fileReadingPlatform(this.activePlatform.id)?.id),
       sendFilesToPage: (result, token, current, signal) => this.embed.sendFileResult(result, token, current, signal),
-      terminalModeEnabled: () => this.embed.getInterceptorStatus().enabled,
-      remoteShell: () => this.remoteShell,
-      onRemoteLine: (line) => this.ssh.pushModelLine(line),
-      onRemoteOutput: (chunk) => this.ssh.pushModelOutput(chunk),
+      terminalModeEnabled: () => !this.disposed && this.embed.getInterceptorStatus().enabled,
+      remoteShell: () => this.web2term ?? this.remoteShell,
+      terminalTransport: () => this.web2term?.transport,
+      onRemoteLine: (line) => { if (!this.web2term) this.ssh.pushModelLine(line) },
+      onRemoteOutput: (chunk) => { if (!this.web2term) this.ssh.pushModelOutput(chunk) },
       onExecutionChanged: (records) => this.send(IpcChannels.executionChanged, records),
       onTerminalChanged: (state) => {
         this.send(IpcChannels.terminalChanged, state)
@@ -359,12 +370,19 @@ export class SessionRuntime {
       }
     }, options.initialLocalCwd ?? '')
 
+    if (this.web2term) {
+      this.web2term.onOutput = chunk => this.runner.pushRemoteOutput(chunk)
+      this.web2term.onChanged = message => { if (!this.disposed) this.runner.refreshTerminal(message) }
+      this.web2term.onReady = () => { void this.probeEnvironment() }
+    }
+
     this.runner.restoreMode(options.initialMode)
     this.runner.restorePaused(options.initialPaused ?? false)
     this.runner.setSendDelay(options.platform.id === DEEPSEEK_PLATFORM.id ? 4 : this.preferredSendDelaySeconds)
     this.embed.setBaselinePolicy(options.initialMode === 'auto')
 
     this.ssh = new SshManager((state) => {
+      if (this.web2term) return
       this.send(IpcChannels.sshChanged, state)
       if (state.modelCwd !== '') this.sshCwd = state.modelCwd
       this.options.onSummaryChanged()
@@ -391,7 +409,7 @@ export class SessionRuntime {
 
     this.refreshDirectoryNotes()
     const restoredHostId = options.initialSshHostId?.trim() ?? ''
-    if (options.initialSshAttached && restoredHostId !== '') {
+    if (!this.web2term && options.initialSshAttached && restoredHostId !== '') {
       const host = options.store.listSshHosts().find((item) => item.id === restoredHostId)
       if (host) {
         const target = { hostId: host.id, name: host.name, host: host.host, port: host.port }
@@ -607,7 +625,7 @@ export class SessionRuntime {
      * inject the wrong prompt, or (when the fallback is identical to what the page already has)
      * look like nothing was injected at all.
      */
-    entry.embed.setPromptParts(buildTerminalPromptParts(this.environment, toolPromptForPlatform(entry.platform.id)))
+    entry.embed.setPromptParts(buildTerminalPromptParts(this.environment, this.toolPrompt(entry.platform.id)))
     /*
      * Same reasoning as the prompt above, one line down: the theme lives per VIEW, so a view
      * created after the last theme change would otherwise come up wearing the old one — and
@@ -636,7 +654,7 @@ export class SessionRuntime {
     this.embed.attach(parent)
     this.embed.setVisible(false)
     this.options.onSummaryChanged()
-    if (this.ssh.getState().status !== 'connecting') void this.probeEnvironment()
+    if (!this.web2term && this.ssh.getState().status !== 'connecting') void this.probeEnvironment()
   }
 
   setActive(active: boolean): void {
@@ -681,7 +699,7 @@ export class SessionRuntime {
      * the last environment probe or SSH handover, in which case its copy of the prompt is stale
      * and the page would inject a description of the wrong machine.
      */
-    const prompts = buildTerminalPromptParts(this.environment, toolPromptForPlatform(entry.platform.id))
+    const prompts = buildTerminalPromptParts(this.environment, this.toolPrompt(entry.platform.id))
     embed.setPromptParts(prompts)
     this.applyVisibility()
     void embed.armCommandBaseline()
@@ -775,7 +793,7 @@ export class SessionRuntime {
       platformId: active.platform.id,
       paused: automation.paused,
       promptInjectionEnabled: this.promptInjectionEnabled,
-      localCwd: terminal.cwd,
+      localCwd: this.web2term ? '' : terminal.cwd,
       sshHostId: sshState.hostId,
       sshAttached: sshState.attached,
       sshReconnect: sshState.attached && sshState.status !== 'disconnected',
@@ -802,8 +820,8 @@ export class SessionRuntime {
     return {
       id: this.id,
       title: this.customTitle || state.title || '当前会话',
-      kind: usingSsh ? 'ssh' : 'local',
-      target: usingSsh ? sshState.name || sshState.target || 'SSH' : '本机',
+      kind: this.web2term ? 'web2term' : usingSsh ? 'ssh' : 'local',
+      target: this.web2term ? this.web2term.binding.deviceName || this.web2term.binding.agentId : usingSsh ? sshState.name || sshState.target || 'SSH' : '本机',
       conversationId: state.conversationId,
       platformId: this.activeEmbed().platform.id,
       taskRunning: this.taskRunning(),
@@ -873,6 +891,7 @@ export class SessionRuntime {
   }
 
   private fileReadContext(): FileReadContext {
+    if (this.web2term) throw new Error('web2term 当前支持终端命令，read_files 文件传输尚未接入。请使用终端命令读取远端文件。')
     if (!fileReadingPlatform(this.activePlatform.id)) throw new Error('当前平台尚未适配 read_files。')
     const ssh = this.ssh.getState()
     if (ssh.attached) {
@@ -880,6 +899,8 @@ export class SessionRuntime {
     }
     return { scope: 'local', hostId: '', cwd: this.runner.getTerminalState().cwd || homedir() }
   }
+
+  private toolPrompt(platformId: string): string { return this.web2term ? '' : toolPromptForPlatform(platformId) }
 
   private flushDeferredCommands(conversationId: string): void {
     if (this.deferredCommands.size === 0) return
@@ -1031,6 +1052,11 @@ export class SessionRuntime {
 
   /** The live command shell determines the owner, rather than a stale environment probe. */
   private notesTarget(): Omit<TerminalNotes, 'text' | 'legacyText'> {
+    if (this.web2term) {
+      const directory = this.web2term.alive ? this.web2term.cwd : ''
+      return { scope: 'ssh', hostId: this.web2term.hostId, label: this.web2term.binding.deviceName || this.web2term.binding.agentId,
+        directory, directoryKey: normalizeTerminalNotesDirectory('ssh', directory) }
+    }
     const ssh = this.ssh?.getState()
     if (ssh?.attached) {
       const directory = this.remoteShell?.alive ? this.remoteShell.cwd || ssh.modelCwd : ''
@@ -1066,7 +1092,7 @@ export class SessionRuntime {
     this.lastDirectoryNotes = notes
     this.environment = { ...this.environment, workingDirectory: notes.directory, extraNotes: notes.text }
     for (const entry of this.embeds.values()) {
-      entry.embed?.setPromptParts(buildTerminalPromptParts(this.environment, toolPromptForPlatform(entry.platform.id)))
+      entry.embed?.setPromptParts(buildTerminalPromptParts(this.environment, this.toolPrompt(entry.platform.id)))
     }
     this.send(IpcChannels.terminalNotesChanged, notes)
     this.send(IpcChannels.environmentChanged, { ...this.environment })
@@ -1280,6 +1306,8 @@ export class SessionRuntime {
         user: String(draft?.username ?? '').trim(),
         password: this.mysqlPasswordFor(draft),
         database: db,
+        // Keep server date/time text and precision; never interpret it in the machine's timezone.
+        dateStrings: true,
         connectTimeout: 8000
       })
       executedSql = `SELECT * FROM ${quote(db)}.${quote(target)} LIMIT ${limit + 1}`
@@ -1307,7 +1335,6 @@ export class SessionRuntime {
         columns.map((column) => {
           const value = row[column]
           if (value === null || value === undefined) return null
-          if (value instanceof Date) return value.toISOString()
           if (Buffer.isBuffer(value)) return '<' + value.length + ' bytes>'
           if (typeof value === 'object') return JSON.stringify(value)
           return String(value)
@@ -1437,6 +1464,7 @@ export class SessionRuntime {
   }
 
   connectSsh(draft: SshHostDraft, resumeCwd = ''): SshState {
+    if (this.web2term) throw new Error('此会话使用 web2term，请通过 + 另建 SSH 会话。')
     const host = String(draft?.host ?? '').trim()
     const username = String(draft?.username ?? '').trim()
     const name = String(draft?.name ?? '').trim() || host
@@ -1490,6 +1518,7 @@ export class SessionRuntime {
   }
 
   async probeEnvironment(): Promise<EnvironmentInfo> {
+    if (this.web2term && !this.web2term.alive) return { ...this.environment }
     const backend = this.remoteShell
     try {
       const { kind, result } = await this.runner.runEnvironmentProbe()
@@ -1500,15 +1529,15 @@ export class SessionRuntime {
       const sshState = this.ssh.getState()
       const info =
         kind === 'posix'
-          ? parseRemoteEnvironment(result.output, sshState.name ?? '', sshState.target ?? '')
+          ? parseRemoteEnvironment(result.output, this.web2term?.binding.deviceName ?? sshState.name ?? '', this.web2term?.binding.agentId ?? sshState.target ?? '')
           : parseWindowsEnvironment(result.output, resolvePowerShell())
 
       this.environmentScope =
         kind === 'posix'
           ? {
               scope: 'ssh',
-              hostId: sshState.hostId ?? '',
-              label: sshState.name || sshState.target || '远端主机'
+              hostId: this.web2term?.hostId ?? sshState.hostId ?? '',
+              label: this.web2term?.binding.deviceName || sshState.name || sshState.target || '远端主机'
             }
           : { scope: 'local', hostId: '', label: '本机' }
 
@@ -1531,6 +1560,7 @@ export class SessionRuntime {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.web2term?.dispose()
     this.active = false
     this.deferredCommands.clear()
     const window = this.window

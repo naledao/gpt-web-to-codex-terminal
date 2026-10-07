@@ -1,7 +1,7 @@
 import { join, posix } from 'node:path'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, session, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, screen, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_LOGIN_URL,
@@ -10,6 +10,12 @@ import {
   isConversationId
 } from '../shared/types'
 import { readGitDiff, readGitLog } from './git'
+import { normalizeBackendUrl, readBackendUrl } from '../shared/backend-url'
+import { BackendAuthService } from './backend-auth'
+import { Web2termConnection } from './web2term-connection'
+import { disconnectUnusedWeb2term, parseWeb2termBinding } from './web2term-shell'
+import type { Web2termSessionBinding } from './web2term-shell'
+import { EMPTY_WEB2TERM_CONNECTION, EMPTY_WEB2TERM_TERMINALS } from '../shared/types'
 import { CHAT_PLATFORMS, CHATGPT_PLATFORM, DEFAULT_PLATFORM_ID, platformById } from '../shared/platforms'
 import type { ChatPlatform } from '../shared/platforms'
 import type {
@@ -17,6 +23,8 @@ import type {
   AppSettings,
   AppSettingsPatch,
   AppTheme,
+  BackendLoginCodeDraft,
+  BackendLoginDraft,
   AutomationState,
   Conversation,
   ConversationMessage,
@@ -99,6 +107,7 @@ const rendererDevServerUrl = process.env['ELECTRON_RENDERER_URL']
 const isDev = !app.isPackaged
 const SETTING_EXECUTION_MODE = 'executionMode'
 const SETTING_THEME = 'theme'
+const SETTING_BACKEND_URL = 'backendUrl'
 /**
  * The pre-per-platform embed proxy key.
  *
@@ -134,8 +143,10 @@ let managerWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let quitting = false
 let store: ConversationStore | null = null
+let backendAuth: BackendAuthService | null = null
+let web2termConnection: Web2termConnection | null = null
 let localMachineId = ''
-let settings: AppSettings = { theme: 'light', embedProxy: {}, sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 }
+let settings: AppSettings = { theme: 'light', backendUrl: '', embedProxy: {}, sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 }
 const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
 let workspaceOpenSshDialog = false
@@ -657,16 +668,20 @@ function persistManagedSession(runtime: SessionRuntime): void {
   store.upsertManagedSession(runtime.persistentState())
 }
 function createSession(
-  kind: 'local' | 'ssh' = 'local',
+  kind: 'local' | 'ssh' | 'web2term' = 'local',
   activate = true,
   restored?: ReturnType<ConversationStore['listManagedSessions']>[number],
-  platform: ChatPlatform = CHATGPT_PLATFORM
+  platform: ChatPlatform = CHATGPT_PLATFORM,
+  web2termBinding?: Web2termSessionBinding
 ): SessionRuntime | null {
   if (!store) return null
+  const binding = web2termBinding ?? (restored ? parseWeb2termBinding(store.getSetting(`web2termSession:${restored.id}`)) : null)
+  if (binding && !web2termConnection) return null
   const savedMode = store.getSetting(SETTING_EXECUTION_MODE)
   const initialMode: ExecutionMode = savedMode === 'auto' ? 'auto' : 'manual'
   let runtime: SessionRuntime | null = null
   runtime = new SessionRuntime({
+    web2term: binding && web2termConnection ? { binding, connection: web2termConnection } : undefined,
     platform,
     id: restored?.id,
     createdAt: restored?.createdAt,
@@ -701,7 +716,15 @@ function createSession(
     onEmbedReady: () => closeSplashWindow()
   })
   runtimes.set(runtime.id, runtime)
+  if (runtime.web2term && web2termConnection) {
+    const shell = runtime.web2term
+    const connection = web2termConnection
+    shell.onClosed = unconfirmed => disconnectUnusedWeb2term(connection,
+      [...runtimes.values()].flatMap(item => item.web2term ? [item.web2term] : []), shell.binding, unconfirmed)
+  }
+  if (binding) store.setSetting(`web2termSession:${runtime.id}`, JSON.stringify(binding))
   persistManagedSession(runtime)
+  if (web2termBinding) runtime.web2term?.activate()
   // One line per session, naming the site and the URL: when two platforms are embedded at
   // once, "which view is failing" is the first question a log has to be able to answer.
   console.info(
@@ -718,14 +741,17 @@ function destroySession(id: string): boolean {
   if (!runtime) return false
 
   const wasCurrent = currentSessionId === id
-  if (wasCurrent) {
+  if (currentSessionId === id) {
     currentSessionId = null
     workspaceOpenSshDialog = false
   }
 
   runtimes.delete(id)
   store?.removeManagedSession(id)
+  store?.setSetting(`web2termSession:${id}`, '')
   runtime.dispose()
+  if (runtime.web2term && web2termConnection) disconnectUnusedWeb2term(web2termConnection,
+    [...runtimes.values()].flatMap(item => item.web2term ? [item.web2term] : []), runtime.web2term.binding, true)
   broadcastManagedSessions()
   broadcastSshTransfers()
   if (wasCurrent) {
@@ -1188,7 +1214,20 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.terminalReset, (event): TerminalState => {
     const runtime = runtimeForEvent(event)
     if (!runtime) return FALLBACK_TERMINAL_STATE
+    if (runtime.web2term && !runtime.web2term.alive) {
+      runtime.web2term.reconnect()
+      return runtime.runner.getTerminalState()
+    }
     runtime.runner.resetTerminal()
+    runtime.web2term?.reset()
+    return runtime.runner.getTerminalState()
+  })
+  ipcMain.handle(IpcChannels.terminalCloseWeb2term, async (event): Promise<TerminalState> => {
+    if (!isManagerEvent(event) || event.senderFrame !== event.sender.mainFrame) return FALLBACK_TERMINAL_STATE
+    const runtime = runtimeForEvent(event)
+    if (!runtime?.web2term) return runtime?.runner.getTerminalState() ?? FALLBACK_TERMINAL_STATE
+    runtime.web2term.close()
+    await runtime.runner.endTask()
     return runtime.runner.getTerminalState()
   })
   ipcMain.handle(IpcChannels.terminalSetCwd, async (event, path: string): Promise<TerminalState> => runtimeForEvent(event)?.setTerminalCwd(String(path ?? '')) ?? FALLBACK_TERMINAL_STATE)
@@ -1295,9 +1334,11 @@ function registerIpcHandlers(): void {
     return runtime.ssh.getState()
   })
 
-  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => isManagerEvent(event) ? { ...settings } : { theme: 'light', embedProxy: {}, sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 })
+  ipcMain.handle(IpcChannels.settingsGet, (event): AppSettings => isManagerEvent(event) ? { ...settings } : { theme: 'light', backendUrl: '', embedProxy: {}, sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 })
   ipcMain.handle(IpcChannels.settingsUpdate, async (event, patch: AppSettingsPatch): Promise<AppSettings> => {
     if (!isManagerEvent(event) || !store) return { ...settings }
+    // Validate before applying any setting so an invalid URL cannot partly save a patch.
+    const backendUrl = patch?.backendUrl === undefined ? undefined : normalizeBackendUrl(patch.backendUrl)
     if (patch?.theme === 'light' || patch?.theme === 'dark') {
       settings = { ...settings, theme: patch.theme }
       store.setSetting(SETTING_THEME, patch.theme)
@@ -1365,7 +1406,69 @@ function registerIpcHandlers(): void {
       settings = { ...settings, userAvatarScale: value }
       store.setSetting(SETTING_USER_AVATAR_SCALE, String(value))
     }
+    if (backendUrl !== undefined) {
+      if (backendAuth) backendAuth.setBackendUrl(backendUrl)
+      else store.setSetting(SETTING_BACKEND_URL, backendUrl)
+      settings = { ...settings, backendUrl }
+    }
     return { ...settings }
+  })
+
+  // Account data and requests are available only to the desktop's main frame.
+  const canUseBackendAuth = (event: IpcMainInvokeEvent): boolean => isManagerEvent(event) && event.senderFrame === event.sender.mainFrame
+  ipcMain.handle(IpcChannels.backendAuthGet, (event) => {
+    if (!canUseBackendAuth(event) || !backendAuth) return { backendUrl: '', status: 'signed-out', user: null, expiresAt: null }
+    return backendAuth.getState()
+  })
+  ipcMain.handle(IpcChannels.backendLoginCode, (event, draft: BackendLoginCodeDraft) => {
+    if (!canUseBackendAuth(event) || !backendAuth) return { ok: false, message: '当前窗口无法发起后端登录。', logPath: null }
+    return backendAuth.sendCode(draft)
+  })
+  ipcMain.handle(IpcChannels.backendLogin, (event, draft: BackendLoginDraft) => {
+    if (!canUseBackendAuth(event) || !backendAuth) return { ok: false, message: '当前窗口无法发起后端登录。', logPath: null }
+    return backendAuth.login(draft)
+  })
+  ipcMain.handle(IpcChannels.web2termGetState, (event) =>
+    canUseBackendAuth(event) ? web2termConnection?.getState() ?? EMPTY_WEB2TERM_CONNECTION : EMPTY_WEB2TERM_CONNECTION)
+  ipcMain.handle(IpcChannels.web2termListDevices, (event) =>
+    canUseBackendAuth(event) && backendAuth ? backendAuth.listDevices() : { ok: false, message: '当前窗口无法查询设备。', logPath: null })
+  ipcMain.handle(IpcChannels.web2termConnect, (event, draft) =>
+    canUseBackendAuth(event) ? web2termConnection?.connect(draft) ?? EMPTY_WEB2TERM_CONNECTION : EMPTY_WEB2TERM_CONNECTION)
+  ipcMain.handle(IpcChannels.web2termDisconnect, (event) =>
+    canUseBackendAuth(event) ? web2termConnection?.disconnect() ?? EMPTY_WEB2TERM_CONNECTION : EMPTY_WEB2TERM_CONNECTION)
+  ipcMain.handle(IpcChannels.web2termClose, (event) => {
+    if (!canUseBackendAuth(event)) return EMPTY_WEB2TERM_CONNECTION
+    const state = web2termConnection?.close() ?? EMPTY_WEB2TERM_CONNECTION
+    return state
+  })
+  const terminalDenied = { ok: false, message: '当前窗口无法操作设备终端。', sessionId: null }
+  ipcMain.handle(IpcChannels.web2termTerminalsGet, (event) =>
+    canUseBackendAuth(event) ? web2termConnection?.terminals.getState() ?? EMPTY_WEB2TERM_TERMINALS : EMPTY_WEB2TERM_TERMINALS)
+  ipcMain.handle(IpcChannels.web2termTerminalBuffer, (event, sessionId) =>
+    canUseBackendAuth(event) ? web2termConnection?.terminals.getBuffer(sessionId) ?? null : null)
+  ipcMain.handle(IpcChannels.web2termTerminalOpen, (event, size) =>
+    canUseBackendAuth(event) ? web2termConnection?.terminals.open(size) ?? terminalDenied : terminalDenied)
+  ipcMain.handle(IpcChannels.web2termTerminalClose, (event, sessionId) =>
+    canUseBackendAuth(event) ? web2termConnection?.terminals.close(sessionId) ?? terminalDenied : terminalDenied)
+  ipcMain.handle(IpcChannels.web2termTerminalInput, (event, sessionId, data) =>
+    canUseBackendAuth(event) ? web2termConnection?.terminals.input(sessionId, data) ?? terminalDenied : terminalDenied)
+  ipcMain.handle(IpcChannels.web2termTerminalResize, (event, sessionId, size) =>
+    canUseBackendAuth(event) ? web2termConnection?.terminals.resize(sessionId, size) ?? terminalDenied : terminalDenied)
+  ipcMain.handle(IpcChannels.workspaceShowWeb2term, (event): boolean => {
+    if (!canUseBackendAuth(event)) return false
+    const state = web2termConnection?.getState()
+    if (!state?.auth.user || !state.agentId || !['connecting', 'connected'].includes(state.status)) return false
+    const binding: Web2termSessionBinding = { agentId: state.agentId, deviceName: state.deviceName,
+      backendUrl: state.auth.backendUrl, userId: state.auth.user.publicId }
+    const existing = [...runtimes.values()].find(runtime => runtime.web2term
+      && runtime.web2term.binding.agentId === binding.agentId
+      && runtime.web2term.binding.backendUrl === binding.backendUrl
+      && runtime.web2term.binding.userId === binding.userId
+      && !runtime.web2term.alive && !runtime.web2term.running)
+    if (existing) { existing.web2term!.reconnect(); return selectSession(existing.id) }
+    const active = web2termConnection!.terminals.getState().sessions.filter(item => ['opening', 'ready', 'closing'].includes(item.status))
+    if (active.length >= 3) throw new Error('最多同时运行 3 个终端，请先关闭一个会话。')
+    return createSession('web2term', true, undefined, CHATGPT_PLATFORM, binding) !== null
   })
 
   ipcMain.handle(IpcChannels.updateGetState, (): UpdateStatus => getUpdateStatus())
@@ -1413,6 +1516,7 @@ if (!app.requestSingleInstanceLock()) {
 
     settings = {
       theme: conversationStore.getSetting(SETTING_THEME) === 'dark' ? 'dark' : 'light',
+      backendUrl: readBackendUrl(conversationStore.getSetting(SETTING_BACKEND_URL)),
       embedProxy: readEmbedProxies(conversationStore),
       sshProxy: conversationStore.getSetting(SETTING_SSH_PROXY) ?? '',
       updateProxy: conversationStore.getSetting(SETTING_UPDATE_PROXY) ?? '',
@@ -1422,6 +1526,30 @@ if (!app.requestSingleInstanceLock()) {
       userAvatarPositionY: readAvatarPosition(conversationStore.getSetting(SETTING_USER_AVATAR_POSITION_Y)),
       userAvatarScale: readAvatarScale(conversationStore.getSetting(SETTING_USER_AVATAR_SCALE))
     }
+    backendAuth = new BackendAuthService(conversationStore, {
+      encrypt(value) {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('Encryption unavailable')
+        return safeStorage.encryptString(value).toString('base64')
+      },
+      decrypt(value) {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('Encryption unavailable')
+        return safeStorage.decryptString(Buffer.from(value, 'base64'))
+      },
+      onBackendUrlSaved: (backendUrl) => { settings = { ...settings, backendUrl } },
+      onLoginChanged: () => web2termConnection?.credentialsChanged()
+    })
+    web2termConnection = new Web2termConnection(conversationStore, backendAuth, {
+      changed(state) {
+        if (managerWindow && !managerWindow.isDestroyed()) managerWindow.webContents.send(IpcChannels.web2termChanged, state)
+        for (const runtime of runtimes.values()) queueMicrotask(() => runtime.web2term?.sync())
+      },
+      terminalsChanged(state) {
+        if (managerWindow && !managerWindow.isDestroyed()) managerWindow.webContents.send(IpcChannels.web2termTerminalsChanged, state)
+      },
+      terminalOutput(output) {
+        if (managerWindow && !managerWindow.isDestroyed()) managerWindow.webContents.send(IpcChannels.web2termTerminalOutput, output)
+      }
+    })
     /*
      * Before any window or view exists, so the first paint of every embedded page already has
      * the right `prefers-color-scheme` — including the splash, which takes the theme as a
@@ -1477,6 +1605,7 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on('before-quit', () => {
   quitting = true
+  web2termConnection?.dispose()
 })
 
 app.on('will-quit', () => {
@@ -1485,6 +1614,7 @@ app.on('will-quit', () => {
   tray = null
   for (const runtime of runtimes.values()) runtime.dispose()
   runtimes.clear()
+  web2termConnection = null
   store?.close()
   store = null
 })

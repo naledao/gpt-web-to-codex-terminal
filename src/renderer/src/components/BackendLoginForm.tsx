@@ -7,12 +7,13 @@ interface Props {
   backendUrl: string
   open: boolean
   disabled: boolean
+  hideAccountStatus?: boolean
   onCancel(): void
   onBusyChange(busy: boolean): void
   onSignedIn(state: BackendAuthState): void
 }
 
-export default function BackendLoginForm({ backendUrl, open, disabled, onCancel, onBusyChange, onSignedIn }: Props): JSX.Element {
+export default function BackendLoginForm({ backendUrl, open, disabled, hideAccountStatus = false, onCancel, onBusyChange, onSignedIn }: Props): JSX.Element {
   const [auth, setAuth] = useState<BackendAuthState | null>(null)
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
@@ -137,7 +138,7 @@ export default function BackendLoginForm({ backendUrl, open, disabled, onCancel,
 
   return (
     <div className="settings-backend-account">
-      {currentAuth?.user ? (
+      {!hideAccountStatus && currentAuth?.user ? (
         <div className="settings-backend-account__status" role="status">
           <strong>{currentAuth.status === 'signed-in' ? '已登录' : '登录已过期'}：{currentAuth.user.email}</strong>
           {currentAuth.expiresAt ? <span>有效期至 {new Date(currentAuth.expiresAt).toLocaleString('zh-CN', { hour12: false })}</span> : null}

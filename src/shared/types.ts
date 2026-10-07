@@ -55,6 +55,24 @@ export const IpcChannels = {
   interceptorEvent: 'interceptor:event',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
+  backendAuthGet: 'backend-auth:get',
+  backendLoginCode: 'backend-auth:send-code',
+  backendLogin: 'backend-auth:login',
+  web2termGetState: 'web2term:get-state',
+  web2termListDevices: 'web2term:list-devices',
+  web2termConnect: 'web2term:connect',
+  web2termDisconnect: 'web2term:disconnect',
+  web2termClose: 'web2term:close',
+  web2termChanged: 'web2term:changed',
+  web2termTerminalsGet: 'web2term:terminals-get',
+  web2termTerminalBuffer: 'web2term:terminal-buffer',
+  web2termTerminalOpen: 'web2term:terminal-open',
+  web2termTerminalClose: 'web2term:terminal-close',
+  web2termTerminalInput: 'web2term:terminal-input',
+  web2termTerminalResize: 'web2term:terminal-resize',
+  web2termTerminalsChanged: 'web2term:terminals-changed',
+  web2termTerminalOutput: 'web2term:terminal-output',
+  workspaceShowWeb2term: 'workspace:show-web2term',
   environmentGet: 'environment:get',
   environmentChanged: 'environment:changed',
   automationGetState: 'automation:get-state',
@@ -70,6 +88,7 @@ export const IpcChannels = {
   terminalInput: 'terminal:input',
   terminalInterrupt: 'terminal:interrupt',
   terminalReset: 'terminal:reset',
+  terminalCloseWeb2term: 'terminal:close-web2term',
   terminalSetCwd: 'terminal:set-cwd',
   terminalSetSendDelay: 'terminal:set-send-delay',
   dialogSelectDirectory: 'dialog:select-directory',
@@ -160,7 +179,7 @@ export interface WorkspaceState {
 export interface ManagedSessionSummary {
   id: string
   title: string
-  kind: 'local' | 'ssh'
+  kind: 'local' | 'ssh' | 'web2term'
   target: string
   conversationId: string | null
   /**
@@ -320,6 +339,8 @@ export type AppTheme = 'light' | 'dark'
 export interface AppSettings {
   /** Overall appearance of the application chrome. */
   theme: AppTheme
+  /** web2term API base address. Empty string means not configured. */
+  backendUrl: string
   /**
    * HTTP proxy for the EMBEDDED chat views, PER PLATFORM, keyed by `ChatPlatform['id']`.
    *
@@ -365,6 +386,103 @@ export interface AppSettings {
 
 /** Everything the renderer may change; every field is optional. */
 export type AppSettingsPatch = Partial<AppSettings>
+
+export interface BackendUser {
+  publicId: string
+  email: string
+  nickname: string
+  avatarUrl: string | null
+  role: string
+}
+
+/** Public account state. The access token stays in the main process. */
+export interface BackendAuthState {
+  backendUrl: string
+  status: 'signed-out' | 'signed-in' | 'expired'
+  user: BackendUser | null
+  expiresAt: string | null
+}
+
+export interface BackendLoginCodeDraft {
+  backendUrl: string
+  email: string
+}
+
+export interface BackendLoginDraft extends BackendLoginCodeDraft {
+  code: string
+}
+
+export interface Web2termConnectDraft {
+  agentId: string
+  deviceName?: string
+}
+
+/** Fields used by the device picker from GET /api/user/devices. */
+export interface Web2termDevice {
+  deviceId: string
+  deviceName: string
+  enabled: 0 | 1
+  onlineStatus: 0 | 1
+}
+
+/** Authenticated desktop-to-backend transport for a target device. */
+export interface Web2termConnectionState {
+  revision: number
+  status: 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error'
+  auth: BackendAuthState
+  webSocketUrl: string
+  desktopClientId: string
+  agentId: string
+  deviceName: string
+  connectedAt: string | null
+  message: string
+  logPath: string | null
+}
+
+export const EMPTY_WEB2TERM_CONNECTION: Web2termConnectionState = {
+  revision: 0, status: 'idle',
+  auth: { backendUrl: '', status: 'signed-out', user: null, expiresAt: null },
+  webSocketUrl: '', desktopClientId: '', agentId: '', deviceName: '', connectedAt: null, message: '', logPath: null
+}
+
+export interface Web2termTerminalSize { cols: number; rows: number }
+export interface Web2termTerminalSession extends Web2termTerminalSize {
+  id: string
+  title: string
+  status: 'opening' | 'ready' | 'closing' | 'closed' | 'error' | 'disconnected'
+  shell: string
+  message: string
+  errorCode: string
+  exitCode: number | null
+}
+export interface Web2termTerminalsState {
+  revision: number
+  connectionId: string
+  sessions: Web2termTerminalSession[]
+}
+export const EMPTY_WEB2TERM_TERMINALS: Web2termTerminalsState = { revision: 0, connectionId: '', sessions: [] }
+/** Base64 preserves raw terminal bytes and UTF-8 sequences spanning output messages. */
+export interface Web2termTerminalOutput {
+  connectionId: string
+  sessionId: string
+  sequence: number
+  data: string
+}
+export interface Web2termTerminalBuffer {
+  connectionId: string
+  sessionId: string
+  chunks: Web2termTerminalOutput[]
+  truncated: boolean
+}
+export interface Web2termTerminalResult {
+  ok: boolean
+  message: string
+  sessionId: string | null
+}
+
+export type BackendAuthResult<T> =
+  | { ok: true; value: T; logPath: string | null }
+  | { ok: false; message: string; logPath: string | null; retryAfterSeconds?: number }
 
 /**
  * Where the embedded page should sit, in CSS pixels relative to the top-left of
@@ -1264,16 +1382,22 @@ export interface TerminalLine {
 }
 
 /**
- * Snapshot of the local shell session, pushed to the renderer.
- *
- * There is exactly ONE local terminal for the whole app — not one per
- * conversation. It is a window onto a machine, and the machine does not change
- * when you click a different chat: per-conversation shells made sending the first
- * message of a new chat clear the screen and move the model to the home
- * directory, while the prompt still claimed the directory the user had chosen.
- * That is why this carries no conversation id: it does not belong to one.
+ * Snapshot of the current managed workspace's command terminal.
+ * Local and web2term transports share this transcript/input UI. The persistent
+ * shell belongs to the workspace rather than to an individual chat conversation.
  */
 export interface TerminalState {
+  /** Present only when this managed session uses the web2term relay. */
+  transport?: {
+    kind: 'web2term'
+    deviceId: string
+    deviceName: string
+    status: 'connecting' | 'ready' | 'closing' | 'disconnected' | 'error'
+    /** Closing can be retried if the tool has not acknowledged it. */
+    canClose: boolean
+    message: string
+    logPath: string | null
+  }
   /** True while the shell can accept commands. */
   alive: boolean
   /** Current working directory reported by the shell, when known. */
@@ -1669,6 +1793,8 @@ export interface AppApi {
   showModelMenu(currentId: string, anchor?: { x: number; y: number }): Promise<string | null>
   onManagedSessionsChanged(listener: (items: ManagedSessionSummary[]) => void): () => void
   getWorkspaceState(): Promise<WorkspaceState>
+  /** Create/activate a normal managed workspace bound to the selected device. */
+  showWeb2termConnection(): Promise<boolean>
   showWorkspaceManager(): Promise<boolean>
   setWorkspaceSshDialogOpen(open: boolean): void
   onWorkspaceChanged(listener: (state: WorkspaceState) => void): () => void
@@ -1758,9 +1884,26 @@ export interface AppApi {
   endTask(): Promise<InterceptorStatus>
   onInterceptorEvent(listener: (status: InterceptorStatus) => void): () => void
 
-  /** Persisted app settings (currently just the embed proxy). */
+  /** Persisted app settings, including the web2term backend address. */
   getSettings(): Promise<AppSettings>
   updateSettings(patch: AppSettingsPatch): Promise<AppSettings>
+  getBackendAuthState(): Promise<BackendAuthState>
+  sendBackendLoginCode(draft: BackendLoginCodeDraft): Promise<BackendAuthResult<{ resendAfterSeconds: number }>>
+  loginBackend(draft: BackendLoginDraft): Promise<BackendAuthResult<BackendAuthState>>
+  getWeb2termConnection(): Promise<Web2termConnectionState>
+  listWeb2termDevices(): Promise<BackendAuthResult<Web2termDevice[]>>
+  connectWeb2term(draft: Web2termConnectDraft): Promise<Web2termConnectionState>
+  disconnectWeb2term(): Promise<Web2termConnectionState>
+  closeWeb2termConnection(): Promise<Web2termConnectionState>
+  onWeb2termConnectionChanged(listener: (state: Web2termConnectionState) => void): () => void
+  getWeb2termTerminals(): Promise<Web2termTerminalsState>
+  getWeb2termTerminalBuffer(sessionId: string): Promise<Web2termTerminalBuffer | null>
+  openWeb2termTerminal(size: Web2termTerminalSize): Promise<Web2termTerminalResult>
+  closeWeb2termTerminal(sessionId: string): Promise<Web2termTerminalResult>
+  sendWeb2termTerminalInput(sessionId: string, data: Uint8Array): Promise<Web2termTerminalResult>
+  resizeWeb2termTerminal(sessionId: string, size: Web2termTerminalSize): Promise<Web2termTerminalResult>
+  onWeb2termTerminalsChanged(listener: (state: Web2termTerminalsState) => void): () => void
+  onWeb2termTerminalOutput(listener: (output: Web2termTerminalOutput) => void): () => void
 
   /** What the startup probe found out about this machine. */
   getEnvironment(): Promise<EnvironmentInfo>
@@ -1794,6 +1937,8 @@ export interface AppApi {
   interruptTerminal(): Promise<TerminalState>
   /** Kill the shell and start a fresh one. */
   resetTerminal(): Promise<TerminalState>
+  /** Close the current workspace's web2term PTY, retaining its transcript and binding. */
+  closeCurrentWeb2termTerminal(): Promise<TerminalState>
   /**
    * Move the terminal to another directory.
    *

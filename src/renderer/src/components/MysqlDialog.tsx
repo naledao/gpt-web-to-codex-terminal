@@ -1,7 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import { Tooltip } from '@base-ui/react/tooltip'
 import MysqlIcon from './MysqlIcon'
 import ConfirmDialog from './ConfirmDialog'
+import './MysqlTableView.css'
 import type {
   AppTheme,
   MysqlConnection,
@@ -412,7 +414,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       try {
         result = await window.api.queryMysqlTable(draft, database, table)
       } catch {
-        result = { ok: false, columns: [], rows: [], truncated: false, message: '读取失败，请重试。' }
+        result = { ok: false, sql: '', columns: [], columnComments: [], columnCommentsMessage: '', rows: [], truncated: false, message: '读取失败，请重试。' }
       }
       setTabs((current) =>
         current.map((tab) =>
@@ -814,10 +816,16 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
               </div>
             ) : activeTab.kind === 'table' ? (
               <div className="mysql-page__table">
-                <div className="mysql-page__card-head">
+                <div className="mysql-page__card-head mysql-page__table-head">
                   <span className="mysql-page__card-title">{activeTab.table}</span>
                   <span className="mysql-page__card-note">{activeTab.database}</span>
-                  <span className="panel__spacer" />
+                  <div className="mysql-page__query">
+                    {activeTab.data?.sql ? (
+                      <Suspense fallback={<span className="mysql-page__hint" role="status">正在加载 SQL…</span>}>
+                        <SqlViewer compact value={activeTab.data.sql} theme={theme} label="实际执行的 SQL" />
+                      </Suspense>
+                    ) : null}
+                  </div>
                   <button
                     type="button"
                     className="mysql-page__btn"
@@ -859,35 +867,57 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   <p className="mysql-page__hint">正在读取表数据…</p>
                 ) : activeTab.error ? (
                   <p className="mysql-page__hint mysql-page__hint--error" role="alert">{activeTab.error}</p>
-                ) : activeTab.data === null || activeTab.data.rows.length === 0 ? (
+                ) : activeTab.data === null || activeTab.data.columns.length === 0 ? (
                   <p className="mysql-page__hint">这张表没有数据。</p>
                 ) : (
                   <>
-                    <div className="mysql-page__table-scroll">
-                      <table className="mysql-page__grid-table">
-                        <thead>
-                          <tr>
-                            {activeTab.data.columns.map((column) => (
-                              <th key={column}>{column}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {activeTab.data.rows.map((row, rowIndex) => (
-                            <tr key={rowIndex}>
-                              {row.map((cell, cellIndex) => (
-                                <td key={cellIndex}>
-                                  {cell === null ? <span className="mysql-page__null">NULL</span> : cell}
-                                </td>
+                    <Tooltip.Provider delay={200}>
+                      <div className="mysql-page__table-scroll">
+                        <table className="mysql-page__grid-table">
+                          <thead>
+                            <tr>
+                              {activeTab.data.columns.map((column, columnIndex) => (
+                                <th key={column} scope="col">
+                                  <Tooltip.Root>
+                                    <Tooltip.Trigger render={<span tabIndex={0} className="mysql-page__column-trigger" />}>
+                                      {column}
+                                    </Tooltip.Trigger>
+                                    <Tooltip.Portal>
+                                      <Tooltip.Positioner side="bottom" align="start" sideOffset={8} className="mysql-page__column-positioner">
+                                        <Tooltip.Popup className="mysql-page__column-tooltip" data-theme={theme}>
+                                          <strong>{column}</strong>
+                                          <p>{activeTab.data?.columnCommentsMessage || activeTab.data?.columnComments[columnIndex] || '暂无字段注释'}</p>
+                                        </Tooltip.Popup>
+                                      </Tooltip.Positioner>
+                                    </Tooltip.Portal>
+                                  </Tooltip.Root>
+                                </th>
                               ))}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody>
+                            {activeTab.data.rows.length === 0 ? (
+                              <tr><td colSpan={activeTab.data.columns.length} className="mysql-page__empty-cell">这张表没有数据。</td></tr>
+                            ) : null}
+                            {activeTab.data.rows.map((row, rowIndex) => (
+                              <tr key={rowIndex}>
+                                {row.map((cell, cellIndex) => (
+                                  <td key={cellIndex}>
+                                    {cell === null ? <span className="mysql-page__null">NULL</span> : cell}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Tooltip.Provider>
                     <p className="mysql-page__hint mysql-page__table-note">
                       共 {activeTab.data.rows.length} 行{activeTab.data.truncated ? '（只显示前 200 行）' : ''}
                     </p>
+                    {activeTab.data.columnCommentsMessage ? (
+                      <p className="mysql-page__hint" role="status">{activeTab.data.columnCommentsMessage}</p>
+                    ) : null}
                   </>
                 )}
               </div>

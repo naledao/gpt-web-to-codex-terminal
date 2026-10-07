@@ -10,6 +10,7 @@ import GitDialog from './components/GitDialog'
 import SshDirectoryPicker from './components/SshDirectoryPicker'
 import MysqlDialog from './components/MysqlDialog'
 import NacosDialog from './components/NacosDialog'
+import BackendLoginForm from './components/BackendLoginForm'
 import MysqlIcon from './components/MysqlIcon'
 import NacosIcon from './components/NacosIcon'
 import ConversationTranscript from './components/ConversationTranscript'
@@ -33,6 +34,7 @@ import type {
   ExecutionRecord,
   ExecutionStatus,
   InterceptorStatus,
+  ManagedSessionSummary,
   SessionImportResult,
   SshHost,
   SshHostDraft,
@@ -270,6 +272,7 @@ function conversationMessagesEqual(left: ConversationMessage[], right: Conversat
 
 interface AppProps {
   sessionId: string
+  sessionKind?: ManagedSessionSummary['kind']
   initialSshDialogOpen?: boolean
   /** Which chat platform this session is showing, from the main process's session list. */
   platformId?: string
@@ -351,7 +354,7 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
     </>
   )
 }
-export default function App({ sessionId, initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
+export default function App({ sessionId, sessionKind, initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   /*
    * The site this session is actually showing.
@@ -396,6 +399,9 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   const [backendUrlDraft, setBackendUrlDraft] = useState('')
   const [backendUrlError, setBackendUrlError] = useState('')
   const backendUrlInputRef = useRef<HTMLInputElement>(null)
+  const backendLoginTriggerRef = useRef<HTMLButtonElement>(null)
+  const [backendLoginOpen, setBackendLoginOpen] = useState(false)
+  const [backendLoginBusy, setBackendLoginBusy] = useState(false)
   const [userAvatarDraft, setUserAvatarDraft] = useState('')
   const [userAvatarSourceDraft, setUserAvatarSourceDraft] = useState('')
   const [userAvatarPositionXDraft, setUserAvatarPositionXDraft] = useState(50)
@@ -515,6 +521,8 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
 
   /** While an SSH transcript is on screen it replaces the local terminal. */
   const sshActive = ssh !== null && ssh.attached
+  const web2termActive = sessionKind === 'web2term' || terminal?.transport?.kind === 'web2term'
+  const remoteTerminal = sshActive || web2termActive
   /**
    * True while a host is actually in charge — as opposed to the pane merely still
    * showing a transcript after a disconnect or a failure. Deciding this in one
@@ -1439,6 +1447,10 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
     }
   }, [])
 
+  const closeWeb2termTerminal = useCallback(async (): Promise<void> => {
+    setTerminal(await window.api.closeCurrentWeb2termTerminal())
+  }, [])
+
   /**
    * Move the terminal somewhere else.
    *
@@ -1490,6 +1502,7 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
     setSettingsLoadFailed(false)
     setSettingsError('')
     setBackendUrlError('')
+    setBackendLoginOpen(false)
     window.api
       .getSettings()
       .then((value) => {
@@ -1671,11 +1684,11 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   useEffect(() => {
     if (!settingsOpen) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setSettingsOpen(false)
+      if (event.key === 'Escape' && !savingSettings && !backendLoginBusy) setSettingsOpen(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [settingsOpen])
+  }, [settingsOpen, savingSettings, backendLoginBusy])
 
   const clearPromptHighlights = useCallback((): void => {
     const registry = (CSS as unknown as { highlights?: { delete(name: string): boolean } }).highlights
@@ -1793,7 +1806,7 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   }, [sshPickerOpen, notesOpen, sshFilesOpen])
 
   const saveSettings = useCallback(async (): Promise<void> => {
-    if (savingSettings || settingsLoading || settingsLoadFailed || settings === null) return
+    if (savingSettings || backendLoginBusy || settingsLoading || settingsLoadFailed || settings === null) return
     let backendUrl: string
     try {
       backendUrl = normalizeBackendUrl(backendUrlDraft)
@@ -1843,7 +1856,7 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
     } finally {
       setSavingSettings(false)
     }
-  }, [onThemeChange, backendUrlDraft, savingSettings, settings, settingsLoading, settingsLoadFailed, proxyDrafts, sshProxyDraft, themeDraft, updateProxyDraft, userAvatarDraft, userAvatarSourceDraft, userAvatarPositionXDraft, userAvatarPositionYDraft, userAvatarScaleDraft])
+  }, [onThemeChange, backendUrlDraft, savingSettings, backendLoginBusy, settings, settingsLoading, settingsLoadFailed, proxyDrafts, sshProxyDraft, themeDraft, updateProxyDraft, userAvatarDraft, userAvatarSourceDraft, userAvatarPositionXDraft, userAvatarPositionYDraft, userAvatarScaleDraft])
 
   /** Drag the terminal's right edge to resize the column. */
   const startResize = useCallback(
@@ -2351,7 +2364,7 @@ ${conversation.url}`}
       </aside>
 
       <section ref={toolboxPaneRef} className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
-        <div className="terminal-pane__head">
+        <div className={web2termActive && !terminalCollapsed ? 'terminal-pane__head terminal-pane__head--web2term' : 'terminal-pane__head'}>
           <span className="panel__title">终端</span>
           <span
             className={
@@ -2363,8 +2376,13 @@ ${conversation.url}`}
                     : 'terminal__dot terminal__dot--wait'
                 : terminal?.alive
                   ? 'terminal__dot'
-                  : 'terminal__dot terminal__dot--wait'
+                  : terminal?.transport?.status === 'error'
+                    ? 'terminal__dot terminal__dot--error'
+                    : terminal?.transport?.status === 'disconnected'
+                      ? 'terminal__dot terminal__dot--disconnected'
+                      : 'terminal__dot terminal__dot--wait'
             }
+            title={terminal?.transport?.message}
           />
           <span className="panel__spacer" />
           {terminalCollapsed ? null : (
@@ -2399,7 +2417,20 @@ ${conversation.url}`}
               中断
             </button>
           )}
-          {terminalCollapsed ? null : sshActive ? (
+          {terminalCollapsed ? null : web2termActive ? (
+            <>
+              <button type="button" className="panel__sync"
+                disabled={terminal?.transport?.status === 'connecting' || terminal?.transport?.status === 'closing'}
+                title="重新创建此设备的终端 Shell" onClick={() => void resetTerminal()}>
+                {terminal?.alive ? '重置' : '重新连接'}
+              </button>
+              <button type="button" className="panel__sync"
+                disabled={!terminal?.transport?.canClose || terminal.transport.status === 'closing'}
+                title="关闭当前设备终端；最后一个终端关闭后断开连接" onClick={() => void closeWeb2termTerminal()}>
+                {terminal?.transport?.status === 'closing' ? '关闭中…' : '关闭'}
+              </button>
+            </>
+          ) : sshActive ? (
             <>
               <button
                 type="button"
@@ -2441,7 +2472,7 @@ ${conversation.url}`}
               <Menu.Portal container={toolboxPaneRef}>
                 <Menu.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={8} collisionBoundary={toolboxPaneRef.current ?? undefined} className="toolbox-menu__positioner">
                   <Menu.Popup className="toolbox-menu">
-                    <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setGitDialogOpen(true) }}>
+                    <Menu.Item className="toolbox-menu__item" disabled={web2termActive} title={web2termActive ? 'web2term 尚未接入 Git 文件操作，可在终端运行 git 命令' : undefined} onClick={() => { setSshPickerOpen(false); setGitDialogOpen(true) }}>
                       <span className="toolbox-menu__icon">
                         <svg width="15" height="15" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
                           <rect x="18" y="18" width="84" height="84" rx="8" fill="#F05032" transform="rotate(45 60 60)" />
@@ -2550,7 +2581,9 @@ ${conversation.url}`}
           </div>
         ) : (
           <div className="terminal-pane__meta">
-            <span className="terminal-pane__id">本机</span>
+            <span className="terminal-pane__id" title={web2termActive ? [terminal?.transport?.deviceId, terminal?.transport?.message, terminal?.transport?.logPath && `日志：${terminal.transport.logPath}`].filter(Boolean).join('\n') : undefined}>
+              {web2termActive ? `web2term · ${terminal?.transport?.deviceName || '设备'}` : '本机'}
+            </span>
             {cwdDraft !== null ? (
               <form className="terminal-pane__cwd-form" onSubmit={submitCwd}>
                 <input
@@ -2570,6 +2603,7 @@ ${conversation.url}`}
               <button
                 type="button"
                 className="terminal-pane__cwd"
+                disabled={web2termActive && !terminal?.alive}
                 title={terminal?.cwd ? `${terminal.cwd}
 点击修改目录` : '设置终端目录'}
                 onClick={() => setCwdDraft(terminal?.cwd ?? '')}
@@ -2577,14 +2611,14 @@ ${conversation.url}`}
                 {terminal?.cwd || '设置目录…'}
               </button>
             )}
-            <button
+            {web2termActive ? null : <button
               type="button"
               className="terminal-pane__browse"
               title="浏览并选择目录"
               onClick={() => void pickDirectory()}
             >
               浏览
-            </button>
+            </button>}
             <button
               type="button"
               className={notesSet || notesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
@@ -2611,7 +2645,7 @@ ${conversation.url}`}
                 <div className="notes-modal__heading">
                   <span className="notes-modal__title">发送给 AI 的补充说明</span>
                   <span className="notes-modal__scope" title={notes?.label}>
-                    {notes?.scope === 'ssh' ? `SSH · ${notes.label}` : '本机'}
+                    {web2termActive ? `web2term · ${notes?.label || '设备'}` : notes?.scope === 'ssh' ? `SSH · ${notes.label}` : '本机'}
                   </span>
                 </div>
                 <span className="panel__spacer" />
@@ -2935,7 +2969,7 @@ ${record.command}`
             <div className="terminal-pane__output" ref={terminalOutputRef}>
               {visibleTerminalLines.length === 0 ? (
                 <p className="terminal-pane__empty">
-                  {sshActive ? ssh?.message || '正在连接…' : '还没有输出。在下面直接输入命令，或让模型在这里执行。'}
+                  {sshActive ? ssh?.message || '正在连接…' : web2termActive ? terminal?.transport?.message || '正在连接设备…' : '还没有输出。在下面直接输入命令，或让模型在这里执行。'}
                 </p>
               ) : (
                 terminalBlocks.map((block, blockIndex) => (
@@ -2945,7 +2979,7 @@ ${record.command}`
                   >
                     {block.command ? (
                       <pre className="line line--command">
-                        {formatTerminalCommand(block.command.text, sshActive)}
+                        {formatTerminalCommand(block.command.text, remoteTerminal)}
                       </pre>
                     ) : null}
                     {block.lines.length > 0 ? (
@@ -2962,9 +2996,9 @@ ${record.command}`
               )}
             </div>
 
-            <form className={sshActive ? 'terminal-pane__input terminal-pane__input--ssh' : 'terminal-pane__input'} onSubmit={submitCommand}>
-              <span className={sshActive ? 'terminal-pane__prompt terminal-pane__prompt--ssh' : 'terminal-pane__prompt'} aria-hidden="true">
-                {sshActive ? '$' : <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>}
+            <form className={remoteTerminal ? 'terminal-pane__input terminal-pane__input--ssh' : 'terminal-pane__input'} onSubmit={submitCommand}>
+              <span className={remoteTerminal ? 'terminal-pane__prompt terminal-pane__prompt--ssh' : 'terminal-pane__prompt'} aria-hidden="true">
+                {remoteTerminal ? '$' : <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>}
               </span>
               <textarea
                 className="address__input terminal-pane__command-input"
@@ -2972,14 +3006,16 @@ ${record.command}`
                 rows={Math.min(8, commandDraft.split('\n').length)}
                 spellCheck={false}
                 placeholder={
-                  sshActive
+                  web2termActive && !terminal?.alive
+                    ? terminal?.transport?.message || '正在连接设备…'
+                    : sshActive
                     ? ssh?.status === 'connected'
                       ? '输入或粘贴命令，回车发送，Shift+回车换行'
                       : '尚未连接'
                     : '输入或粘贴命令，回车执行，Shift+回车换行'
                 }
-                aria-label={sshActive ? 'SSH 命令' : '终端命令'}
-                disabled={sshActive ? ssh?.status !== 'connected' : false}
+                aria-label={web2termActive ? 'web2term 命令' : sshActive ? 'SSH 命令' : '终端命令'}
+                disabled={web2termActive ? !terminal?.alive : sshActive ? ssh?.status !== 'connected' : false}
                 onChange={(event) => setCommandDraft(event.target.value)}
                 onPaste={(event) => {
                   const editor = event.currentTarget
@@ -3233,7 +3269,7 @@ ${record.command}`
           aria-modal="true"
           aria-label="设置"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setSettingsOpen(false)
+            if (event.target === event.currentTarget && !savingSettings && !backendLoginBusy) setSettingsOpen(false)
           }}
         >
           <div className="modal__box settings-modal">
@@ -3243,7 +3279,7 @@ ${record.command}`
                 <div className="settings-modal__subtitle">外观、后端服务、代理和应用设置</div>
               </div>
               <span className="panel__spacer" />
-              <button type="button" className="settings-modal__close" aria-label="关闭" onClick={() => setSettingsOpen(false)}>×</button>
+              <button type="button" className="settings-modal__close" aria-label="关闭" disabled={savingSettings || backendLoginBusy} onClick={() => setSettingsOpen(false)}>×</button>
             </div>
 
             <div className="settings-modal__layout">
@@ -3404,18 +3440,56 @@ ${record.command}`
                       spellCheck={false}
                       placeholder="http://192.168.108.33:8080"
                       value={backendUrlDraft}
-                      disabled={settingsLoading || savingSettings || settingsLoadFailed}
+                      disabled={settingsLoading || savingSettings || backendLoginBusy || settingsLoadFailed}
                       aria-invalid={Boolean(backendUrlError)}
                       aria-describedby={backendUrlError ? 'web2term-backend-error' : undefined}
-                      onChange={(event) => { setBackendUrlDraft(event.target.value); setBackendUrlError('') }}
+                      onChange={(event) => { setBackendUrlDraft(event.target.value); setBackendUrlError(''); setBackendLoginOpen(false) }}
                     />
                     {backendUrlError ? <p id="web2term-backend-error" className="settings-feedback" role="alert">{backendUrlError}</p> : null}
-                    <button
-                      type="button"
-                      className="settings-outline-btn settings-backend-clear"
-                      disabled={settingsLoading || savingSettings || settingsLoadFailed || !backendUrlDraft}
-                      onClick={() => { setBackendUrlDraft(''); setBackendUrlError(''); backendUrlInputRef.current?.focus() }}
-                    >清空地址</button>
+                    <div className="settings-backend-actions">
+                      <button
+                        type="button"
+                        className="settings-outline-btn"
+                        disabled={settingsLoading || savingSettings || backendLoginBusy || settingsLoadFailed || !backendUrlDraft}
+                        onClick={() => { setBackendUrlDraft(''); setBackendUrlError(''); setBackendLoginOpen(false); backendUrlInputRef.current?.focus() }}
+                      >清空地址</button>
+                      <button
+                        type="button"
+                        className="settings-outline-btn"
+                        disabled={settingsLoading || savingSettings || backendLoginBusy || settingsLoadFailed}
+                        aria-expanded={backendLoginOpen}
+                        aria-controls={backendLoginOpen ? 'web2term-backend-login' : undefined}
+                        ref={backendLoginTriggerRef}
+                        onClick={() => {
+                          try {
+                            const value = normalizeBackendUrl(backendUrlDraft)
+                            if (!value) throw new Error('请先填写后端地址。')
+                            setBackendUrlDraft(value)
+                            setBackendUrlError('')
+                            setBackendLoginOpen((previous) => !previous)
+                          } catch (error) {
+                            setBackendUrlError(error instanceof Error ? error.message : '后端地址无效。')
+                            backendUrlInputRef.current?.focus()
+                          }
+                        }}
+                      >登录</button>
+                    </div>
+                    <BackendLoginForm
+                      backendUrl={backendUrlDraft}
+                      open={backendLoginOpen}
+                      disabled={settingsLoading || savingSettings || settingsLoadFailed}
+                      onCancel={() => {
+                        setBackendLoginOpen(false)
+                        requestAnimationFrame(() => backendLoginTriggerRef.current?.focus())
+                      }}
+                      onBusyChange={setBackendLoginBusy}
+                      onSignedIn={(state) => {
+                        setBackendUrlDraft(state.backendUrl)
+                        setSettings((previous) => previous ? { ...previous, backendUrl: state.backendUrl } : previous)
+                        setBackendLoginOpen(false)
+                        requestAnimationFrame(() => backendLoginTriggerRef.current?.focus())
+                      }}
+                    />
                   </div>
                 </section>
                 <section
@@ -3587,8 +3661,8 @@ ${record.command}`
             <div className="modal__foot settings-modal__foot">
               {settingsError ? <p className="settings-feedback settings-feedback--save" role="alert">{settingsError}</p> : null}
               <span className="panel__spacer" />
-              <button type="button" className="settings-cancel-btn" disabled={savingSettings} onClick={() => { setBackendUrlDraft(settings?.backendUrl ?? ''); setBackendUrlError(''); setProxyDrafts(settings?.embedProxy ?? {}); setSshProxyDraft(settings?.sshProxy ?? ''); setUpdateProxyDraft(settings?.updateProxy ?? ''); setThemeDraft(settings?.theme ?? 'light'); setSettingsOpen(false) }}>取消</button>
-              <button type="button" className="settings-save-btn" disabled={savingSettings || settingsLoading || settingsLoadFailed || settings === null} onClick={() => void saveSettings()}>{savingSettings ? '保存中…' : settingsLoading ? '读取设置中…' : settingsSection === 'backend' ? '保存' : '保存并重新加载'}</button>
+              <button type="button" className="settings-cancel-btn" disabled={savingSettings || backendLoginBusy} onClick={() => { setBackendUrlDraft(settings?.backendUrl ?? ''); setBackendUrlError(''); setProxyDrafts(settings?.embedProxy ?? {}); setSshProxyDraft(settings?.sshProxy ?? ''); setUpdateProxyDraft(settings?.updateProxy ?? ''); setThemeDraft(settings?.theme ?? 'light'); setSettingsOpen(false) }}>取消</button>
+              <button type="button" className="settings-save-btn" disabled={savingSettings || backendLoginBusy || settingsLoading || settingsLoadFailed || settings === null} onClick={() => void saveSettings()}>{savingSettings ? '保存中…' : settingsLoading ? '读取设置中…' : settingsSection === 'backend' ? '保存' : '保存并重新加载'}</button>
             </div>
           </div>
         </div>

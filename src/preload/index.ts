@@ -6,6 +6,18 @@ import type {
   AppInfo,
   AppSettings,
   AppSettingsPatch,
+  BackendAuthResult,
+  BackendAuthState,
+  BackendLoginCodeDraft,
+  BackendLoginDraft,
+  Web2termConnectionState,
+  Web2termConnectDraft,
+  Web2termDevice,
+  Web2termTerminalsState,
+  Web2termTerminalBuffer,
+  Web2termTerminalSize,
+  Web2termTerminalResult,
+  Web2termTerminalOutput,
   AutomationState,
   Conversation,
   ConversationMessage,
@@ -86,6 +98,7 @@ const api: AppApi = {
   },
 
   getWorkspaceState: (): Promise<WorkspaceState> => ipcRenderer.invoke(IpcChannels.workspaceGetState),
+  showWeb2termConnection: (): Promise<boolean> => ipcRenderer.invoke(IpcChannels.workspaceShowWeb2term),
 
   showWorkspaceManager: (): Promise<boolean> => ipcRenderer.invoke(IpcChannels.workspaceShowManager),
 
@@ -205,6 +218,38 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   updateSettings: (patch: AppSettingsPatch): Promise<AppSettings> =>
     ipcRenderer.invoke(IpcChannels.settingsUpdate, patch),
 
+  getBackendAuthState: (): Promise<BackendAuthState> => ipcRenderer.invoke(IpcChannels.backendAuthGet),
+  sendBackendLoginCode: (draft: BackendLoginCodeDraft): Promise<BackendAuthResult<{ resendAfterSeconds: number }>> =>
+    ipcRenderer.invoke(IpcChannels.backendLoginCode, draft),
+  loginBackend: (draft: BackendLoginDraft): Promise<BackendAuthResult<BackendAuthState>> =>
+    ipcRenderer.invoke(IpcChannels.backendLogin, draft),
+  getWeb2termConnection: (): Promise<Web2termConnectionState> => ipcRenderer.invoke(IpcChannels.web2termGetState),
+  listWeb2termDevices: (): Promise<BackendAuthResult<Web2termDevice[]>> => ipcRenderer.invoke(IpcChannels.web2termListDevices),
+  connectWeb2term: (draft: Web2termConnectDraft): Promise<Web2termConnectionState> => ipcRenderer.invoke(IpcChannels.web2termConnect, draft),
+  disconnectWeb2term: (): Promise<Web2termConnectionState> => ipcRenderer.invoke(IpcChannels.web2termDisconnect),
+  closeWeb2termConnection: (): Promise<Web2termConnectionState> => ipcRenderer.invoke(IpcChannels.web2termClose),
+  onWeb2termConnectionChanged: (listener: (state: Web2termConnectionState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: Web2termConnectionState): void => listener(state)
+    ipcRenderer.on(IpcChannels.web2termChanged, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.web2termChanged, handler)
+  },
+  getWeb2termTerminals: (): Promise<Web2termTerminalsState> => ipcRenderer.invoke(IpcChannels.web2termTerminalsGet),
+  getWeb2termTerminalBuffer: (id: string): Promise<Web2termTerminalBuffer | null> => ipcRenderer.invoke(IpcChannels.web2termTerminalBuffer, id),
+  openWeb2termTerminal: (size: Web2termTerminalSize): Promise<Web2termTerminalResult> => ipcRenderer.invoke(IpcChannels.web2termTerminalOpen, size),
+  closeWeb2termTerminal: (id: string): Promise<Web2termTerminalResult> => ipcRenderer.invoke(IpcChannels.web2termTerminalClose, id),
+  sendWeb2termTerminalInput: (id: string, data: Uint8Array): Promise<Web2termTerminalResult> => ipcRenderer.invoke(IpcChannels.web2termTerminalInput, id, data),
+  resizeWeb2termTerminal: (id: string, size: Web2termTerminalSize): Promise<Web2termTerminalResult> => ipcRenderer.invoke(IpcChannels.web2termTerminalResize, id, size),
+  onWeb2termTerminalsChanged: (listener: (state: Web2termTerminalsState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: Web2termTerminalsState): void => listener(state)
+    ipcRenderer.on(IpcChannels.web2termTerminalsChanged, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.web2termTerminalsChanged, handler)
+  },
+  onWeb2termTerminalOutput: (listener: (output: Web2termTerminalOutput) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, output: Web2termTerminalOutput): void => listener(output)
+    ipcRenderer.on(IpcChannels.web2termTerminalOutput, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.web2termTerminalOutput, handler)
+  },
+
   getEnvironment: (): Promise<EnvironmentInfo> => ipcRenderer.invoke(IpcChannels.environmentGet),
 
   onEnvironmentChanged: (listener: (info: EnvironmentInfo) => void): (() => void) => {
@@ -318,6 +363,7 @@ removeConversation: (id: string): Promise<Conversation[]> =>
 
   interruptTerminal: (): Promise<TerminalState> => ipcRenderer.invoke(IpcChannels.terminalInterrupt),
   resetTerminal: (): Promise<TerminalState> => ipcRenderer.invoke(IpcChannels.terminalReset),
+  closeCurrentWeb2termTerminal: (): Promise<TerminalState> => ipcRenderer.invoke(IpcChannels.terminalCloseWeb2term),
 
   setTerminalCwd: (path: string): Promise<TerminalState> =>
     ipcRenderer.invoke(IpcChannels.terminalSetCwd, path),

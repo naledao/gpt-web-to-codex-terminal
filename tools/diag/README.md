@@ -4,6 +4,232 @@ Small, throwaway probes for problems that only reproduce against live third-part
 pages inside the user's real session. Per `AGENTS.md`, **the user runs and drives
 them; the agent reads the log file.**
 
+## web2term desktop/workspace checks
+
+Only the user runs these offline checks:
+
+```powershell
+node tools/diag/web2term-desktop-connect-check.cjs
+node tools/diag/web2term-terminal-check.cjs
+node tools/diag/web2term-workspace-check.cjs
+```
+
+They load the actual TypeScript modules using synthetic settings, HTTP responses,
+WebSockets and protocol messages. They do not launch Electron, access credentials,
+SQLite or the network, or open a real Shell/PTY. All logs use synchronous
+`fs.appendFileSync` under `%TEMP%\gpt-login-diag\<check-name>-<timestamp>-<pid>.log`.
+The agent writes checks and reads logs; the user executes them.
+
+- Desktop connection coverage: URL/context/IPv6 handling, authenticated device
+  queries, response validation/redaction, stale-account rejection, main-frame IPC,
+  the three handshake headers, stable client IDs, one shared socket, errors,
+  timeout/expiry/disposal, picker races, and normal managed workspace activation.
+- Protocol coverage: workspace-owned allocation, three active slots including
+  opening/closing, late ready cleanup, input chunking/limits, Base64/UTF-8 bytes,
+  resize validation, history limits, tool errors, confirmation timeouts, close
+  retries, state/output subscriptions and disposal isolation.
+- Workspace coverage: actual `Web2termShell`, `RemoteShell` and `CommandRunner`
+  integration; initialization, framed command results, split UTF-8/markers,
+  persistent cwd, manual input, model execution/result return, independent PTYs,
+  interruption/slot reuse, offline pending commands, account binding and no local
+  Shell fallback; user close while idle/running/opening/connecting, task
+  cancellation, transcript retention, no automatic resurrection, final socket
+  release, close timeout/retry/send failure and explicit reconnect. A fake local
+  Shell constructor throws if accidentally reached. Close timeouts use fake timers.
+
+Live acceptance: the user starts **only `npm run dev`** and checks:
+
+1. Log in through **设置 → 后端服务** with the tool's backend/account.
+2. Open **＋ → web2term 连接**. Expect the SSH-style **我的设备** modal over the
+   existing workspace, with devices, states, refresh and connect buttons. Verify
+   empty/error/offline/disabled lists, long names, scrolling, both themes, minimum
+   window size, Esc/backdrop/close, focus trapping and returning focus to **＋**.
+3. Connect a device. Expect the original managed session/chat interface. The right
+   terminal displays the device, readiness and environment probe; no dedicated
+   connection page or xterm workbench. Run `pwd`, `whoami`, and a Chinese printf.
+   Change directories and verify subsequent commands keep the chosen cwd.
+4. Ask the model to run a command using the existing workflow. Verify its output,
+   exit status, execution record and result return appear as usual.
+5. Connect the same device again through **＋**, up to three normal sessions;
+   verify each has its own cwd/output. The fourth active session is rejected.
+   Close one and reconnect after the tool confirms its exit. Check switching
+   sessions preserves the transcript and current execution.
+6. Start a long command and use **中断** / Ctrl+C in the input. Expect the current
+   PTY to close and be replaced after tool confirmation, with cwd restoration.
+   **重置** clears its transcript and recreates its Shell. Other sessions survive.
+   Click **关闭** while idle, running, creating a PTY or waiting for the connection:
+   the workspace/transcript remain, the current task stops, input becomes read-only
+   and no replacement PTY opens. Other active terminals survive. Close the last
+   one: after tool confirmation the desktop socket disconnects, while the tool
+   remains online. The backend should log `Desktop disconnected` (its existing
+   handler removes the desktop Session and agent-to-desktop mapping). Reconnect
+   explicitly and verify history remains, including from a narrow terminal panel
+   and both themes. If closing
+   times out, expect a retry option while other terminals are active; with none
+   active, disconnect and show that tool cleanup was not confirmed.
+7. Stop/restart the tool or backend. Expect visible failure/read-only input and
+   **重新连接**; commands must never execute on the local Windows machine.
+   Check a registered offline tool produces a 10-second creation timeout.
+8. Restart the app: existing web2term workspaces remain bound to their devices,
+   initially disconnected. Reconnect explicitly. Change account/backend and
+   confirm old bindings cannot silently connect under the new identity.
+   Selecting another device replaces the shared transport and disconnects older
+   device workspaces. Closed workspaces kept in the sidebar must not retain an
+   otherwise unused transport. Deleting the last active session also closes it.
+
+Hover the terminal's device label for device ID, connection feedback and the
+metadata-only `%TEMP%\gpt-login-diag\web2term-desktop-connect-*.log` path.
+Connection/terminal logs omit tokens, email, commands, stdin/stdout, response bodies
+and raw error messages. Device GETs use the login service's metadata log.
+
+Current scope is the existing command terminal. Full-screen interactive programs,
+SFTP/Git file UI and `read_files` attachments are not connected to web2term.
+Real abrupt-loss cleanup still depends on the current backend/tool. These offline
+checks and a successful build do not verify live behavior.
+
+## backend-login-check.cjs
+
+The user runs `node tools/diag/backend-login-check.cjs` for offline Windows
+web2term backend login checks. It loads the actual auth service and URL normalizer
+with fake HTTP responses, encryption and in-memory settings. It also extracts the
+actual IPC authorization callbacks and the store's settings transaction. It never
+starts Electron, reads real app credentials or SQLite, sends mail or uses the
+network. Output uses `fs.appendFileSync` under
+`%TEMP%\gpt-login-diag\backend-login-check-<timestamp>-<pid>.log`.
+
+Coverage includes documented endpoints and JSON/status contracts, deployment
+paths, leading-zero codes, timeout/redirect rules, classified errors, response
+validation/size limits, credential isolation, persistence/expiry, storage failure
+rollback, main-frame IPC access, duplicate requests and stale response rejection
+after a server change. All fixtures are synthetic. The agent does not run it.
+
+For live acceptance, start the app with `npm run dev`, open **设置 → 后端服务**,
+enter the backend base address, and click **登录** to the right of **清空地址**.
+Enter an email, click **获取验证码**, then enter the received six-digit code and
+click **确认登录**. Success automatically saves the backend address and encrypted
+login; the account email and expiry should be shown, including after restarting.
+No separate settings Save is needed for a successful login. Confirm wrong/expired
+codes and unreachable services show actionable errors without clearing a previous
+valid login. A send cooldown should survive closing/reopening the same form but
+reset for a different backend. Saving a changed or cleared backend address clears
+the old login. Confirm focus returns to **登录** after success or cancellation,
+requests disable address/close/save controls, and check both themes and the minimum
+window size. Build success does not verify these live interactions.
+
+Real user-driven login requests write metadata-only synchronous logs under
+`%TEMP%\gpt-login-diag\web2term-desktop-login-<timestamp>-<uuid>.log`.
+Failures display their log path in the form. Records contain endpoint, HTTP status,
+timing and fixed error categories, without email, code, token, headers, raw error
+messages or response bodies. No third-party browser partition is used by these
+requests.
+
+## web2term-server-check.cjs
+
+The user runs `node tools/diag/web2term-server-check.cjs` to check the Go agent's
+interactive `web2term set server`, `web2term login`, and `web2term run` commands offline. It runs `go test -count=1 -v -timeout=90s ./...`
+in `agents/linux` with module downloads disabled. All configuration fixtures use
+Go test temporary directories; no real user configuration, Electron, or network
+connection is accessed. Output is appended synchronously to
+`%TEMP%/gpt-login-diag/web2term-server-check-<timestamp>.log`.
+
+The local Go module cache must already contain `github.com/coder/websocket v1.8.15`
+and `github.com/creack/pty v1.1.24` (a normal agent build downloads them).
+The check does not fetch missing dependencies.
+
+Coverage includes invalid-input retries, CRLF/whitespace input, existing-value
+retention, EOF cancellation, HTTP/HTTPS base URLs and IPv6, port validation,
+preservation of unrelated JSON fields, rejection of corrupt configuration, and
+temporary-file cleanup. On Linux it also checks the saved file's `0600` permissions.
+Login checks use fake HTTP transports (no listening sockets or mail delivery) for
+the documented endpoints, JSON fields, context paths, leading-zero codes, redirects,
+error redaction, and malformed responses. CLI/storage checks cover cancellation,
+retrying incorrect codes, preserving old logins on failure, UTC expiry, and clearing
+credentials when changing backends. Success output must not include tokens or codes.
+Diagnostic-log checks cover private files, synchronous JSON records, UTC times,
+write-failure warnings, separate code/login requests, simulated HTTP trace events,
+EOF and other underlying error categories, and omission of tokens, codes, email,
+response bodies, raw parser errors and untrusted backend error codes.
+Run checks use fake HTTP and WebSocket transports for authenticated handshake
+headers, context paths, redirect rejection, persistent UUIDs, login expiry,
+immediate heartbeat and acknowledgement, heartbeat timeout, reconnect backoff,
+normal closure/replacement, Ctrl+C-style cancellation, and reader cleanup.
+No WebSocket listener or real server is started.
+Background checks use in-memory HTTP handler requests for status/stop, state
+persistence, private permissions, log retention and CLI output. On Linux, file-only
+checks cover inherited lock ownership, stale PID rejection and idle status/stop.
+By default the check never starts a daemon, Shell, or PTY, or sends a signal to a
+real process. Terminal checks use memory pipes/fake processes and cover the
+three-session limit (including opening/closing), fourth-request rejection,
+duplicate/retired IDs, per-session byte input and resize, ordered output/exit,
+startup failure, disconnect cleanup, input backpressure, status counts, log privacy,
+protocol validation, heartbeat priority and single-writer WebSocket multiplexing.
+
+On a Linux x86_64 test machine with Node.js and Go, the user can explicitly run
+`node tools/diag/web2term-server-check.cjs --pty`. This additionally starts a local
+`/bin/sh -i` in a temporary directory and checks PTY output, resize via `stty size`,
+and whether closing the master unblocks reads. It terminates/reaps that Shell;
+it does not access the backend or start a daemon. The default command forces the
+PTY opt-in environment variable off, even if inherited from the parent shell.
+Both modes write to the same temporary log location and require user execution.
+Real `web2term login` invocations now write their own private per-run JSON-lines log
+to the system temporary directory and print its path. On Linux this is normally
+`/tmp/web2term-login-<UTC timestamp>-<random>.log` (or the configured `TMPDIR`).
+These logs capture user-driven real requests; the offline check does not send mail
+or access the backend. See the agent README for collection and retention details.
+Real `web2term run` invocations also print a private JSON-lines log path, normally
+`/tmp/web2term-run-<UTC timestamp>-<random>.log`. These logs record connection,
+heartbeat, close-code and retry metadata without tokens, headers, message bodies
+or raw close reasons. Real connectivity is verified by the user running the tool.
+`web2term run` now detaches its worker and returns after initialization. The user
+checks `web2term status`, repeats `run` to confirm one PID, closes the original
+terminal/SSH session, queries from a new terminal, then uses `web2term stop`.
+Both run JSON logs and `web2term-daemon-<UTC timestamp>-<random>.log` console output
+are private temporary files; `status` prints their paths even after a recorded exit.
+Old foreground versions must be stopped with Ctrl+C before installing this version.
+Manual terminal acceptance and PATH installation are described in
+`agents/linux/README.md`. Build success alone does not verify interaction.
+
+## mysql-ddl-check.cjs
+
+The user runs `node tools/diag/mysql-ddl-check.cjs` for offline MySQL table/DDL checks.
+It extracts the actual runtime query/DDL/password methods and renderer tab/copy callbacks,
+using synthetic MySQL results and deferred IPC/clipboard fixtures. It never starts
+Electron, connects to a database, reads app storage or credentials, or uses the
+network. Logs use `fs.appendFileSync` under
+`%TEMP%\gpt-login-diag\mysql-ddl-check-<timestamp>.log`.
+
+Coverage includes exact table/view CREATE statements, escaping database/table
+identifiers, local/SSH saved-password scope, explicit password precedence, missing
+input/results, permission/connect/query failures, connection cleanup, duplicate-tab
+prevention, stale refresh/closed-tab responses, and clipboard/IPC failures. Table
+checks cover the exact executed SQL, identifier escaping, the 200-row cap, comments
+matched by column name, bound metadata-query values, empty tables, and retaining
+valid row data when the comment query fails. Date/time checks require the driver
+to return raw strings and preserve DATE/DATETIME/TIMESTAMP text, fractional seconds,
+TIME values, zero dates and NULL without applying the computer's time zone.
+
+For live acceptance, the user starts the app with `npm run dev`, opens a saved
+MySQL connection, and clicks **查看 DDL** at the right of a table row. Confirm its
+DDL tab identifies the database and table, preserves the server's full statement,
+and supports **刷新** and **复制 DDL**. The SQL viewer should show MySQL syntax
+highlighting, line numbers and folding. Confirm typing/pasting cannot alter the
+statement; selecting/copying text still works. Use **查找** or Ctrl+F to search,
+then Escape to close the search panel while keeping the DDL page open. Toggle
+**自动换行** on a long statement and confirm **复制 DDL** still copies the original
+SQL. Try two tables, a view, light/dark themes, and a connection without sufficient
+permissions. Clicking the table name should still open its rows. Build success
+does not verify live behavior.
+
+On a table's data tab, confirm the header displays the actual SELECT statement in
+the SQL viewer. Hover or keyboard-focus a column name to read its database comment;
+an uncommented column shows **暂无字段注释**. Repeat on an empty table (its headers
+should still be visible), with long/multiline comments, horizontal scrolling, and
+both themes. Refresh should update the SQL and comments along with the rows.
+For date/time columns, compare the displayed values with the same SELECT in another
+MySQL client using the same session time zone. The viewer should preserve the
+server's date/time text and fractional seconds, without adding T/Z or shifting
+hours. DATE stays a date, and NULL/zero-date values stay unchanged.
+
 ## directory-notes-check.cjs
 
 The user runs `node --experimental-sqlite tools/diag/directory-notes-check.cjs`
@@ -63,6 +289,39 @@ For live acceptance, the user starts the app with `npm run dev` and:
 5. Checks keyboard activation, light/dark themes and a narrow conversation pane.
 
 Build success and these offline checks do not establish live UI correctness.
+
+## ssh-files-directory-check.cjs
+
+The user runs `node tools/diag/ssh-files-directory-check.cjs` for offline SSH file
+directory checks. It extracts the actual renderer data helpers and file callbacks,
+uses simulated directory responses, and exercises the installed filemanager data
+store. No Electron, real SSH connection, shell, download or network is used.
+Logs use `fs.appendFileSync` under
+`%TEMP%\gpt-login-diag\ssh-files-directory-check-<timestamp>.log`.
+
+Checks cover opening at the displayed PTY cwd, model cwd fallback, reopening after
+`cd`, refresh at the browsed directory, nested/root/empty/Unicode directories,
+lazy navigation, request deduplication, stale results and directory-read failures.
+They also exercise the root button's actual renderer handler, ancestor navigation,
+typed absolute paths, path normalization, invalid/file targets, Escape cancellation,
+IME Enter handling and retaining the selected view after a browser remount.
+
+For live acceptance, the user starts the app with `npm run dev`, connects SSH and:
+
+1. Enters an existing nested directory in the terminal, then clicks **文件**.
+   Confirm its listing and full window-header path match the terminal directory.
+2. Browses a child directory and clicks Refresh. Confirm the child stays selected.
+   Click a path segment to go to its ancestor and the home icon to return to `/`.
+   Check list, grid and panel views and a long path with scrollable breadcrumbs.
+3. Closes the window, changes the terminal directory and opens **文件** again.
+   Confirm it starts at the new terminal directory. Also check an empty directory.
+4. Clicks the current path segment or the edit icon, enters an existing absolute
+   path and presses Enter (or clicks **进入**). Confirm the header and listing agree.
+   Check paths with spaces/Chinese, `.`/`..`, an invalid path and a file path.
+   Escape must cancel editing without closing the modal. Chinese IME Enter must
+   confirm composition without prematurely navigating. Check light/dark themes.
+
+Build success and the offline checks do not establish live UI or SSH correctness.
 
 ## ssh-terminal-check.cjs
 

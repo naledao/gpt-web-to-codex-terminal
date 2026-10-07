@@ -1,0 +1,73 @@
+.mysql-page__card-head.mysql-page__table-head {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mysql-page__table-head .mysql-page__card-title,
+.mysql-page__table-head .mysql-page__card-note {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.mysql-page__query {
+  flex: 1 1 240px;
+  min-width: 140px;
+}
+
+.mysql-page__column-trigger {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.mysql-page__column-trigger:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+}
+
+.mysql-page__column-trigger:focus-visible {
+  outline: 2px solid #0086a1;
+  outline-offset: -2px;
+}
+
+.mysql-page__column-positioner {
+  z-index: 310;
+}
+
+.mysql-page__column-tooltip {
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: min(360px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #1f2733;
+  color: #f5f8ff;
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.mysql-page__column-tooltip strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+}
+
+.mysql-page__column-tooltip p {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+}
+
+.mysql-page__column-tooltip[data-theme='dark'] {
+  background: #243147;
+  color: #e6ecf6;
+}
+
+.mysql-page__grid-table td.mysql-page__empty-cell {
+  padding: 20px 12px;
+  text-align: center;
+}
