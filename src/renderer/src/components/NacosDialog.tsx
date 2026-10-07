@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react'
+import NacosIcon from './NacosIcon'
 import type { AppTheme } from '../../../shared/types'
 
 interface NacosDialogProps {
@@ -28,12 +29,7 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
       <div className="nacos-page">
         <header className="nacos-page__head">
           <div className="nacos-page__mark">
-            <svg width="26" height="26" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <circle cx="7" cy="12" r="3.1" fill="#267FFF" />
-              <circle cx="17" cy="6.5" r="3.1" fill="#267FFF" />
-              <circle cx="17" cy="17.5" r="3.1" fill="#267FFF" />
-              <path d="M7 12 17 6.5M7 12 17 17.5" stroke="#267FFF" strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
-            </svg>
+            <NacosIcon size={26} />
           </div>
 
           <div className="nacos-page__titles">
@@ -51,12 +47,7 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
         <div className="nacos-page__body">
           <div className="nacos-page__empty">
             <div className="nacos-page__empty-mark">
-              <svg width="40" height="40" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <circle cx="7" cy="12" r="3.1" fill="currentColor" />
-                <circle cx="17" cy="6.5" r="3.1" fill="currentColor" />
-                <circle cx="17" cy="17.5" r="3.1" fill="currentColor" />
-                <path d="M7 12 17 6.5M7 12 17 17.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
-              </svg>
+              <NacosIcon size={40} />
             </div>
             <h3 className="nacos-page__empty-title">尚未连接 Nacos</h3>
             <p className="nacos-page__empty-sub">连接与配置管理功能即将上线，敬请期待。</p>

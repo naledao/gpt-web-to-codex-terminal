@@ -13672,8 +13672,6 @@ body {
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: 11px;
-  background: #eaf2ff;
 }
 
 .nacos-page__titles {
@@ -13740,12 +13738,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 84px;
-  height: 84px;
-  border-radius: 22px;
-  background: #fff;
-  color: #267fff;
-  box-shadow: 0 8px 24px rgba(38, 127, 255, .12);
+  margin-bottom: 4px;
 }
 
 .nacos-page__empty-title {
@@ -13773,7 +13766,7 @@ body {
 }
 
 .workspace[data-theme='dark'] .nacos-page__mark {
-  background: #16233a;
+  background: none;
 }
 
 .workspace[data-theme='dark'] .nacos-page__title {
@@ -13798,9 +13791,7 @@ body {
 }
 
 .workspace[data-theme='dark'] .nacos-page__empty-mark {
-  background: #161d28;
   color: #4d8bff;
-  box-shadow: none;
 }
 
 .workspace[data-theme='dark'] .nacos-page__empty-title {

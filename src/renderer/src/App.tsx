@@ -11,6 +11,7 @@ import SshDirectoryPicker from './components/SshDirectoryPicker'
 import MysqlDialog from './components/MysqlDialog'
 import NacosDialog from './components/NacosDialog'
 import MysqlIcon from './components/MysqlIcon'
+import NacosIcon from './components/NacosIcon'
 import ConversationTranscript from './components/ConversationTranscript'
 import { conversationScrollKey } from './conversation-scroll'
 import brandIcon from './assets/brand-icon.png'
@@ -2433,12 +2434,7 @@ ${conversation.url}`}
                     </Menu.Item>
                     <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setNacosDialogOpen(true) }}>
                       <span className="toolbox-menu__icon">
-                        <svg width="15" height="15" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                          <circle cx="7" cy="12" r="3.1" fill="#267FFF" />
-                          <circle cx="17" cy="6.5" r="3.1" fill="#267FFF" />
-                          <circle cx="17" cy="17.5" r="3.1" fill="#267FFF" />
-                          <path d="M7 12 17 6.5M7 12 17 17.5" stroke="#267FFF" strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
-                        </svg>
+                        <NacosIcon size={15} />
                       </span>
                       <span>Nacos 连接</span>
                     </Menu.Item>
