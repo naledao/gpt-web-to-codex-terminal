@@ -18,6 +18,7 @@ import brandIcon from './assets/brand-icon.png'
 import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
 import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { SESSION_COOKIE_NAME, terminalNotesOwnerKey } from '@shared/types'
+import { normalizeBackendUrl } from '@shared/backend-url'
 import './assets/terminal-notes.css'
 import { CHAT_PLATFORMS } from '@shared/platforms'
 import type {
@@ -60,6 +61,7 @@ const PANEL_MAX_RESERVE = 520
 
 const SETTINGS_SECTIONS = [
   { id: 'appearance', label: '外观' },
+  { id: 'backend', label: '后端服务' },
   { id: 'proxy', label: '网络代理' },
   { id: 'updates', label: '应用更新' },
   { id: 'session', label: '浏览器登录态' }
@@ -71,6 +73,7 @@ function SettingsSectionIcon({ section }: { section: SettingsSection }): JSX.Ele
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {section === 'appearance' ? <><circle cx="12" cy="12" r="8" /><path d="M12 4v16" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" /></> : null}
+      {section === 'backend' ? <><rect x="3" y="3" width="18" height="7" rx="2" /><rect x="3" y="14" width="18" height="7" rx="2" /><path d="M7 6.5h.01M7 17.5h.01M12 10v4" /></> : null}
       {section === 'proxy' ? <><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" /></> : null}
       {section === 'updates' ? <><path d="M12 3v12m-5-5 5 5 5-5" /><path d="M4 16v4h16v-4" /></> : null}
       {section === 'session' ? <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 8h18" /><circle cx="12" cy="12" r="2" /><path d="M8 18c0-2 1.8-3.5 4-3.5s4 1.5 4 3.5" /></> : null}
@@ -387,6 +390,12 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('appearance')
   const settingsBodyRef = useRef<HTMLDivElement>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [settingsLoading, setSettingsLoading] = useState(true)
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
+  const [settingsError, setSettingsError] = useState('')
+  const [backendUrlDraft, setBackendUrlDraft] = useState('')
+  const [backendUrlError, setBackendUrlError] = useState('')
+  const backendUrlInputRef = useRef<HTMLInputElement>(null)
   const [userAvatarDraft, setUserAvatarDraft] = useState('')
   const [userAvatarSourceDraft, setUserAvatarSourceDraft] = useState('')
   const [userAvatarPositionXDraft, setUserAvatarPositionXDraft] = useState(50)
@@ -1477,11 +1486,16 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   useEffect(() => {
     let cancelled = false
 
+    setSettingsLoading(true)
+    setSettingsLoadFailed(false)
+    setSettingsError('')
+    setBackendUrlError('')
     window.api
       .getSettings()
       .then((value) => {
         if (cancelled) return
         setSettings(value)
+        setBackendUrlDraft(value.backendUrl ?? '')
         setProxyDrafts(value.embedProxy ?? {})
         setThemeDraft(value.theme)
         setSshProxyDraft(value.sshProxy)
@@ -1493,11 +1507,12 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
         setUserAvatarScaleDraft(value.userAvatarScale)
       })
       .catch(() => {
-        /* the dialog renders a placeholder */
+        if (cancelled) return
+        setSettingsLoadFailed(true)
+        setSettingsError('读取设置失败，请关闭设置后重新打开。')
       })
-
-      .catch(() => {
-        /* the section is simply omitted */
+      .finally(() => {
+        if (!cancelled) setSettingsLoading(false)
       })
 
     return () => {
@@ -1778,6 +1793,18 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   }, [sshPickerOpen, notesOpen, sshFilesOpen])
 
   const saveSettings = useCallback(async (): Promise<void> => {
+    if (savingSettings || settingsLoading || settingsLoadFailed || settings === null) return
+    let backendUrl: string
+    try {
+      backendUrl = normalizeBackendUrl(backendUrlDraft)
+    } catch (error) {
+      setBackendUrlError(error instanceof Error ? error.message : '后端地址无效，请检查后重试。')
+      setSettingsSection('backend')
+      requestAnimationFrame(() => backendUrlInputRef.current?.focus())
+      return
+    }
+    setBackendUrlError('')
+    setSettingsError('')
     let avatarDataUrl = userAvatarDraft
     if (!userAvatarSourceDraft) avatarDataUrl = ''
     else if (userAvatarEditorRef.current) avatarDataUrl = userAvatarEditorRef.current.getImageScaledToCanvas().toDataURL('image/png')
@@ -1787,6 +1814,7 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
       // into a URL, and the user should see that rather than be surprised later.
       const next = await window.api.updateSettings({
         theme: themeDraft,
+        backendUrl,
         embedProxy: proxyDrafts,
         sshProxy: sshProxyDraft,
         updateProxy: updateProxyDraft,
@@ -1797,6 +1825,7 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
         userAvatarScale: userAvatarScaleDraft
       })
       setSettings(next)
+      setBackendUrlDraft(next.backendUrl)
       onThemeChange(next.theme)
       setThemeDraft(next.theme)
       setProxyDrafts(next.embedProxy ?? {})
@@ -1810,11 +1839,11 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
       setAvatarEditorOpen(false)
       setSettingsOpen(false)
     } catch {
-      /* leave the dialog open so the input is not lost */
+      setSettingsError('设置保存失败，输入已保留，请重试。')
     } finally {
       setSavingSettings(false)
     }
-  }, [onThemeChange, proxyDrafts, sshProxyDraft, themeDraft, updateProxyDraft, userAvatarDraft, userAvatarSourceDraft, userAvatarPositionXDraft, userAvatarPositionYDraft, userAvatarScaleDraft])
+  }, [onThemeChange, backendUrlDraft, savingSettings, settings, settingsLoading, settingsLoadFailed, proxyDrafts, sshProxyDraft, themeDraft, updateProxyDraft, userAvatarDraft, userAvatarSourceDraft, userAvatarPositionXDraft, userAvatarPositionYDraft, userAvatarScaleDraft])
 
   /** Drag the terminal's right edge to resize the column. */
   const startResize = useCallback(
@@ -3211,7 +3240,7 @@ ${record.command}`
             <div className="settings-modal__head">
               <div>
                 <div className="settings-modal__title">设置</div>
-                <div className="settings-modal__subtitle">外观、代理、更新和登录态</div>
+                <div className="settings-modal__subtitle">外观、后端服务、代理和应用设置</div>
               </div>
               <span className="panel__spacer" />
               <button type="button" className="settings-modal__close" aria-label="关闭" onClick={() => setSettingsOpen(false)}>×</button>
@@ -3351,6 +3380,44 @@ ${record.command}`
                   ) : null}
                 </section>
 
+                <section
+                  id="settings-panel-backend"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-backend"
+                  tabIndex={0}
+                  hidden={settingsSection !== 'backend'}
+                  className="settings-card"
+                >
+                  <div className="settings-card__heading">
+                    <span className="settings-card__icon"><SettingsSectionIcon section="backend" /></span>
+                    <h2>后端服务</h2>
+                  </div>
+                  <div className="settings-backend-field">
+                    <label className="settings-proxy-row__label" htmlFor="web2term-backend-url">后端地址</label>
+                    <input
+                      ref={backendUrlInputRef}
+                      id="web2term-backend-url"
+                      className="address__input settings-input"
+                      type="text"
+                      inputMode="url"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="http://192.168.108.33:8080"
+                      value={backendUrlDraft}
+                      disabled={settingsLoading || savingSettings || settingsLoadFailed}
+                      aria-invalid={Boolean(backendUrlError)}
+                      aria-describedby={backendUrlError ? 'web2term-backend-error' : undefined}
+                      onChange={(event) => { setBackendUrlDraft(event.target.value); setBackendUrlError('') }}
+                    />
+                    {backendUrlError ? <p id="web2term-backend-error" className="settings-feedback" role="alert">{backendUrlError}</p> : null}
+                    <button
+                      type="button"
+                      className="settings-outline-btn settings-backend-clear"
+                      disabled={settingsLoading || savingSettings || settingsLoadFailed || !backendUrlDraft}
+                      onClick={() => { setBackendUrlDraft(''); setBackendUrlError(''); backendUrlInputRef.current?.focus() }}
+                    >清空地址</button>
+                  </div>
+                </section>
                 <section
                   id="settings-panel-proxy"
                   role="tabpanel"
@@ -3518,9 +3585,10 @@ ${record.command}`
             </div>
 
             <div className="modal__foot settings-modal__foot">
+              {settingsError ? <p className="settings-feedback settings-feedback--save" role="alert">{settingsError}</p> : null}
               <span className="panel__spacer" />
-              <button type="button" className="settings-cancel-btn" onClick={() => { setProxyDrafts(settings?.embedProxy ?? {}); setSshProxyDraft(settings?.sshProxy ?? ''); setUpdateProxyDraft(settings?.updateProxy ?? ''); setThemeDraft(settings?.theme ?? 'light'); setSettingsOpen(false) }}>取消</button>
-              <button type="button" className="settings-save-btn" disabled={savingSettings || settings === null} onClick={() => void saveSettings()}>{savingSettings ? '保存中…' : '保存并重新加载'}</button>
+              <button type="button" className="settings-cancel-btn" disabled={savingSettings} onClick={() => { setBackendUrlDraft(settings?.backendUrl ?? ''); setBackendUrlError(''); setProxyDrafts(settings?.embedProxy ?? {}); setSshProxyDraft(settings?.sshProxy ?? ''); setUpdateProxyDraft(settings?.updateProxy ?? ''); setThemeDraft(settings?.theme ?? 'light'); setSettingsOpen(false) }}>取消</button>
+              <button type="button" className="settings-save-btn" disabled={savingSettings || settingsLoading || settingsLoadFailed || settings === null} onClick={() => void saveSettings()}>{savingSettings ? '保存中…' : settingsLoading ? '读取设置中…' : settingsSection === 'backend' ? '保存' : '保存并重新加载'}</button>
             </div>
           </div>
         </div>
