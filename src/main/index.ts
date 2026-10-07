@@ -49,14 +49,18 @@ import type {
   MysqlConnectionsState,
   MysqlDatabaseList,
   MysqlTableData,
+  MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
-  UpdateStatus
+  UpdateStatus,
+  NacosViewState
 } from '../shared/types'
 import { embedAuthState, importCookieSet, importSessionToken, previewSessionImport } from './session-import'
 import { ConversationStore } from './db'
 import { EMPTY_SSH_STATE, SessionRuntime } from './session-runtime'
 import { installAppLog, installNetLog } from './app-log'
+import { EMPTY_NACOS_VIEW_STATE } from '../shared/types'
+import { NacosView } from './nacos-view'
 import { applyUpdateProxy, checkForUpdates, downloadUpdate, getUpdateStatus, installUpdate, setUpdaterBroadcast, startUpdateSchedule } from './updater'
 
 /*
@@ -132,6 +136,9 @@ let settings: AppSettings = { theme: 'light', embedProxy: {}, sshProxy: '', upda
 const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
 let workspaceOpenSshDialog = false
+
+/** The user's own Nacos console, shown inside the window on demand. Null until first opened. */
+let nacosView: NacosView | null = null
 
 /*
  * The startup splash.
@@ -620,6 +627,23 @@ function runtimeForEvent(event: IpcMainEvent | IpcMainInvokeEvent): SessionRunti
 function isManagerEvent(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   return Boolean(managerWindow && !managerWindow.isDestroyed() && event.sender === managerWindow.webContents)
 }
+/**
+ * The Nacos console view, created on first use and kept for the window's lifetime.
+ *
+ * Lazy rather than eager: most sessions never open it, and a WebContentsView costs a
+ * whole renderer process whether or not anyone looks at it.
+ */
+function nacosForWindow(window: BrowserWindow): NacosView {
+  if (!nacosView) {
+    nacosView = new NacosView({
+      onState: (state): void => {
+        if (!window.isDestroyed()) window.webContents.send(IpcChannels.nacosState, state)
+      }
+    })
+  }
+  return nacosView
+}
+
 
 function persistManagedSession(runtime: SessionRuntime): void {
   if (!store) return
@@ -781,6 +805,9 @@ function createManagerWindow(): void {
     runtimes.clear()
     currentSessionId = null
     workspaceOpenSshDialog = false
+    // The console view is a child of THIS window, so it dies with it; dropping the
+    // reference keeps a destroyed WebContentsView from being reused after a reopen.
+    nacosView = null
     managerReadyToShow = false
     managerWindow = null
   })
@@ -973,6 +1000,54 @@ function registerIpcHandlers(): void {
       ? embedAuthState(runtime.chatPlatform, runtime.embed.contents())
       : { signedIn: false, cookieNames: [] }
   })
+
+  /*
+   * The Nacos console: the user's own server, embedded as a native view.
+   *
+   * Simpler than the chat embed by design — no scraping, no interception, no injected
+   * script — so the whole surface is an address, a rectangle and four navigation buttons.
+   */
+  ipcMain.handle(IpcChannels.nacosOpen, async (event, url: string): Promise<NacosViewState> => {
+    const window = managerWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return EMPTY_NACOS_VIEW_STATE
+    const view = nacosForWindow(window)
+    view.setTheme(settings.theme)
+    await view.open(window, String(url))
+    return view.getState()
+  })
+  ipcMain.handle(IpcChannels.nacosNavigate, async (event, url: string): Promise<NacosViewState> => {
+    const window = managerWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return EMPTY_NACOS_VIEW_STATE
+    const view = nacosForWindow(window)
+    await view.open(window, String(url))
+    return view.getState()
+  })
+  ipcMain.on(IpcChannels.nacosCommand, (event, command: EmbedCommand) => {
+    const window = managerWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return
+    nacosForWindow(window).command(command)
+  })
+  ipcMain.on(IpcChannels.nacosSetBounds, (event, bounds: EmbedBounds) => {
+    const window = managerWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return
+    nacosForWindow(window).setBounds(bounds)
+  })
+  ipcMain.on(IpcChannels.nacosSetVisible, (event, visible: boolean) => {
+    const window = managerWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return
+    nacosForWindow(window).setVisible(Boolean(visible))
+  })
+  ipcMain.handle(IpcChannels.nacosGetState, (event): NacosViewState => {
+    const window = managerWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return EMPTY_NACOS_VIEW_STATE
+    return nacosView ? nacosView.getState() : EMPTY_NACOS_VIEW_STATE
+  })
+  ipcMain.handle(IpcChannels.nacosClose, async (event): Promise<NacosViewState> => {
+    const window = managerWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return EMPTY_NACOS_VIEW_STATE
+    nacosView?.destroy(window)
+    return EMPTY_NACOS_VIEW_STATE
+  })
   ipcMain.on(IpcChannels.openChatgptExternal, (event) => {
     const runtime = runtimeForEvent(event)
     // The active session's OWN site: opening chatgpt.com from a DeepSeek session would
@@ -1126,7 +1201,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.mysqlConnSave, (event, draft: MysqlConnectionDraft): MysqlSaveResult => runtimeForEvent(event)?.saveMysqlConnection(draft) ?? { ...EMPTY_MYSQL, id: '' })
   ipcMain.handle(IpcChannels.mysqlConnListDatabases, (event, draft: MysqlConnectionDraft): Promise<MysqlDatabaseList> => runtimeForEvent(event)?.listMysqlDatabases(draft) ?? Promise.resolve({ ok: false, databases: [], message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnListTables, (event, draft: MysqlConnectionDraft, database: string): Promise<MysqlTableList> => runtimeForEvent(event)?.listMysqlTables(draft, database) ?? Promise.resolve({ ok: false, tables: [], message: '当前会话不可用。' }))
-  ipcMain.handle(IpcChannels.mysqlConnQueryTable, (event, draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> => runtimeForEvent(event)?.queryMysqlTable(draft, database, table) ?? Promise.resolve({ ok: false, columns: [], rows: [], truncated: false, message: '当前会话不可用。' }))
+  ipcMain.handle(IpcChannels.mysqlConnQueryTable, (event, draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> => runtimeForEvent(event)?.queryMysqlTable(draft, database, table) ?? Promise.resolve({ ok: false, sql: '', columns: [], columnComments: [], columnCommentsMessage: '', rows: [], truncated: false, message: '当前会话不可用。' }))
+  ipcMain.handle(IpcChannels.mysqlConnTableDdl, (event, draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl> => runtimeForEvent(event)?.getMysqlTableDdl(draft, database, table) ?? Promise.resolve({ ok: false, ddl: '', message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnRemove, (event, id: string): MysqlConnectionsState => runtimeForEvent(event)?.removeMysqlConnection(id) ?? EMPTY_MYSQL)
 
   ipcMain.handle(IpcChannels.sshGetState, (event): SshState => runtimeForEvent(event)?.ssh.getState() ?? { ...EMPTY_SSH_STATE })

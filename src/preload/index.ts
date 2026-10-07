@@ -25,6 +25,7 @@ import type {
   MysqlConnectionsState,
   MysqlDatabaseList,
   MysqlTableData,
+  MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
   WorkspaceState,
@@ -40,7 +41,8 @@ import type {
   SshState,
   TerminalNotes,
   TerminalState,
-  UpdateStatus
+  UpdateStatus,
+  NacosViewState
 } from '../shared/types'
 
 /**
@@ -356,6 +358,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
   queryMysqlTable: (draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> =>
     ipcRenderer.invoke(IpcChannels.mysqlConnQueryTable, draft, database, table),
 
+  getMysqlTableDdl: (draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnTableDdl, draft, database, table),
+
   listMysqlDatabases: (draft: MysqlConnectionDraft): Promise<MysqlDatabaseList> =>
     ipcRenderer.invoke(IpcChannels.mysqlConnListDatabases, draft),
 
@@ -367,6 +372,37 @@ removeConversation: (id: string): Promise<Conversation[]> =>
     ipcRenderer.on(IpcChannels.mysqlConnChanged, handler)
     return () => {
       ipcRenderer.removeListener(IpcChannels.mysqlConnChanged, handler)
+    }
+  },
+
+  openNacosView: (url: string): Promise<NacosViewState> =>
+    ipcRenderer.invoke(IpcChannels.nacosOpen, url),
+
+  navigateNacos: (url: string): Promise<NacosViewState> =>
+    ipcRenderer.invoke(IpcChannels.nacosNavigate, url),
+
+  sendNacosCommand: (command: EmbedCommand): void => {
+    ipcRenderer.send(IpcChannels.nacosCommand, command)
+  },
+
+  closeNacosView: (): Promise<NacosViewState> =>
+    ipcRenderer.invoke(IpcChannels.nacosClose),
+
+  setNacosBounds: (bounds: EmbedBounds): void => {
+    ipcRenderer.send(IpcChannels.nacosSetBounds, bounds)
+  },
+
+  setNacosVisible: (visible: boolean): void => {
+    ipcRenderer.send(IpcChannels.nacosSetVisible, visible)
+  },
+
+  getNacosState: (): Promise<NacosViewState> => ipcRenderer.invoke(IpcChannels.nacosGetState),
+
+  onNacosState: (listener: (state: NacosViewState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: NacosViewState): void => listener(state)
+    ipcRenderer.on(IpcChannels.nacosState, handler)
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.nacosState, handler)
     }
   },
   onEmbedState: (listener: (state: EmbedState) => void): (() => void) => {

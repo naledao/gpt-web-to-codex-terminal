@@ -26,6 +26,14 @@ export const IpcChannels = {
   embedImportCookieSet: 'embed:import-cookie-set',
   embedPreviewSession: 'embed:preview-session',
   embedGetAuthState: 'embed:get-auth-state',
+  nacosSetBounds: 'nacos:set-bounds',
+  nacosSetVisible: 'nacos:set-visible',
+  nacosOpen: 'nacos:open',
+  nacosNavigate: 'nacos:navigate',
+  nacosCommand: 'nacos:command',
+  nacosClose: 'nacos:close',
+  nacosGetState: 'nacos:get-state',
+  nacosState: 'nacos:state',
   openChatgptExternal: 'app:open-chatgpt-external',
   conversationsList: 'conversations:list',
   conversationMessagesList: 'conversation-messages:list',
@@ -111,6 +119,7 @@ export const IpcChannels = {
   mysqlConnListDatabases: 'mysql-conn:list-databases',
   mysqlConnListTables: 'mysql-conn:list-tables',
   mysqlConnQueryTable: 'mysql-conn:query-table',
+  mysqlConnTableDdl: 'mysql-conn:table-ddl',
   mysqlConnChanged: 'mysql-conn:changed'
 } as const
 
@@ -366,6 +375,35 @@ export interface EmbedBounds {
 }
 
 export type EmbedCommand = 'back' | 'forward' | 'reload' | 'stop' | 'home'
+
+/**
+ * Snapshot of the Nacos console view, pushed from main to the renderer.
+ *
+ * The Nacos console is a plain web page (the server's own UI), so unlike the chat embed
+ * there is nothing to scrape or interpret: the state exists only to drive the address bar
+ * and the loading indicator.
+ */
+export interface NacosViewState {
+  /** True once a URL has been opened and the view is attached to the window. */
+  active: boolean
+  url: string
+  title: string
+  isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  /** Last load failure, in the page's own words. Empty while nothing has failed. */
+  error: string
+}
+
+export const EMPTY_NACOS_VIEW_STATE: NacosViewState = {
+  active: false,
+  url: '',
+  title: '',
+  isLoading: false,
+  canGoBack: false,
+  canGoForward: false,
+  error: ''
+}
 
 /** Snapshot of the embedded view, pushed from main to the renderer. */
 export interface EmbedState {
@@ -1496,14 +1534,27 @@ export interface MysqlTableList {
 /** One page of rows from a table, for the table viewer. */
 export interface MysqlTableData {
   ok: boolean
+  /** The exact data query sent to MySQL; empty if no query was attempted. */
+  sql: string
   /** Column names, in the order the server returned them. */
   columns: string[]
+  /** Database comments aligned with columns; an empty string means no comment. */
+  columnComments: string[]
+  /** A non-fatal failure reading comments; row data remains available. */
+  columnCommentsMessage: string
   /** Each row cells, already rendered as text. A SQL NULL stays null. */
   rows: Array<Array<string | null>>
   /** True when the table held more rows than the viewer asked for. */
   truncated: boolean
   message: string
 }
+/** The server's CREATE statement for one table or view. */
+export interface MysqlTableDdl {
+  ok: boolean
+  ddl: string
+  message: string
+}
+
 export interface MysqlConnectionsState {
   /** Display name of the machine these belong to, for the dialog header. */
   machineLabel: string
@@ -1726,7 +1777,24 @@ export interface AppApi {
   listMysqlTables(draft: MysqlConnectionDraft, database: string): Promise<MysqlTableList>
   /** Read a page of rows from one table. */
   queryMysqlTable(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData>
+  /** Read the CREATE statement without changing the database. */
+  getMysqlTableDdl(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl>
   onMysqlConnectionChanged(listener: (state: MysqlConnectionsState) => void): () => void
+
+  /**
+   * Nacos console: the server's own web UI, shown inside the app.
+   *
+   * A native view like the chat embed, so the rectangle is measured by the renderer and
+   * reported with setNacosBounds; the URL is whatever the user typed (their Nacos address).
+   */
+  openNacosView(url: string): Promise<NacosViewState>
+  navigateNacos(url: string): Promise<NacosViewState>
+  sendNacosCommand(command: EmbedCommand): void
+  closeNacosView(): Promise<NacosViewState>
+  setNacosBounds(bounds: EmbedBounds): void
+  setNacosVisible(visible: boolean): void
+  getNacosState(): Promise<NacosViewState>
+  onNacosState(listener: (state: NacosViewState) => void): () => void
 
   /** Saved SSH targets, newest first. */
   listSshHosts(): Promise<SshHost[]>

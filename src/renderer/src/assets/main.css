@@ -13801,3 +13801,282 @@ body {
 .workspace[data-theme='dark'] .nacos-page__empty-sub {
   color: #5f6b7f;
 }
+/* ---------------- Nacos console: toolbar, address bar, native slot ---------------- */
+
+.nacos-page__disconnect {
+  flex: none;
+  height: 32px;
+  margin-left: auto;
+  padding: 0 14px;
+  border: 1px solid #e3e8f0;
+  border-radius: 9px;
+  background: #fff;
+  color: #55617a;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+
+.nacos-page__disconnect:hover {
+  border-color: #cfd8e5;
+  background: #f4f6fa;
+  color: #16202f;
+}
+
+.nacos-page__toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #eef1f6;
+  background: #fff;
+}
+
+.nacos-page__nav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #55617a;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+
+.nacos-page__nav:hover:not(:disabled) {
+  background: #f1f3f8;
+  color: #16202f;
+}
+
+.nacos-page__nav:disabled {
+  color: #c3cbd8;
+  cursor: default;
+}
+
+.nacos-page__address {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nacos-page__address-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #e3e8f0;
+  border-radius: 8px;
+  background: #f7f9fc;
+  color: #35405a;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color .15s, background .15s;
+}
+
+.nacos-page__address-input:focus {
+  border-color: #b9cdfa;
+  background: #fff;
+}
+
+/* A determinate-looking bar is wrong here: load progress is not known, only its existence. */
+.nacos-page__progress {
+  flex: none;
+  height: 2px;
+  background: linear-gradient(90deg, #4090ff, #1be1f7);
+  animation: nacos-progress 1.1s ease-in-out infinite;
+}
+
+@keyframes nacos-progress {
+  0% { opacity: .25; }
+  50% { opacity: 1; }
+  100% { opacity: .25; }
+}
+
+.nacos-page__error {
+  flex: none;
+  margin: 0;
+  padding: 9px 16px;
+  background: #fff5f4;
+  color: #c0392b;
+  font-size: 12.5px;
+}
+
+/* The native view is positioned over this box, so it only reserves the room. */
+.nacos-page__slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #fff;
+}
+
+/* ---------------- Nacos console: the connect form ---------------- */
+
+.nacos-page__connect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(560px, 100%);
+  padding: 0 24px;
+  text-align: center;
+}
+
+.nacos-page__connect-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.nacos-page__connect-title {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #35405a;
+}
+
+.nacos-page__connect-sub {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: #8b96a8;
+}
+
+.nacos-page__connect-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.nacos-page__connect-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #16202f;
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.nacos-page__connect-input:focus {
+  border-color: #8fb6ff;
+  box-shadow: 0 0 0 3px rgba(64, 144, 255, .14);
+}
+
+.nacos-page__connect-btn {
+  flex: none;
+  height: 40px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #4090ff, #1be1f7);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(64, 144, 255, .26);
+  transition: filter .15s, transform .1s;
+}
+
+.nacos-page__connect-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.nacos-page__connect-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.nacos-page__connect-btn:disabled {
+  opacity: .55;
+  cursor: default;
+  box-shadow: none;
+}
+
+.nacos-page__connect-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #a3adbd;
+}
+
+.nacos-page__connect-error {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff5f4;
+  color: #c0392b;
+  font-size: 12.5px;
+}
+
+/* ---------------- dark ---------------- */
+
+.workspace[data-theme='dark'] .nacos-page__toolbar,
+.workspace[data-theme='dark'] .nacos-page__disconnect {
+  background: #0f151f;
+  border-color: #1a2230;
+}
+
+.workspace[data-theme='dark'] .nacos-page__disconnect {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .nacos-page__disconnect:hover {
+  background: #1a2230;
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .nacos-page__nav {
+  color: #93a0b6;
+}
+
+.workspace[data-theme='dark'] .nacos-page__nav:hover:not(:disabled) {
+  background: #1a2230;
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .nacos-page__address-input {
+  border-color: #1f2a3a;
+  background: #131a25;
+  color: #cbd6e6;
+}
+
+.workspace[data-theme='dark'] .nacos-page__address-input:focus {
+  border-color: #33507f;
+  background: #0f151f;
+}
+
+.workspace[data-theme='dark'] .nacos-page__error {
+  background: #2a1a1a;
+  color: #ff8a7a;
+}
+
+.workspace[data-theme='dark'] .nacos-page__slot {
+  background: #0a0f16;
+}
+
+.workspace[data-theme='dark'] .nacos-page__connect-title {
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .nacos-page__connect-sub {
+  color: #7d8aa0;
+}
+
+.workspace[data-theme='dark'] .nacos-page__connect-input {
+  border-color: #1f2a3a;
+  background: #131a25;
+  color: #eef2f9;
+}
+
+.workspace[data-theme='dark'] .nacos-page__connect-hint {
+  color: #5f6b7f;
+}
+
+.workspace[data-theme='dark'] .nacos-page__connect-error {
+  background: #2a1a1a;
+  color: #ff8a7a;
+}
