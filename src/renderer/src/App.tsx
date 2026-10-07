@@ -9,6 +9,7 @@ import type { AvatarEditorRef } from 'react-avatar-editor'
 import GitDialog from './components/GitDialog'
 import SshDirectoryPicker from './components/SshDirectoryPicker'
 import MysqlDialog from './components/MysqlDialog'
+import NacosDialog from './components/NacosDialog'
 import ConversationTranscript from './components/ConversationTranscript'
 import { conversationScrollKey } from './conversation-scroll'
 import brandIcon from './assets/brand-icon.png'
@@ -55,6 +56,26 @@ const PANEL_MIN_WIDTH = 220
 const PANEL_DEFAULT_WIDTH = 320
 const PANEL_MAX_RESERVE = 520
 
+const SETTINGS_SECTIONS = [
+  { id: 'appearance', label: '外观' },
+  { id: 'proxy', label: '网络代理' },
+  { id: 'updates', label: '应用更新' },
+  { id: 'session', label: '浏览器登录态' }
+] as const
+
+type SettingsSection = (typeof SETTINGS_SECTIONS)[number]['id']
+
+function SettingsSectionIcon({ section }: { section: SettingsSection }): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {section === 'appearance' ? <><circle cx="12" cy="12" r="8" /><path d="M12 4v16" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" /></> : null}
+      {section === 'proxy' ? <><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" /></> : null}
+      {section === 'updates' ? <><path d="M12 3v12m-5-5 5 5 5-5" /><path d="M4 16v4h16v-4" /></> : null}
+      {section === 'session' ? <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 8h18" /><circle cx="12" cy="12" r="2" /><path d="M8 18c0-2 1.8-3.5 4-3.5s4 1.5 4 3.5" /></> : null}
+    </svg>
+  )
+}
+
 /* Layout sizes live in localStorage so they survive the App remount that happens
  * when the workspace switches to another session (WorkspaceApp keys App by session id). */
 const STORAGE_TERMINAL_WIDTH = 'layout.terminalWidth'
@@ -91,6 +112,37 @@ function toFilemanagerEntities(entries: SshFileEntry[]): FilemanagerEntity[] {
     date: new Date(entry.modifiedAt),
     lazy: entry.type === 'folder'
   }))
+}
+
+function toSshFilemanagerData(entries: SshFileEntry[], directory: string): FilemanagerEntity[] {
+  const ancestors: FilemanagerEntity[] = []
+  let path = ''
+  for (const part of directory.split('/').filter(Boolean)) {
+    path += `/${part}`
+    // Keep absolute entry IDs connected to the root; navigation loads each ancestor.
+    ancestors.push({ id: path, type: 'folder', lazy: false })
+  }
+  return [...ancestors, ...toFilemanagerEntities(entries)]
+}
+
+function normalizeSshDirectory(value: string): string | null {
+  const directory = value.trim()
+  if (!directory.startsWith('/')) return null
+  const parts: string[] = []
+  for (const part of directory.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+  return `/${parts.join('/')}`
+}
+
+function sshDirectoryBreadcrumbs(directory: string): Array<{ name: string; path: string }> {
+  let path = ''
+  return directory.split('/').filter(Boolean).map((name) => {
+    path += `/${name}`
+    return { name, path }
+  })
 }
 
 const STATUS_LABEL: Record<ExecutionStatus, string> = {
@@ -330,6 +382,8 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   const [placeholderToggle, setPlaceholderToggle] = useState(false)
   const [placeholderClosing, setPlaceholderClosing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('appearance')
+  const settingsBodyRef = useRef<HTMLDivElement>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [userAvatarDraft, setUserAvatarDraft] = useState('')
   const [userAvatarSourceDraft, setUserAvatarSourceDraft] = useState('')
@@ -394,6 +448,8 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   const [gitDialogOpen, setGitDialogOpen] = useState(false)
   /** The MySQL connection dialog opened from the toolbox. */
   const [mysqlDialogOpen, setMysqlDialogOpen] = useState(false)
+  /** The Nacos connection dialog opened from the toolbox. */
+  const [nacosDialogOpen, setNacosDialogOpen] = useState(false)
   /** One viewer with separate base-prompt and tool-prompt content. */
   const [promptView, setPromptView] = useState<'base' | 'tools' | null>(null)
   const promptOpen = promptView !== null
@@ -420,8 +476,17 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
   const sshFilemanagerApiRef = useRef<FilemanagerApi | null>(null)
   const [sshCwdEditing, setSshCwdEditing] = useState(false)
   const [sshFilePath, setSshFilePath] = useState('/')
+  const [sshFilePathDraft, setSshFilePathDraft] = useState<string | null>(null)
+  const sshFileBreadcrumbs = useMemo(() => sshDirectoryBreadcrumbs(sshFilePath), [sshFilePath])
+  const [sshFilesLocation, setSshFilesLocation] = useState({ hostId: '', path: '/' })
+  const sshFilesStartPath = sshFilesLocation.hostId === ssh?.hostId
+    ? sshFilesLocation.path
+    : (ssh?.ptyCwd || ssh?.modelCwd || '/').replace(/\/+$/, '') || '/'
+  const sshFilePanels = useMemo(() => [{ path: sshFilesStartPath }, { path: sshFilesStartPath }], [sshFilesStartPath])
   const [sshFileSearch, setSshFileSearch] = useState('')
   const [sshFileMode, setSshFileMode] = useState<'table' | 'cards' | 'panels'>('table')
+  const sshFileModeRef = useRef(sshFileMode)
+  sshFileModeRef.current = sshFileMode
   const [sshDraft, setSshDraft] = useState<SshHostDraft>({
     id: null,
     name: '',
@@ -1157,44 +1222,96 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
       setSshUploading(false)
     }
   }, [ssh?.status, sshUploading])
+  const toggleSshFiles = useCallback((): void => {
+    if (sshFilesOpen) {
+      setSshFilesOpen(false)
+      return
+    }
+    if (ssh?.status !== 'connected') return
+    const path = (ssh.ptyCwd || ssh.modelCwd || '/').replace(/\/+$/, '') || '/'
+    setSshFilesLocation({ hostId: ssh.hostId, path })
+    setSshFilePath(path)
+    setSshFilesLoading(true)
+    setSshFilesOpen(true)
+  }, [sshFilesOpen, ssh?.status, ssh?.hostId, ssh?.ptyCwd, ssh?.modelCwd])
+
   const refreshSshFiles = useCallback((): void => {
     if (ssh?.status !== 'connected') return
+    setSshFilesLocation({ hostId: ssh.hostId, path: sshFilePath })
+  }, [ssh?.status, ssh?.hostId, sshFilePath])
+
+  const navigateSshFiles = useCallback((directory: string): void => {
+    if (ssh?.status !== 'connected') return
+    const path = normalizeSshDirectory(directory)
+    if (path === null) {
+      setSshFilesError('请输入以 / 开头的绝对目录地址。')
+      return
+    }
+    const api = sshFilemanagerApiRef.current
+    const target = api?.getFile(path)
+    if (target && target.type !== 'folder') {
+      setSshFilesError('该地址是文件，请输入目录地址。')
+      return
+    }
+    setSshFilePathDraft(null)
     setSshFilesError('')
-    setSshFilesLoading(true)
-    void window.api
-      .listSshFiles('/')
-      .then((entries) => {
-        setSshFileData(toFilemanagerEntities(entries))
-        setSshCurrentFiles(entries)
-        setSshFilePath('/')
+    if (target && api) {
+      void api.exec('set-path', { id: path }).catch((error: unknown) => {
+        if (sshFilemanagerApiRef.current === api) setSshFilesError(error instanceof Error ? error.message : '切换远程目录失败')
       })
-      .catch((error: unknown) => setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败'))
-      .finally(() => setSshFilesLoading(false))
-  }, [ssh?.status])
+    } else {
+      // A typed directory may not be in the lazy tree yet; initialize it directly.
+      setSshFilePath(path)
+      setSshFilesLoading(true)
+      setSshFilesLocation({ hostId: ssh.hostId, path })
+    }
+  }, [ssh?.status, ssh?.hostId])
+
+  const submitSshFilePath = useCallback((event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (sshFilePathDraft !== null) navigateSshFiles(sshFilePathDraft)
+  }, [sshFilePathDraft, navigateSshFiles])
+
   const initSshFilemanager = useCallback((api: FilemanagerApi): void => {
     sshFilemanagerApiRef.current = api
+    const requests = new Map<string, Promise<void>>()
+    const isCurrentPath = (id: string): boolean => {
+      const state = api.getState()
+      return state.panels?.[state.activePanel ?? 0]?.path === id
+    }
+    const loadDirectory = (id: string): Promise<void> => {
+      const pending = requests.get(id)
+      if (pending) return pending
+      const request = window.api.listSshFiles(id)
+        .then(async (entries) => {
+          if (sshFilemanagerApiRef.current !== api) return
+          await api.exec('provide-data', { id, data: toFilemanagerEntities(entries) })
+          if (sshFilemanagerApiRef.current === api && isCurrentPath(id)) setSshCurrentFiles(entries)
+        })
+        .catch((error: unknown) => {
+          if (sshFilemanagerApiRef.current !== api) return
+          setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败')
+        })
+        .finally(() => {
+          requests.delete(id)
+          if (sshFilemanagerApiRef.current === api && isCurrentPath(id)) setSshDirectoryLoading(false)
+        })
+      requests.set(id, request)
+      return request
+    }
     api.on('set-path', (event) => {
       const id = String(event?.id ?? '/')
       setSshFilePath(id)
       setSshFileSearch('')
+      setSshCurrentFiles([])
       setSshFilesError('')
       setSshDirectoryLoading(true)
-      void window.api
-        .listSshFiles(id)
-        .then((entries) => setSshCurrentFiles(entries))
-        .catch((error: unknown) => setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败'))
-        .finally(() => setSshDirectoryLoading(false))
+      void loadDirectory(id)
     })
     api.on('request-data', (event) => {
       const id = String(event?.id ?? '/')
       setSshFilesError('')
-      void window.api
-        .listSshFiles(id)
-        .then((entries) => api.exec('provide-data', { id, data: toFilemanagerEntities(entries) }))
-        .catch((error: unknown) => {
-          setSshFilesError(error instanceof Error ? error.message : '读取远程目录失败')
-          void api.exec('provide-data', { id, data: [] })
-        })
+      void loadDirectory(id)
     })
     const downloadFile = (event: { id?: string } | null): void => {
       const id = String(event?.id ?? '')
@@ -1206,11 +1323,15 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
     }
     api.on('download-file', downloadFile)
     api.on('open-file', downloadFile)
+    void api.exec('set-mode', { mode: sshFileModeRef.current })
   }, [])
 
   useEffect(() => {
     let cancelled = false
     if (!sshFilesOpen || ssh?.status !== 'connected') {
+      setSshFilePathDraft(null)
+      sshFilemanagerApiRef.current = null
+      setSshDirectoryLoading(false)
       setSshFileData([])
       setSshCurrentFiles([])
       setSshFilesError('')
@@ -1219,15 +1340,22 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
         cancelled = true
       }
     }
+    sshFilemanagerApiRef.current = null
+    const path = sshFilesStartPath
+    setSshFilePathDraft(null)
+    setSshFilePath(path)
+    setSshFileSearch('')
+    setSshFileData(toSshFilemanagerData([], path))
+    setSshCurrentFiles([])
+    setSshDirectoryLoading(false)
     setSshFilesError('')
     setSshFilesLoading(true)
     void window.api
-      .listSshFiles('/')
+      .listSshFiles(path)
       .then((entries) => {
         if (!cancelled) {
-          setSshFileData(toFilemanagerEntities(entries))
+          setSshFileData(toSshFilemanagerData(entries, path))
           setSshCurrentFiles(entries)
-          setSshFilePath('/')
         }
       })
       .catch((error: unknown) => {
@@ -1239,7 +1367,7 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
     return () => {
       cancelled = true
     }
-  }, [sshFilesOpen, ssh?.status, ssh?.hostId])
+  }, [sshFilesOpen, ssh?.status, ssh?.hostId, sshFilesLocation, sshFilesStartPath])
 
   const disconnectSsh = useCallback(async (): Promise<void> => {
     try {
@@ -1517,6 +1645,10 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
       setNotesSaving(false)
     }
   }, [applyNotes, notesDraft, notesSaving])
+
+  useEffect(() => {
+    if (settingsBodyRef.current) settingsBodyRef.current.scrollTop = 0
+  }, [settingsOpen, settingsSection])
 
   // Escape closes the dialog, like every other dialog on the platform.
   useEffect(() => {
@@ -2302,6 +2434,17 @@ ${conversation.url}`}
                       </span>
                       <span>MySQL 连接</span>
                     </Menu.Item>
+                    <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setNacosDialogOpen(true) }}>
+                      <span className="toolbox-menu__icon">
+                        <svg width="15" height="15" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                          <circle cx="7" cy="12" r="3.1" fill="#267FFF" />
+                          <circle cx="17" cy="6.5" r="3.1" fill="#267FFF" />
+                          <circle cx="17" cy="17.5" r="3.1" fill="#267FFF" />
+                          <path d="M7 12 17 6.5M7 12 17 17.5" stroke="#267FFF" strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
+                        </svg>
+                      </span>
+                      <span>Nacos 连接</span>
+                    </Menu.Item>
                   </Menu.Popup>
                 </Menu.Positioner>
               </Menu.Portal>
@@ -2369,8 +2512,8 @@ ${conversation.url}`}
               type="button"
               className={sshFilesOpen ? 'panel__sync panel__sync--on' : 'panel__sync'}
               disabled={ssh?.status !== 'connected'}
-              title="浏览远程主机文件"
-              onClick={() => setSshFilesOpen((value) => !value)}
+              title={`浏览当前远程目录：${ssh?.ptyCwd || ssh?.modelCwd || '/'}`}
+              onClick={toggleSshFiles}
             >
               文件
             </button>
@@ -2530,7 +2673,7 @@ ${conversation.url}`}
               <div className="ssh-files-modal__head">
                 <div className="ssh-files-modal__heading">
                   <span className="ssh-files-modal__title">远程文件</span>
-                  <span className="ssh-files-modal__path" title={ssh?.modelCwd || '.'}>{ssh?.modelCwd || '.'}</span>
+                  <span className="ssh-files-modal__path" title={sshFilePath}>{sshFilePath}</span>
                 </div>
                 <span className="panel__spacer" />
                 <button type="button" className="ssh-files-modal__close" aria-label="关闭" onClick={() => setSshFilesOpen(false)}>×</button>
@@ -2550,12 +2693,75 @@ ${conversation.url}`}
                         </span>
                       </div>
                       <div className="ssh-files__topbar">
-                        <div className="ssh-files__crumbs" aria-label="当前目录">
-                          <svg className="ssh-files__crumb-home" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z" /></svg>
-                          <span className="ssh-files__crumb-sep">/</span>
-                          <span className="ssh-files__crumb-sep">/</span>
-                          <span className="ssh-files__crumb-current">{(sshFilePath === '/' ? ssh?.modelCwd || '/root' : sshFilePath).split('/').filter(Boolean).slice(-1)[0] || 'root'}</span>
-                        </div>
+                        <nav className="ssh-files__crumbs" aria-label="远程目录导航">
+                          {sshFilePathDraft !== null ? (
+                            <form className="ssh-files__path-form" onSubmit={submitSshFilePath}>
+                              <input
+                                className="ssh-files__path-input"
+                                aria-label="远程目录地址"
+                                placeholder="输入绝对目录地址"
+                                value={sshFilePathDraft}
+                                autoComplete="off"
+                                spellCheck={false}
+                                autoFocus
+                                onChange={(event) => setSshFilePathDraft(event.currentTarget.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault()
+                                    event.stopPropagation()
+                                    setSshFilePathDraft(null)
+                                    setSshFilesError('')
+                                  } else if (event.key === 'Enter' && event.nativeEvent.isComposing) {
+                                    event.preventDefault()
+                                  }
+                                }}
+                              />
+                              <button type="submit" className="ssh-files__crumb-button" aria-label="进入目录" title="进入目录">进入</button>
+                            </form>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="ssh-files__crumb-button ssh-files__crumb-root"
+                                aria-label="返回根目录"
+                                aria-current={sshFilePath === '/' ? 'location' : undefined}
+                                title="根目录 /"
+                                onClick={() => navigateSshFiles('/')}
+                              >
+                                <svg className="ssh-files__crumb-home" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z" /></svg>
+                              </button>
+                              <div className="ssh-files__crumb-list">
+                                {sshFileBreadcrumbs.map((crumb, index) => {
+                                  const current = index === sshFileBreadcrumbs.length - 1
+                                  return (
+                                    <span key={crumb.path} className="ssh-files__crumb-segment">
+                                      <span className="ssh-files__crumb-sep" aria-hidden="true">/</span>
+                                      <button
+                                        type="button"
+                                        className={current ? 'ssh-files__crumb-button ssh-files__crumb-current' : 'ssh-files__crumb-button'}
+                                        aria-current={current ? 'location' : undefined}
+                                        title={current ? `${crumb.path}\n点击输入目录地址` : crumb.path}
+                                        onClick={() => current ? setSshFilePathDraft(sshFilePath) : navigateSshFiles(crumb.path)}
+                                      >
+                                        {crumb.name}
+                                      </button>
+                                    </span>
+                                  )
+                                })}
+                                {sshFilePath === '/' ? <span className="ssh-files__crumb-current">/</span> : null}
+                              </div>
+                              <button
+                                type="button"
+                                className="ssh-files__crumb-button ssh-files__crumb-edit"
+                                aria-label="输入目录地址"
+                                title="输入目录地址"
+                                onClick={() => setSshFilePathDraft(sshFilePath)}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z" /></svg>
+                              </button>
+                            </>
+                          )}
+                        </nav>
                         <label className="ssh-files__search">
                           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
                           <input
@@ -2620,6 +2826,7 @@ ${conversation.url}`}
                       ) : null}                      <Willow>
                         <Filemanager
                           data={sshFileData}
+                          panels={sshFilePanels}
                           readonly
                           mode="table"
                           preview={false}
@@ -3009,7 +3216,6 @@ ${record.command}`
         >
           <div className="modal__box settings-modal">
             <div className="settings-modal__head">
-              <div className="settings-modal__title-icon">●</div>
               <div>
                 <div className="settings-modal__title">设置</div>
                 <div className="settings-modal__subtitle">外观、代理、更新和登录态</div>
@@ -3018,241 +3224,304 @@ ${record.command}`
               <button type="button" className="settings-modal__close" aria-label="关闭" onClick={() => setSettingsOpen(false)}>×</button>
             </div>
 
-            <div className="modal__body settings-modal__body">
-              <section className="settings-card settings-appearance-card">
-                <div className="settings-card__heading">
-                  <span className="settings-card__icon">◐</span>
-                  <span>外观</span>
-                </div>
-                <div className="settings-appearance-row">
-                  <div>
-                    <div className="settings-proxy-row__label">应用主题</div>
-                  </div>
-                  <select
-                    className="settings-theme-select"
-                    value={themeDraft}
-                    aria-label="应用主题"
-                    onChange={(event) => setThemeDraft(event.target.value as AppTheme)}
+            <div className="settings-modal__layout">
+              <div
+                className="settings-nav"
+                role="tablist"
+                aria-label="设置项"
+                aria-orientation="vertical"
+                onKeyDown={(event) => {
+                  const direction = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
+                  if (!direction && event.key !== 'Home' && event.key !== 'End') return
+                  event.preventDefault()
+                  const currentIndex = SETTINGS_SECTIONS.findIndex((section) => section.id === settingsSection)
+                  const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? SETTINGS_SECTIONS.length - 1 : (currentIndex + direction + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length
+                  setSettingsSection(SETTINGS_SECTIONS[nextIndex].id)
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus()
+                }}
+              >
+                {SETTINGS_SECTIONS.map((section) => (
+                  <button
+                    key={section.id}
+                    id={`settings-tab-${section.id}`}
+                    type="button"
+                    role="tab"
+                    className="settings-nav__item"
+                    aria-selected={settingsSection === section.id}
+                    aria-controls={`settings-panel-${section.id}`}
+                    tabIndex={settingsSection === section.id ? 0 : -1}
+                    onClick={() => setSettingsSection(section.id)}
                   >
-                    <option value="light">浅色</option>
-                    <option value="dark">深色</option>
-                  </select>
-                </div>
-                <div className="settings-avatar-row">
-                  <div>
-                    <div className="settings-proxy-row__label">用户头像</div>
+                    <SettingsSectionIcon section={section.id} />
+                    <span>{section.label}</span>
+                  </button>
+                ))}
+              </div>
+              <div ref={settingsBodyRef} className="modal__body settings-modal__body">
+                {/* Keep panels mounted so changing sections preserves the avatar editor and drafts. */}
+                <section
+                  id="settings-panel-appearance"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-appearance"
+                  tabIndex={0}
+                  hidden={settingsSection !== 'appearance'}
+                  className="settings-card settings-appearance-card"
+                >
+                  <div className="settings-card__heading">
+                    <span className="settings-card__icon"><SettingsSectionIcon section="appearance" /></span>
+                    <h2>外观</h2>
                   </div>
-                  <div className="settings-avatar-control">
-                    {userAvatarDraft ? <img className="settings-avatar-preview-img settings-avatar-preview-img--clickable" src={userAvatarDraft} alt="头像" onClick={() => userAvatarInputRef.current?.click()} /> : <span className="settings-avatar-preview-img settings-avatar-preview-img--empty" role="img" aria-label="未设置头像" onClick={() => userAvatarInputRef.current?.click()}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8.5" r="3.5" /><path d="M5.5 19.5c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /></svg><span className="settings-avatar-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4l10-10-4-4L4 16v4z" /><path d="M13.5 6.5l4 4" /></svg></span></span>}
-                    <input
-                      ref={userAvatarInputRef}
-                      className="settings-avatar-input"
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif"
-                      onChange={(event) => {
-                        const file = event.currentTarget.files?.[0]
-                        event.currentTarget.value = ''
-                        if (!file) return
-                        const reader = new FileReader()
-                        reader.onload = () => {
-                          if (typeof reader.result === 'string') {
-                            setUserAvatarSourceDraft(reader.result)
-                            setUserAvatarDraft(reader.result)
-                            setUserAvatarPositionXDraft(50)
-                            setUserAvatarPositionYDraft(50)
-                            setUserAvatarScaleDraft(1)
-                            setAvatarEditorOpen(true)
-                          }
-                        }
-                        reader.readAsDataURL(file)
-                      }}
-                    />
-
+                  <div className="settings-appearance-row">
+                    <div>
+                      <div className="settings-proxy-row__label">应用主题</div>
+                    </div>
+                    <select
+                      className="settings-theme-select"
+                      value={themeDraft}
+                      aria-label="应用主题"
+                      onChange={(event) => setThemeDraft(event.target.value as AppTheme)}
+                    >
+                      <option value="light">浅色</option>
+                      <option value="dark">深色</option>
+                    </select>
                   </div>
-                </div>
-                {userAvatarSourceDraft && avatarEditorOpen ? (
-                  <div className="settings-avatar-position"><div
-                          className="settings-avatar-editor"
-                          onWheel={(event) => {
-                            event.preventDefault()
-                            setUserAvatarScaleDraft((value) => Math.max(1, Math.min(4, Number((value + (event.deltaY < 0 ? 0.08 : -0.08)).toFixed(2)))))
-                          }}
-                        >
-                          <AvatarEditor
-                            key={userAvatarSourceDraft}
-                            ref={userAvatarEditorRef}
-                            image={userAvatarSourceDraft}
-                            width={220}
-                            height={220}
-                            border={18}
-                            borderRadius={110}
-                            scale={userAvatarScaleDraft}
-                            position={{ x: userAvatarPositionXDraft / 100, y: userAvatarPositionYDraft / 100 }}
-                            color={[24, 28, 36, 0.62]}
-                            onPositionChange={(position) => {
-                              setUserAvatarPositionXDraft(Math.max(0, Math.min(100, position.x * 100)))
-                              setUserAvatarPositionYDraft(Math.max(0, Math.min(100, position.y * 100)))
-                            }}
-                          />
-                        </div>
-                        <div className="settings-avatar-zoom">
-                          <span>缩放</span>
-                          <input
-                            type="range"
-                            min="1"
-                            max="4"
-                            step="0.01"
-                            value={userAvatarScaleDraft}
-                            onChange={(event) => setUserAvatarScaleDraft(Number(event.target.value))}
-                          />
-                          <span>{Math.round(userAvatarScaleDraft * 100)}%</span>
-                        </div>
-                        <div className="settings-avatar-hint">拖动图片调整位置，滚轮或滑块缩放；圆形框就是聊天头像的裁切范围。</div></div>
-                ) : null}
-              </section>
-
-              <section className="settings-card">
-                <div className="settings-card__heading">
-                  <span className="settings-card__icon">◎</span>
-                  <span>网络代理</span>
-                </div>
-
-                {/*
-                  One row per platform, generated from the descriptor list rather than written
-                  out three times — a fourth site then needs no change here at all.
-                */}
-                {CHAT_PLATFORMS.map((platform) => {
-                  const value = proxyDrafts[platform.id] ?? ''
-                  const setValue = (next: string): void =>
-                    setProxyDrafts((current) => ({ ...current, [platform.id]: next }))
-                  return (
-                    <div className="settings-proxy-row" key={platform.id}>
-                      <label className="settings-proxy-row__label">
-                        {platform.label} 代理 <span className="settings-help">?</span>
-                      </label>
+                  <div className="settings-avatar-row">
+                    <div>
+                      <div className="settings-proxy-row__label">用户头像</div>
+                    </div>
+                    <div className="settings-avatar-control">
+                      {userAvatarDraft ? <img className="settings-avatar-preview-img settings-avatar-preview-img--clickable" src={userAvatarDraft} alt="头像" onClick={() => userAvatarInputRef.current?.click()} /> : <span className="settings-avatar-preview-img settings-avatar-preview-img--empty" role="img" aria-label="未设置头像" onClick={() => userAvatarInputRef.current?.click()}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8.5" r="3.5" /><path d="M5.5 19.5c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /></svg><span className="settings-avatar-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4l10-10-4-4L4 16v4z" /><path d="M13.5 6.5l4 4" /></svg></span></span>}
                       <input
-                        className="address__input settings-input"
-                        value={value}
-                        spellCheck={false}
-                        placeholder="http://127.0.0.1:7897"
-                        onChange={(event) => setValue(event.target.value)}
+                        ref={userAvatarInputRef}
+                        className="settings-avatar-input"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0]
+                          event.currentTarget.value = ''
+                          if (!file) return
+                          const reader = new FileReader()
+                          reader.onload = () => {
+                            if (typeof reader.result === 'string') {
+                              setUserAvatarSourceDraft(reader.result)
+                              setUserAvatarDraft(reader.result)
+                              setUserAvatarPositionXDraft(50)
+                              setUserAvatarPositionYDraft(50)
+                              setUserAvatarScaleDraft(1)
+                              setAvatarEditorOpen(true)
+                            }
+                          }
+                          reader.readAsDataURL(file)
+                        }}
                       />
-                      <span className={`settings-state ${value.trim() ? 'settings-state--ok' : ''}`}>
-                        <i />
-                        {value.trim() ? '已配置' : '未配置'}
-                      </span>
+
+                    </div>
+                  </div>
+                  {userAvatarSourceDraft && avatarEditorOpen ? (
+                    <div className="settings-avatar-position"><div
+                            className="settings-avatar-editor"
+                            onWheel={(event) => {
+                              event.preventDefault()
+                              setUserAvatarScaleDraft((value) => Math.max(1, Math.min(4, Number((value + (event.deltaY < 0 ? 0.08 : -0.08)).toFixed(2)))))
+                            }}
+                          >
+                            <AvatarEditor
+                              key={userAvatarSourceDraft}
+                              ref={userAvatarEditorRef}
+                              image={userAvatarSourceDraft}
+                              width={220}
+                              height={220}
+                              border={18}
+                              borderRadius={110}
+                              scale={userAvatarScaleDraft}
+                              position={{ x: userAvatarPositionXDraft / 100, y: userAvatarPositionYDraft / 100 }}
+                              color={[24, 28, 36, 0.62]}
+                              onPositionChange={(position) => {
+                                setUserAvatarPositionXDraft(Math.max(0, Math.min(100, position.x * 100)))
+                                setUserAvatarPositionYDraft(Math.max(0, Math.min(100, position.y * 100)))
+                              }}
+                            />
+                          </div>
+                          <div className="settings-avatar-zoom">
+                            <span>缩放</span>
+                            <input
+                              type="range"
+                              min="1"
+                              max="4"
+                              step="0.01"
+                              value={userAvatarScaleDraft}
+                              onChange={(event) => setUserAvatarScaleDraft(Number(event.target.value))}
+                            />
+                            <span>{Math.round(userAvatarScaleDraft * 100)}%</span>
+                          </div>
+                          <div className="settings-avatar-hint">拖动图片调整位置，滚轮或滑块缩放；圆形框就是聊天头像的裁切范围。</div></div>
+                  ) : null}
+                </section>
+
+                <section
+                  id="settings-panel-proxy"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-proxy"
+                  tabIndex={0}
+                  hidden={settingsSection !== 'proxy'}
+                  className="settings-card"
+                >
+                  <div className="settings-card__heading">
+                    <span className="settings-card__icon"><SettingsSectionIcon section="proxy" /></span>
+                    <h2>网络代理</h2>
+                  </div>
+
+                  {/*
+                    One row per platform, generated from the descriptor list rather than written
+                    out three times — a fourth site then needs no change here at all.
+                  */}
+                  {CHAT_PLATFORMS.map((platform) => {
+                    const value = proxyDrafts[platform.id] ?? ''
+                    const setValue = (next: string): void =>
+                      setProxyDrafts((current) => ({ ...current, [platform.id]: next }))
+                    return (
+                      <div className="settings-proxy-row" key={platform.id}>
+                        <label className="settings-proxy-row__label">
+                          {platform.label} 代理 <span className="settings-help">?</span>
+                        </label>
+                        <input
+                          className="address__input settings-input"
+                          value={value}
+                          spellCheck={false}
+                          placeholder="http://127.0.0.1:7897"
+                          onChange={(event) => setValue(event.target.value)}
+                        />
+                        <span className={`settings-state ${value.trim() ? 'settings-state--ok' : ''}`}>
+                          <i />
+                          {value.trim() ? '已配置' : '未配置'}
+                        </span>
+                        <button
+                          type="button"
+                          className="settings-copy"
+                          aria-label={`复制 ${platform.label} 代理`}
+                          disabled={!value.trim()}
+                          onClick={() => void navigator.clipboard.writeText(value)}
+                        >
+                          ⧉
+                        </button>
+                      </div>
+                    )
+                  })}
+
+                  <div className="settings-proxy-row settings-proxy-row--with-hint">
+                    <label className="settings-proxy-row__label">SSH 代理 <span className="settings-help">?</span><small>留空 = 直连</small></label>
+                    <input className="address__input settings-input" value={sshProxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setSshProxyDraft(event.target.value)} />
+                    <span className={`settings-state ${sshProxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{sshProxyDraft.trim() ? '已配置' : '未配置'}</span>
+                    <button type="button" className="settings-copy" aria-label="复制 SSH 代理" disabled={!sshProxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(sshProxyDraft)}>⧉</button>
+                  </div>
+
+                  <div className="settings-proxy-row">
+                    <label className="settings-proxy-row__label">更新下载 <span className="settings-help">?</span></label>
+                    <input className="address__input settings-input" value={updateProxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setUpdateProxyDraft(event.target.value)} />
+                    <span className={`settings-state ${updateProxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{updateProxyDraft.trim() ? '已配置' : '未配置'}</span>
+                    <button type="button" className="settings-copy" aria-label="复制更新代理" disabled={!updateProxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(updateProxyDraft)}>⧉</button>
+                  </div>
+                </section>
+
+                <section
+                  id="settings-panel-updates"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-updates"
+                  tabIndex={0}
+                  hidden={settingsSection !== 'updates'}
+                  className="settings-card settings-update-card"
+                >
+                  <div className="settings-card__heading">
+                    <span className="settings-card__icon"><SettingsSectionIcon section="updates" /></span>
+                    <h2>应用更新</h2>
+                  </div>
+                  <div className="settings-update-card__content">
+                    <div className={`settings-update-status ${updateStatus?.phase === 'error' ? 'settings-update-status--warn' : ''}`}>
+                      <span className="settings-update-check">✓</span>
+                      <span>{updateStatus === null ? '正在读取更新状态…' : updateStatus.phase === 'checking' ? '正在检查更新…' : updateStatus.phase === 'available' ? `发现新版本 ${updateStatus.version}` : updateStatus.phase === 'downloading' ? `正在下载 ${updateStatus.percent}%…` : updateStatus.phase === 'downloaded' ? `新版本 ${updateStatus.version} 已下载` : updateStatus.phase === 'error' ? `更新出错：${updateStatus.message}` : updateStatus.message || '已是最新版本'}</span>
+                    </div>
+                    <div className="settings-update-actions">
+                      <button type="button" className="settings-outline-btn" disabled={updateStatus !== null && (updateStatus.phase === 'checking' || updateStatus.phase === 'downloading')} onClick={() => void window.api.checkForUpdates()}>检查更新</button>
+                      {updateStatus?.phase === 'available' ? <button type="button" className="settings-outline-btn" disabled={preparingDownload} onClick={() => { setPreparingDownload(true); void window.api.downloadUpdate().finally(() => setPreparingDownload(false)) }}>{preparingDownload ? <><span className="btn-spinner" />正在准备下载…</> : '下载更新'}</button> : null}
+                      {updateStatus?.phase === 'downloaded' ? <button type="button" className="settings-outline-btn" onClick={() => void window.api.installUpdate()}>重启并安装</button> : null}
+                    </div>
+                  </div>
+                </section>
+
+                <section
+                  id="settings-panel-session"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-session"
+                  tabIndex={0}
+                  hidden={settingsSection !== 'session'}
+                  className="settings-card settings-session-card"
+                >
+                  <div className="settings-card__heading">
+                    <span className="settings-card__icon"><SettingsSectionIcon section="session" /></span>
+                    <h2>浏览器登录态</h2>
+                  </div>
+
+                  {/*
+                    One card, two named sections — and each section imports into ITS OWN platform,
+                    by id.
+
+                    NOT by "the current session", which is what this used to do and what a first
+                    draft of this comment wrongly justified with a disabled state. A partition
+                    belongs to a PLATFORM and every session of that platform shares it, so a login
+                    state is global: it has nothing to do with which session is in front. Routing by
+                    active session made the destination depend on the visible tab, and then needed a
+                    gate that told the user to switch sessions for a reason that was not true.
+                  */}
+                  <div className="settings-session-group">
+                    <div className="settings-session-group__title">
+                      ChatGPT
+                    </div>
+                    <div className="settings-session-row">
+                      <label>Cookie 名称</label>
+                      <input className="address__input settings-input" value={sessionCookieName} spellCheck={false} disabled={false} onChange={(event) => setSessionCookieName(event.target.value)} />
+                    </div>
+                    <div className="settings-session-row settings-session-row--value">
+                      <label>Cookie 值 / 整行 cookie</label>
+                      <textarea className="address__input session-import__value settings-input" value={sessionCookieValue} spellCheck={false} autoComplete="off" rows={3} disabled={false} placeholder="粘贴整行 cookie，或只粘 Value 一列的内容" onChange={(event) => setSessionCookieValue(event.target.value)} />
+                      <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
+                    </div>
+                    {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
+                  </div>
+
+                  <div className="settings-session-group">
+                    <div className="settings-session-group__title">
+                      Gemini
+                    </div>
+
+                    <div className="settings-session-row settings-session-row--value">
+                      <label>整行 cookie</label>
+                      <textarea
+                        className="address__input session-import__value settings-input"
+                        value={cookieSetDraft}
+                        spellCheck={false}
+                        autoComplete="off"
+                        rows={3}
+                        disabled={false}
+                        placeholder="DevTools → Network → 点任意一个 google.com 请求 → Headers → 复制整行 cookie:（「Copy as cURL」也可以）"
+                        onChange={(event) => setCookieSetDraft(event.target.value)}
+                      />
                       <button
                         type="button"
-                        className="settings-copy"
-                        aria-label={`复制 ${platform.label} 代理`}
-                        disabled={!value.trim()}
-                        onClick={() => void navigator.clipboard.writeText(value)}
+                        className="settings-outline-btn settings-import-btn"
+                        disabled={importingCookieSet || cookieSetDraft.trim() === ''}
+                        onClick={() => void submitCookieSetImport()}
                       >
-                        ⧉
+                        {importingCookieSet ? '导入中…' : '导入全部 cookie'}
                       </button>
                     </div>
-                  )
-                })}
-
-                <div className="settings-proxy-row settings-proxy-row--with-hint">
-                  <label className="settings-proxy-row__label">SSH 代理 <span className="settings-help">?</span><small>留空 = 直连</small></label>
-                  <input className="address__input settings-input" value={sshProxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setSshProxyDraft(event.target.value)} />
-                  <span className={`settings-state ${sshProxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{sshProxyDraft.trim() ? '已配置' : '未配置'}</span>
-                  <button type="button" className="settings-copy" aria-label="复制 SSH 代理" disabled={!sshProxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(sshProxyDraft)}>⧉</button>
-                </div>
-
-                <div className="settings-proxy-row">
-                  <label className="settings-proxy-row__label">更新下载 <span className="settings-help">?</span></label>
-                  <input className="address__input settings-input" value={updateProxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setUpdateProxyDraft(event.target.value)} />
-                  <span className={`settings-state ${updateProxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{updateProxyDraft.trim() ? '已配置' : '未配置'}</span>
-                  <button type="button" className="settings-copy" aria-label="复制更新代理" disabled={!updateProxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(updateProxyDraft)}>⧉</button>
-                </div>
-              </section>
-
-              <section className="settings-card settings-update-card">
-                <div className="settings-card__heading">
-                  <span className="settings-card__icon">⇩</span>
-                  <span>应用更新</span>
-                </div>
-                <div className="settings-update-card__content">
-                  <div className={`settings-update-status ${updateStatus?.phase === 'error' ? 'settings-update-status--warn' : ''}`}>
-                    <span className="settings-update-check">✓</span>
-                    <span>{updateStatus === null ? '正在读取更新状态…' : updateStatus.phase === 'checking' ? '正在检查更新…' : updateStatus.phase === 'available' ? `发现新版本 ${updateStatus.version}` : updateStatus.phase === 'downloading' ? `正在下载 ${updateStatus.percent}%…` : updateStatus.phase === 'downloaded' ? `新版本 ${updateStatus.version} 已下载` : updateStatus.phase === 'error' ? `更新出错：${updateStatus.message}` : updateStatus.message || '已是最新版本'}</span>
+                    {cookieSetResult ? (
+                      <p className={cookieSetResult.signedIn ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>
+                        {cookieSetResult.message}
+                      </p>
+                    ) : null}
                   </div>
-                  <div className="settings-update-actions">
-                    <button type="button" className="settings-outline-btn" disabled={updateStatus !== null && (updateStatus.phase === 'checking' || updateStatus.phase === 'downloading')} onClick={() => void window.api.checkForUpdates()}>检查更新</button>
-                    {updateStatus?.phase === 'available' ? <button type="button" className="settings-outline-btn" disabled={preparingDownload} onClick={() => { setPreparingDownload(true); void window.api.downloadUpdate().finally(() => setPreparingDownload(false)) }}>{preparingDownload ? <><span className="btn-spinner" />正在准备下载…</> : '下载更新'}</button> : null}
-                    {updateStatus?.phase === 'downloaded' ? <button type="button" className="settings-outline-btn" onClick={() => void window.api.installUpdate()}>重启并安装</button> : null}
-                  </div>
-                </div>
-              </section>
-
-              <section className="settings-card settings-session-card">
-                <div className="settings-card__heading">
-                  <span className="settings-card__icon">▣</span>
-                  <span>浏览器登录态</span>
-                </div>
-
-                {/*
-                  One card, two named sections — and each section imports into ITS OWN platform,
-                  by id.
-                  
-                  NOT by "the current session", which is what this used to do and what a first
-                  draft of this comment wrongly justified with a disabled state. A partition
-                  belongs to a PLATFORM and every session of that platform shares it, so a login
-                  state is global: it has nothing to do with which session is in front. Routing by
-                  active session made the destination depend on the visible tab, and then needed a
-                  gate that told the user to switch sessions for a reason that was not true.
-                */}
-                <div className="settings-session-group">
-                  <div className="settings-session-group__title">
-                    ChatGPT
-                  </div>
-                  <div className="settings-session-row">
-                    <label>Cookie 名称</label>
-                    <input className="address__input settings-input" value={sessionCookieName} spellCheck={false} disabled={false} onChange={(event) => setSessionCookieName(event.target.value)} />
-                  </div>
-                  <div className="settings-session-row settings-session-row--value">
-                    <label>Cookie 值 / 整行 cookie</label>
-                    <textarea className="address__input session-import__value settings-input" value={sessionCookieValue} spellCheck={false} autoComplete="off" rows={3} disabled={false} placeholder="粘贴整行 cookie，或只粘 Value 一列的内容" onChange={(event) => setSessionCookieValue(event.target.value)} />
-                    <button type="button" className="settings-outline-btn settings-import-btn" disabled={importingSession || sessionCookieValue.trim() === ''} onClick={() => void submitSessionImport()}>{importingSession ? '导入中…' : '导入并重新加载'}</button>
-                  </div>
-                  {sessionImport ? <p className={sessionImport.signedIn || (sessionImportPhase === 'preview' && sessionImport.ok) ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>{sessionImport.message}</p> : null}
-                </div>
-
-                <div className="settings-session-group">
-                  <div className="settings-session-group__title">
-                    Gemini
-                  </div>
-
-                  <div className="settings-session-row settings-session-row--value">
-                    <label>整行 cookie</label>
-                    <textarea
-                      className="address__input session-import__value settings-input"
-                      value={cookieSetDraft}
-                      spellCheck={false}
-                      autoComplete="off"
-                      rows={3}
-                      disabled={false}
-                      placeholder="DevTools → Network → 点任意一个 google.com 请求 → Headers → 复制整行 cookie:（「Copy as cURL」也可以）"
-                      onChange={(event) => setCookieSetDraft(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="settings-outline-btn settings-import-btn"
-                      disabled={importingCookieSet || cookieSetDraft.trim() === ''}
-                      onClick={() => void submitCookieSetImport()}
-                    >
-                      {importingCookieSet ? '导入中…' : '导入全部 cookie'}
-                    </button>
-                  </div>
-                  {cookieSetResult ? (
-                    <p className={cookieSetResult.signedIn ? 'settings-import-message' : 'settings-import-message settings-import-message--warn'}>
-                      {cookieSetResult.message}
-                    </p>
-                  ) : null}
-                </div>
-              </section>
+                </section>
+              </div>
             </div>
 
             <div className="modal__foot settings-modal__foot">
@@ -3393,6 +3662,7 @@ ${record.command}`
         </div>
       ) : null}
       <MysqlDialog open={mysqlDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setMysqlDialogOpen(false)} />
+      <NacosDialog open={nacosDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setNacosDialogOpen(false)} />
       <GitDialog open={gitDialogOpen} cwd={terminal?.cwd ?? ""} theme={settings?.theme ?? "light"} onClose={() => setGitDialogOpen(false)} />
     </div>
   )
