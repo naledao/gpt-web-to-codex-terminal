@@ -4,6 +4,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -28,11 +29,18 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
 
     private final UserDeviceMapper userDeviceMapper;
     private final ObjectMapper objectMapper;
+    private final AgentDesktopClientRegistry agentDesktopClientRegistry;
+    private final ObjectProvider<DesktopWebSocketHandler> desktopWebSocketHandlerProvider;
     private final ConcurrentMap<String, WebSocketSession> currentSessions = new ConcurrentHashMap<>();
 
-    public AgentWebSocketHandler(UserDeviceMapper userDeviceMapper, ObjectMapper objectMapper) {
+    public AgentWebSocketHandler(UserDeviceMapper userDeviceMapper,
+                                 ObjectMapper objectMapper,
+                                 AgentDesktopClientRegistry agentDesktopClientRegistry,
+                                 ObjectProvider<DesktopWebSocketHandler> desktopWebSocketHandlerProvider) {
         this.userDeviceMapper = userDeviceMapper;
         this.objectMapper = objectMapper;
+        this.agentDesktopClientRegistry = agentDesktopClientRegistry;
+        this.desktopWebSocketHandlerProvider = desktopWebSocketHandlerProvider;
     }
 
     @Override
@@ -74,7 +82,24 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
                 return;
             }
             session.sendMessage(new TextMessage("{\"type\":\"heartbeat_ack\"}"));
+            return;
         }
+
+        String deviceId = deviceId(session);
+        String desktopClientId = agentDesktopClientRegistry.getDesktopClientId(deviceId);
+        WebSocketSession desktopSession = desktopClientId == null
+                ? null
+                : desktopWebSocketHandlerProvider.getObject().getSession(desktopClientId);
+        if (desktopSession == null) {
+            log.warn("Cannot forward Agent message because Desktop is offline: deviceId={}, type={}",
+                    deviceId, json.path("type").asText());
+            return;
+        }
+
+        // 非心跳消息按 Agent 与 Desktop 的绑定关系原样转发给对应 Desktop。
+        desktopSession.sendMessage(new TextMessage(message.getPayload()));
+        log.debug("Agent message forwarded to Desktop: deviceId={}, type={}",
+                deviceId, json.path("type").asText());
     }
 
     @Override

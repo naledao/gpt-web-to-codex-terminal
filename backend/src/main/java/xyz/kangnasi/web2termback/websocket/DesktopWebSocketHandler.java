@@ -14,6 +14,7 @@ import xyz.kangnasi.web2termback.interceptor.DesktopHandshakeInterceptor;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+
 /**
  * Desktop WebSocket 连接处理器。
  * 负责维护 Desktop 会话并接收 Desktop 发来的 JSON 文本消息。
@@ -27,10 +28,14 @@ public class DesktopWebSocketHandler extends TextWebSocketHandler {
     private final ConcurrentMap<String, WebSocketSession> currentSessions = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
     private final AgentWebSocketHandler agentWebSocketHandler;
+    private final AgentDesktopClientRegistry agentDesktopClientRegistry;
 
-    public DesktopWebSocketHandler(ObjectMapper objectMapper, AgentWebSocketHandler agentWebSocketHandler) {
+    public DesktopWebSocketHandler(ObjectMapper objectMapper,
+                                   AgentWebSocketHandler agentWebSocketHandler,
+                                   AgentDesktopClientRegistry agentDesktopClientRegistry) {
         this.objectMapper = objectMapper;
         this.agentWebSocketHandler = agentWebSocketHandler;
+        this.agentDesktopClientRegistry = agentDesktopClientRegistry;
     }
 
     @Override
@@ -39,10 +44,17 @@ public class DesktopWebSocketHandler extends TextWebSocketHandler {
         String desktopClientId = desktopClientId(session);
         String agentId = agentId(session);
 
-        // 同一个 desktopClientId 只保留最新连接，避免一个客户端标识对应多个活跃 Session。
+        // Desktop Session 仍按 desktopClientId 保存；两个业务 ID 之间只维护 agentId -> desktopClientId。
         WebSocketSession previous = currentSessions.put(desktopClientId, session);
+        String previousDesktopClientId = agentDesktopClientRegistry.bind(agentId, desktopClientId);
         if (previous != null && previous != session && previous.isOpen()) {
             previous.close(REPLACED);
+        }
+        if (previousDesktopClientId != null && !previousDesktopClientId.equals(desktopClientId)) {
+            WebSocketSession previousAgentDesktop = currentSessions.get(previousDesktopClientId);
+            if (previousAgentDesktop != null && previousAgentDesktop.isOpen()) {
+                previousAgentDesktop.close(REPLACED);
+            }
         }
         log.info("Desktop connected: userId={}, desktopClientId={}, agentId={}",
                 userId, desktopClientId, agentId);
@@ -86,6 +98,7 @@ public class DesktopWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String desktopClientId = desktopClientId(session);
         if (currentSessions.remove(desktopClientId, session)) {
+            agentDesktopClientRegistry.unbind(agentId(session), desktopClientId);
             log.info("Desktop disconnected: userId={}, desktopClientId={}, agentId={}, status={}",
                     userId(session), desktopClientId, agentId(session), status);
         }
