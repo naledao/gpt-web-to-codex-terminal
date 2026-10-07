@@ -13660,7 +13660,7 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 18px 22px 16px;
+  padding: 12px 18px;
   border-bottom: 1px solid #eef1f6;
   background: #fff;
 }
@@ -14239,13 +14239,14 @@ body {
 }
 
 .nacos-page__tabs {
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding-bottom: 12px;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .nacos-page__tabs-empty {
@@ -14672,4 +14673,18 @@ body {
 .workspace[data-theme='dark'] .nacos-page__console {
   border-color: #1a2230;
   background: #0f151f;
+}
+/* The tab strip lives in the header now, so its tabs must not shrink or wrap. */
+.nacos-page__tabs > * {
+  flex: none;
+}
+
+.nacos-page__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* The close button is pushed right by the tabs, which now take the free space. */
+.nacos-page__tabs-empty {
+  flex: 1 1 auto;
+  padding-left: 2px;
 }

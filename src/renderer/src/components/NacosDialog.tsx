@@ -288,6 +288,37 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
             <p className="nacos-page__sub">{state ? state.machineLabel : '配置管理与服务发现'}</p>
           </div>
 
+          <div className="nacos-page__tabs">
+            {tabs.length === 0 ? (
+              <span className="nacos-page__tabs-empty">未打开任何控制台</span>
+            ) : (
+              tabs.map((tab) => (
+                <div key={tab.key} className={tab.key === activeKey ? 'nacos-page__tab nacos-page__tab--active' : 'nacos-page__tab'}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab.key === activeKey}
+                    className="nacos-page__tab-label"
+                    title={tabTitle(tab)}
+                    onClick={() => setActiveKey(tab.key)}
+                  >
+                    {tabTitle(tab)}
+                  </button>
+                  <button type="button" className="nacos-page__tab-close" aria-label="关闭标签页" onClick={() => closeTab(tab.key)}>
+                    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                      <path d="M4 4l8 8M12 4l-8 8" />
+                    </svg>
+                  </button>
+                </div>
+              ))
+            )}
+            <button type="button" className="nacos-page__add" onClick={addTab}>
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
+                <path d="M8 3.2v9.6M3.2 8h9.6" />
+              </svg>
+              添加连接
+            </button>
+          </div>
           <button type="button" className="nacos-page__close" aria-label="关闭" onClick={onClose}>
             <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
               <path d="M4 4l8 8M12 4l-8 8" />
@@ -338,37 +369,6 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
           </aside>
 
           <section className="nacos-page__detail">
-            <div className="nacos-page__tabs">
-              {tabs.length === 0 ? (
-                <span className="nacos-page__tabs-empty">未打开任何控制台</span>
-              ) : (
-                tabs.map((tab) => (
-                  <div key={tab.key} className={tab.key === activeKey ? 'nacos-page__tab nacos-page__tab--active' : 'nacos-page__tab'}>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={tab.key === activeKey}
-                      className="nacos-page__tab-label"
-                      title={tabTitle(tab)}
-                      onClick={() => setActiveKey(tab.key)}
-                    >
-                      {tabTitle(tab)}
-                    </button>
-                    <button type="button" className="nacos-page__tab-close" aria-label="关闭标签页" onClick={() => closeTab(tab.key)}>
-                      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                        <path d="M4 4l8 8M12 4l-8 8" />
-                      </svg>
-                    </button>
-                  </div>
-                ))
-              )}
-              <button type="button" className="nacos-page__add" onClick={addTab}>
-                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
-                  <path d="M8 3.2v9.6M3.2 8h9.6" />
-                </svg>
-                添加连接
-              </button>
-            </div>
 
             {error !== '' ? <p className="nacos-page__hint nacos-page__hint--error">{error}</p> : null}
 
