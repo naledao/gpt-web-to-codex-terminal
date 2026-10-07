@@ -87,6 +87,13 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    /**
+     * 根据 Agent 的 deviceId 获取当前活动会话，Desktop 转发消息时通过这里定位目标 Agent。
+     */
+    public WebSocketSession getSession(String deviceId) {
+        WebSocketSession session = currentSessions.get(deviceId);
+        return session != null && session.isOpen() ? session : null;
+    }
     private static long userId(WebSocketSession session) {
         return ((Number) session.getAttributes().get(AgentHandshakeInterceptor.ATTR_USER_ID)).longValue();
     }

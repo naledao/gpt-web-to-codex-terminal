@@ -26,9 +26,11 @@ public class DesktopWebSocketHandler extends TextWebSocketHandler {
 
     private final ConcurrentMap<String, WebSocketSession> currentSessions = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
+    private final AgentWebSocketHandler agentWebSocketHandler;
 
-    public DesktopWebSocketHandler(ObjectMapper objectMapper) {
+    public DesktopWebSocketHandler(ObjectMapper objectMapper, AgentWebSocketHandler agentWebSocketHandler) {
         this.objectMapper = objectMapper;
+        this.agentWebSocketHandler = agentWebSocketHandler;
     }
 
     @Override
@@ -63,9 +65,21 @@ public class DesktopWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        // 当前先提供统一消息入口，后续根据 type 分发终端建立、输入和尺寸调整等业务消息。
+        String agentId = agentId(session);
         log.info("Desktop message received: userId={}, desktopClientId={}, agentId={}, type={}",
-                userId(session), desktopClientId(session), agentId(session), type);
+                userId(session), desktopClientId(session), agentId, type);
+
+        // X-Agent-Id 已在握手阶段完成归属和启用状态校验，这里只使用服务端保存的 agentId 定位 Agent Session。
+        WebSocketSession agentSession = agentWebSocketHandler.getSession(agentId);
+        if (agentSession == null) {
+            log.warn("Cannot forward Desktop message because Agent is offline: desktopClientId={}, agentId={}, type={}",
+                    desktopClientId(session), agentId, type);
+            return;
+        }
+
+        agentSession.sendMessage(new TextMessage(message.getPayload()));
+        log.debug("Desktop message forwarded to Agent: desktopClientId={}, agentId={}, type={}",
+                desktopClientId(session), agentId, type);
     }
 
     @Override
