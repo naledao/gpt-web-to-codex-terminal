@@ -17,7 +17,7 @@ interface NacosDialogProps {
   onClose: () => void
 }
 
-/** Editable shape of one console row. */
+/** Editable shape of one saved console. */
 interface ConsoleForm {
   id: string
   name: string
@@ -25,23 +25,38 @@ interface ConsoleForm {
   namespace: string
 }
 
-/**
- * One open page.
- *
- * A CONNECTION page is the editable address plus, once it is saved and opened, the live
- * console. There is only one kind of page — unlike MySQL there are no table/DDL pages to
- * distinguish — so the kind is carried explicitly rather than inferred from which fields
- * happen to be set, which is what a later "server list" step would need anyway.
- */
-interface ConsoleTab {
+/** A saved console being edited. Its page never shows the live site. */
+interface ConnectionTab {
   kind: 'connection'
-  /** The row id, or a temporary one for a console never saved. */
   key: string
   form: ConsoleForm
-  /** True when this tab has been saved, so the address fields stop being editable. */
   saved: boolean
-  /** The live console state, and whether this tab is the one showing it. */
+}
+
+/**
+ * A console that is actually on screen.
+ *
+ * Separate from the connection page on purpose. Editing an address and LOOKING at the site
+ * are different jobs, and one page cannot honestly be both: a tab whose fields stay
+ * editable while a live page is loaded underneath leaves it unclear which one is in charge.
+ * Opening the console therefore opens its OWN tab, and closing that tab is what takes the
+ * page down.
+ */
+interface ConsoleTab {
+  kind: 'console'
+  key: string
+  /** The saved row this page was opened from. */
+  connectionId: string
+  name: string
+  url: string
   view: NacosViewState
+}
+
+type NacosTab = ConnectionTab | ConsoleTab
+
+/** Key of the console page for one saved row; one page per connection, never two. */
+function consoleKeyFor(connectionId: string): string {
+  return 'console:' + connectionId
 }
 
 const EMPTY_FORM: ConsoleForm = { id: '', name: '', url: '', namespace: '' }
@@ -64,15 +79,32 @@ function draftFromForm(form: ConsoleForm): NacosConnectionDraft {
   }
 }
 
-/** What the tab strip shows: the given name, else the host, else "新的控制台". */
-function tabTitle(tab: ConsoleTab): string {
-  if (tab.form.name.trim() !== '') return tab.form.name.trim()
-  const url = tab.form.url.trim()
-  if (url === '') return '新的控制台'
+/** What a tab says: the given name, else the host, else a placeholder. */
+function tabTitle(tab: NacosTab): string {
+  const name = tab.kind === 'connection' ? tab.form.name.trim() : tab.name.trim()
+  if (name !== '') return name
+  const url = tab.kind === 'connection' ? tab.form.url.trim() : tab.url
+  if (url === '') return '新的连接'
   try {
     return new URL(url.includes('://') ? url : 'http://' + url).host
   } catch {
     return url
+  }
+}
+
+/**
+ * Whether the live view is already pointed at this console.
+ *
+ * Compared by ORIGIN, not full URL: a Nacos console routes internally (#/login, #/config)
+ * and reloading on every in-page hop would throw away the session the user just signed into.
+ */
+function sameConsole(view: NacosViewState, url: string): boolean {
+  if (!view.active || view.url === '') return false
+  try {
+    const target = new URL(url.includes('://') ? url : 'http://' + url)
+    return new URL(view.url).origin === target.origin
+  } catch {
+    return false
   }
 }
 
@@ -97,14 +129,17 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [state, setState] = useState<NacosConnectionsState | null>(null)
-  const [tabs, setTabs] = useState<ConsoleTab[]>([])
+  const [tabs, setTabs] = useState<NacosTab[]>([])
   const [activeKey, setActiveKey] = useState('')
   const [opening, setOpening] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<NacosConnection | null>(null)
   const newTabRef = useRef(0)
   /** Focused when saving is refused, so the missing field is the one on screen. */
   const urlRef = useRef<HTMLInputElement>(null)
+  /** Read by the activation effect, which must not re-run every time a view state lands. */
+  const tabsRef = useRef<NacosTab[]>([])
 
+  tabsRef.current = tabs
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -128,40 +163,86 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
   }, [open, refresh])
 
   /*
-   * Mirror the live view state, but only into the tab that is actually showing it. The
-   * console is a single native view shared by the whole dialog, so a state arriving while a
-   * different tab is active belongs to nobody and is dropped rather than written into the
-   * wrong tab.
+   * Mirror the live view into the console page that is showing it. A state arriving while a
+   * connection page is active belongs to no visible page, and is dropped rather than written
+   * into a tab that would then describe a page it is not showing.
    */
   useEffect(() => {
     if (!open) return
     return window.api.onNacosState((view) => {
       setTabs((current) =>
-        current.map((tab) => (tab.key === activeKey ? { ...tab, view } : tab))
+        current.map((tab) =>
+          tab.kind === 'console' && tab.key === activeKey ? { ...tab, view } : tab
+        )
       )
     })
   }, [open, activeKey])
 
-  // Whatever the view was showing when this dialog closed is gone; the tabs must not claim
-  // otherwise the next time one is opened.
+  /*
+   * Activating a console page brings its site back on screen.
+   *
+   * Done here rather than in the click handler so that every route into a console page — the
+   * tab strip, a freshly opened one, the one left active after a delete — goes through the
+   * same check. Reloading is skipped when the view already sits on that origin, which is what
+   * keeps a signed-in console signed in while the user moves between tabs.
+   */
+  useEffect(() => {
+    if (!open || activeKey === '') return
+    const tab = tabsRef.current.find((item) => item.key === activeKey)
+    if (!tab || tab.kind !== 'console') return
+
+    let cancelled = false
+    void (async () => {
+      const current = await window.api.getNacosState()
+      if (cancelled) return
+      if (sameConsole(current, tab.url)) {
+        setTabs((now) =>
+          now.map((item) =>
+            item.kind === 'console' && item.key === tab.key ? { ...item, view: current } : item
+          )
+        )
+        return
+      }
+      const view = await window.api.openNacosView(tab.url)
+      if (cancelled) return
+      setTabs((now) =>
+        now.map((item) => (item.kind === 'console' && item.key === tab.key ? { ...item, view } : item))
+      )
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, activeKey])
+
+  // Leaving the dialog takes the page down; the tabs must not claim otherwise next time.
   useEffect(() => {
     if (open) return
-    setTabs((current) => current.map((tab) => ({ ...tab, view: EMPTY_NACOS_VIEW_STATE })))
+    setTabs((current) =>
+      current.map((item) => (item.kind === 'console' ? { ...item, view: EMPTY_NACOS_VIEW_STATE } : item))
+    )
     void window.api.closeNacosView()
   }, [open])
 
   const addTab = useCallback((): void => {
     newTabRef.current += 1
     const key = 'new:' + String(newTabRef.current)
-    setTabs((current) => [...current, { kind: 'connection', key, form: { ...EMPTY_FORM }, saved: false, view: EMPTY_NACOS_VIEW_STATE }])
+    setTabs((current) => [
+      ...current,
+      { kind: 'connection', key, form: { ...EMPTY_FORM }, saved: false }
+    ])
     setActiveKey(key)
     setError('')
   }, [])
 
+  /** Open the saved console in a tab, reusing the one already open for it. */
   const openConnectionTab = useCallback((connection: NacosConnection): void => {
     setTabs((current) => {
       if (current.some((tab) => tab.key === connection.id)) return current
-      return [...current, { kind: 'connection', key: connection.id, form: formFromConnection(connection), saved: true, view: EMPTY_NACOS_VIEW_STATE }]
+      return [
+        ...current,
+        { kind: 'connection', key: connection.id, form: formFromConnection(connection), saved: true }
+      ]
     })
     setActiveKey(connection.id)
     setError('')
@@ -184,14 +265,18 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
 
   const updateForm = useCallback(
     (patch: Partial<ConsoleForm>): void => {
-      setTabs((current) => current.map((tab) => (tab.key === activeKey ? { ...tab, form: { ...tab.form, ...patch } } : tab)))
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.kind === 'connection' && tab.key === activeKey ? { ...tab, form: { ...tab.form, ...patch } } : tab
+        )
+      )
     },
     [activeKey]
   )
 
   const saveActive = useCallback(async (): Promise<void> => {
     const tab = tabs.find((item) => item.key === activeKey)
-    if (!tab || saving) return
+    if (!tab || tab.kind !== 'connection' || saving) return
     if (tab.form.url.trim() === '') {
       setError('请填写 Nacos 控制台地址。')
       urlRef.current?.focus()
@@ -203,10 +288,12 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
       const result = await window.api.saveNacosConnection(draftFromForm(tab.form))
       setState(result)
       // The temporary key has to become the real row id, or the tab is orphaned the moment
-      // the list refreshes and the sidebar tries to highlight a row that no longer matches.
+      // the list refreshes and the sidebar highlights a row that no longer matches it.
       setTabs((current) =>
         current.map((item) =>
-          item.key === activeKey ? { ...item, key: result.id, form: { ...item.form, id: result.id }, saved: true } : item
+          item.kind === 'connection' && item.key === activeKey
+            ? { ...item, key: result.id, form: { ...item.form, id: result.id }, saved: true }
+            : item
         )
       )
       setActiveKey(result.id)
@@ -218,11 +305,18 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
     }
   }, [tabs, activeKey, saving])
 
-  /** Open (or re-open) the console in this tab, saving first when it has never been saved. */
-  const openConsole = useCallback(async (): Promise<void> => {
+  /**
+   * Open the console shown on this page, in its own tab.
+   *
+   * An unsaved console is saved first rather than refused: opening it is the whole point, and
+   * making the user press Save before they may look at their own server would be ceremony.
+   */
+  const openConsoleTab = useCallback(async (): Promise<void> => {
     const tab = tabs.find((item) => item.key === activeKey)
-    if (!tab || opening) return
-    if (tab.form.url.trim() === '') {
+    if (!tab || tab.kind !== 'connection' || opening) return
+
+    const url = tab.form.url.trim()
+    if (url === '') {
       setError('请填写 Nacos 控制台地址。')
       urlRef.current?.focus()
       return
@@ -230,23 +324,28 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
 
     setOpening(true)
     try {
-      // An unsaved console is saved here rather than refused: the whole point of opening it
-      // is to look at it, and making the user press Save first would be ceremony.
-      let key = tab.key
+      let id = tab.form.id
       if (!tab.saved) {
         const result = await window.api.saveNacosConnection(draftFromForm(tab.form))
         setState(result)
-        key = result.id
+        id = result.id
         setTabs((current) =>
           current.map((item) =>
-            item.key === tab.key ? { ...item, key: result.id, form: { ...item.form, id: result.id }, saved: true } : item
+            item.kind === 'connection' && item.key === tab.key
+              ? { ...item, key: result.id, form: { ...item.form, id: result.id }, saved: true }
+              : item
           )
         )
-        setActiveKey(result.id)
       }
 
-      const view = await window.api.openNacosView(tab.form.url.trim())
-      setTabs((current) => current.map((item) => (item.key === key ? { ...item, view } : item)))
+      const key = consoleKeyFor(id)
+      const name = tab.form.name.trim() !== '' ? tab.form.name.trim() : url
+      setTabs((current) =>
+        current.some((item) => item.key === key)
+          ? current
+          : [...current, { kind: 'console', key, connectionId: id, name, url, view: EMPTY_NACOS_VIEW_STATE }]
+      )
+      setActiveKey(key)
       setError('')
     } catch {
       setError('打开控制台失败，请检查地址。')
@@ -258,15 +357,22 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
   const confirmDelete = useCallback(async (): Promise<void> => {
     if (!pendingDelete) return
     try {
-      setState(await window.api.removeNacosConnection(pendingDelete.id))
-      closeTab(pendingDelete.id)
+      const next = await window.api.removeNacosConnection(pendingDelete.id)
+      setState(next)
+      // The console page for a deleted row has nothing left to point at, so it goes too.
+      const consoleKey = consoleKeyFor(pendingDelete.id)
+      const remaining = tabs.filter((tab) => tab.key !== pendingDelete.id && tab.key !== consoleKey)
+      setTabs(remaining)
+      if (activeKey === pendingDelete.id || activeKey === consoleKey) {
+        setActiveKey(remaining.length === 0 ? '' : remaining[remaining.length - 1].key)
+      }
       setError('')
     } catch {
       setError('删除失败，请重试。')
     } finally {
       setPendingDelete(null)
     }
-  }, [pendingDelete, closeTab])
+  }, [pendingDelete, tabs, activeKey])
 
   if (!open) return null
 
@@ -290,10 +396,13 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
 
           <div className="nacos-page__tabs">
             {tabs.length === 0 ? (
-              <span className="nacos-page__tabs-empty">未打开任何控制台</span>
+              <span className="nacos-page__tabs-empty">未打开任何页面</span>
             ) : (
               tabs.map((tab) => (
-                <div key={tab.key} className={tab.key === activeKey ? 'nacos-page__tab nacos-page__tab--active' : 'nacos-page__tab'}>
+                <div
+                  key={tab.key}
+                  className={tab.key === activeKey ? 'nacos-page__tab nacos-page__tab--active' : 'nacos-page__tab'}
+                >
                   <button
                     type="button"
                     role="tab"
@@ -302,9 +411,15 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
                     title={tabTitle(tab)}
                     onClick={() => setActiveKey(tab.key)}
                   >
+                    {tab.kind === 'console' ? <span className="nacos-page__tab-dot" aria-hidden="true" /> : null}
                     {tabTitle(tab)}
                   </button>
-                  <button type="button" className="nacos-page__tab-close" aria-label="关闭标签页" onClick={() => closeTab(tab.key)}>
+                  <button
+                    type="button"
+                    className="nacos-page__tab-close"
+                    aria-label="关闭标签页"
+                    onClick={() => closeTab(tab.key)}
+                  >
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
                       <path d="M4 4l8 8M12 4l-8 8" />
                     </svg>
@@ -319,6 +434,7 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
               添加连接
             </button>
           </div>
+
           <button type="button" className="nacos-page__close" aria-label="关闭" onClick={onClose}>
             <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
               <path d="M4 4l8 8M12 4l-8 8" />
@@ -347,7 +463,9 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
                       onClick={() => openConnectionTab(connection)}
                     >
                       <span className="nacos-page__item-main">
-                        <span className="nacos-page__item-name">{connection.name.trim() === '' ? connection.url : connection.name}</span>
+                        <span className="nacos-page__item-name">
+                          {connection.name.trim() === '' ? connection.url : connection.name}
+                        </span>
                         <span className="nacos-page__item-target">{connection.url}</span>
                       </span>
                     </button>
@@ -369,7 +487,6 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
           </aside>
 
           <section className="nacos-page__detail">
-
             {error !== '' ? <p className="nacos-page__hint nacos-page__hint--error">{error}</p> : null}
 
             {activeTab === null ? (
@@ -377,74 +494,75 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
                 <span className="nacos-page__empty-mark" aria-hidden="true">
                   <NacosIcon size={40} />
                 </span>
-                <p className="nacos-page__empty-title">没有打开的控制台</p>
+                <p className="nacos-page__empty-title">没有打开的页面</p>
                 <p className="nacos-page__empty-sub">从左侧选择已保存的连接，或点“添加连接”填写新的地址。</p>
               </div>
+            ) : activeTab.kind === 'console' ? (
+              <NacosConsoleView tab={activeTab} />
             ) : (
-              <>
-                <div className="nacos-page__card">
-                  <div className="nacos-page__card-head">
-                    <h3 className="nacos-page__card-title">{activeTab.saved ? '连接信息' : '新建连接'}</h3>
-                    <div className="nacos-page__card-actions">
-                      <button type="button" className="nacos-page__btn" disabled={saving} onClick={() => void saveActive()}>
-                        {saving ? '保存中…' : '保存'}
-                      </button>
-                      <button type="button" className="nacos-page__btn nacos-page__btn--primary" disabled={opening} onClick={() => void openConsole()}>
-                        {opening ? '打开中…' : '打开控制台'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="nacos-page__grid">
-                    <label className="nacos-page__field">
-                      <span className="nacos-page__label">名称</span>
-                      <input
-                        className="nacos-page__input"
-                        value={activeTab.form.name}
-                        spellCheck={false}
-                        placeholder="例如 本地开发"
-                        onChange={(event) => updateForm({ name: event.target.value })}
-                      />
-                    </label>
-
-                    <label className="nacos-page__field">
-                      <span className="nacos-page__label">命名空间（可选）</span>
-                      <input
-                        className="nacos-page__input"
-                        value={activeTab.form.namespace}
-                        spellCheck={false}
-                        placeholder="public"
-                        onChange={(event) => updateForm({ namespace: event.target.value })}
-                      />
-                    </label>
-
-                    <label className="nacos-page__field nacos-page__field--wide">
-                      <span className="nacos-page__label">控制台地址</span>
-                      <input
-                        ref={urlRef}
-                        className="nacos-page__input"
-                        value={activeTab.form.url}
-                        spellCheck={false}
-                        placeholder="http://127.0.0.1:8848/nacos"
-                        onChange={(event) => updateForm({ url: event.target.value })}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') void openConsole()
-                        }}
-                      />
-                      <span className="nacos-page__field-note">可以省略协议，例如 192.168.1.9:8848/nacos</span>
-                    </label>
+              <div className="nacos-page__card">
+                <div className="nacos-page__card-head">
+                  <h3 className="nacos-page__card-title">{activeTab.saved ? '连接信息' : '新建连接'}</h3>
+                  <div className="nacos-page__card-actions">
+                    <button
+                      type="button"
+                      className="nacos-page__btn"
+                      disabled={saving}
+                      onClick={() => void saveActive()}
+                    >
+                      {saving ? '保存中…' : '保存'}
+                    </button>
+                    <button
+                      type="button"
+                      className="nacos-page__btn nacos-page__btn--primary"
+                      disabled={opening}
+                      onClick={() => void openConsoleTab()}
+                    >
+                      {opening ? '打开中…' : '打开控制台'}
+                    </button>
                   </div>
                 </div>
 
-                {activeTab.view.active ? (
-                  <NacosConsoleView tab={activeTab} />
-                ) : (
-                  <div className="nacos-page__console-empty">
-                    <p className="nacos-page__console-empty-title">控制台尚未打开</p>
-                    <p className="nacos-page__console-empty-sub">点“打开控制台”在这个窗口里显示 Nacos 管理页面。</p>
-                  </div>
-                )}
-              </>
+                <div className="nacos-page__grid">
+                  <label className="nacos-page__field">
+                    <span className="nacos-page__label">名称</span>
+                    <input
+                      className="nacos-page__input"
+                      value={activeTab.form.name}
+                      spellCheck={false}
+                      placeholder="例如 本地开发"
+                      onChange={(event) => updateForm({ name: event.target.value })}
+                    />
+                  </label>
+
+                  <label className="nacos-page__field">
+                    <span className="nacos-page__label">命名空间（可选）</span>
+                    <input
+                      className="nacos-page__input"
+                      value={activeTab.form.namespace}
+                      spellCheck={false}
+                      placeholder="public"
+                      onChange={(event) => updateForm({ namespace: event.target.value })}
+                    />
+                  </label>
+
+                  <label className="nacos-page__field nacos-page__field--wide">
+                    <span className="nacos-page__label">控制台地址</span>
+                    <input
+                      ref={urlRef}
+                      className="nacos-page__input"
+                      value={activeTab.form.url}
+                      spellCheck={false}
+                      placeholder="http://127.0.0.1:8848/nacos"
+                      onChange={(event) => updateForm({ url: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void openConsoleTab()
+                      }}
+                    />
+                    <span className="nacos-page__field-note">可以省略协议，例如 192.168.1.9:8848/nacos</span>
+                  </label>
+                </div>
+              </div>
             )}
           </section>
         </div>
@@ -453,7 +571,11 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
       <ConfirmDialog
         open={pendingDelete !== null}
         title="删除连接"
-        description={pendingDelete ? '确定删除“' + (pendingDelete.name.trim() === '' ? pendingDelete.url : pendingDelete.name) + '”？' : ''}
+        description={
+          pendingDelete
+            ? '确定删除“' + (pendingDelete.name.trim() === '' ? pendingDelete.url : pendingDelete.name) + '”？'
+            : ''
+        }
         confirmLabel="删除"
         danger
         onConfirm={() => void confirmDelete()}
@@ -464,11 +586,11 @@ export default function NacosDialog({ open, theme, onClose }: NacosDialogProps):
 }
 
 /**
- * The live console pane: the toolbar plus the slot the native view is positioned over.
+ * The live console page: the toolbar plus the slot the native view is positioned over.
  *
- * Split out so the measuring effect lives and dies with the pane. The view is a single
- * native rectangle shared by the whole dialog, so it must be measured only while a console
- * is actually on screen — and hidden the moment this pane goes away.
+ * Split out so the measuring effect lives and dies with the page. The view is a single native
+ * rectangle shared by the whole dialog, so it must be measured only while a console page is
+ * on screen — and hidden the moment this page goes away, which is what unmounting does here.
  */
 function NacosConsoleView({ tab }: { tab: ConsoleTab }): ReactElement {
   const slotRef = useRef<HTMLDivElement>(null)

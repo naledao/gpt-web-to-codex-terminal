@@ -14279,6 +14279,8 @@ body {
 
 .nacos-page__tab-label {
   flex: 1 1 auto;
+  display: flex;
+  align-items: center;
   min-width: 0;
   padding: 0 4px 0 12px;
   border: 0;
@@ -14687,4 +14689,15 @@ body {
 .nacos-page__tabs-empty {
   flex: 1 1 auto;
   padding-left: 2px;
+}
+
+/* A dot marks a tab that shows a live page rather than an editable address. */
+.nacos-page__tab-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .7;
 }
