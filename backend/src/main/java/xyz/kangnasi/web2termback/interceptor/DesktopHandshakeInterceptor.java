@@ -1,7 +1,5 @@
 package xyz.kangnasi.web2termback.interceptor;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -10,37 +8,30 @@ import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import xyz.kangnasi.web2termback.feignclient.UserServiceClient;
-import xyz.kangnasi.web2termback.mapper.UserDeviceMapper;
 
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Agent WebSocket 握手认证。
- *
- * 协议：Authorization 携带 Bearer JWT，X-Device-Id 携带设备 UUID，
- * X-Device-Name 可选；首次连接时缺省名称会自动使用 agent-xxxxxxxx。
+ * Desktop WebSocket 握手认证。
+ * 使用 Bearer JWT 校验用户身份，并使用 X-Desktop-Client-Id 标识桌面端实例。
  */
 @Component
-public class AgentHandshakeInterceptor implements HandshakeInterceptor {
+public class DesktopHandshakeInterceptor implements HandshakeInterceptor {
 
-    public static final String ATTR_USER_ID = "agentUserId";
-    public static final String ATTR_DEVICE_ID = "agentDeviceId";
-    public static final String ATTR_DEVICE_NAME = "agentDeviceName";
+    public static final String ATTR_USER_ID = "desktopUserId";
+    public static final String ATTR_DESKTOP_CLIENT_ID = "desktopClientId";
 
-    private static final String DEVICE_ID_HEADER = "X-Device-Id";
-    private static final String DEVICE_NAME_HEADER = "X-Device-Name";
+    private static final String DESKTOP_CLIENT_ID_HEADER = "X-Desktop-Client-Id";
 
     private final UserServiceClient userServiceClient;
-    private final UserDeviceMapper userDeviceMapper;
     private final ObjectMapper objectMapper;
 
-    public AgentHandshakeInterceptor(UserServiceClient userServiceClient,
-                                     UserDeviceMapper userDeviceMapper,
-                                     ObjectMapper objectMapper) {
+    public DesktopHandshakeInterceptor(UserServiceClient userServiceClient, ObjectMapper objectMapper) {
         this.userServiceClient = userServiceClient;
-        this.userDeviceMapper = userDeviceMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -54,14 +45,9 @@ public class AgentHandshakeInterceptor implements HandshakeInterceptor {
             return reject(response, HttpStatus.UNAUTHORIZED);
         }
 
-        String rawDeviceId = request.getHeaders().getFirst(DEVICE_ID_HEADER);
-        String deviceId = normalizeDeviceId(rawDeviceId);
-        if (deviceId == null) {
-            return reject(response, HttpStatus.BAD_REQUEST);
-        }
-
-        String deviceName = normalizeDeviceName(request.getHeaders().getFirst(DEVICE_NAME_HEADER), deviceId);
-        if (deviceName == null) {
+        String desktopClientId = normalizeDesktopClientId(
+                request.getHeaders().getFirst(DESKTOP_CLIENT_ID_HEADER));
+        if (desktopClientId == null) {
             return reject(response, HttpStatus.BAD_REQUEST);
         }
 
@@ -74,7 +60,7 @@ public class AgentHandshakeInterceptor implements HandshakeInterceptor {
                 return reject(response, HttpStatus.UNAUTHORIZED);
             }
         } catch (FeignException exception) {
-            // JWT 无效返回 401；鉴权服务自身故障不伪装成客户端认证失败。
+            // JWT 无效返回 401；鉴权服务异常返回 503，避免混淆认证失败和服务故障。
             return reject(response, exception.status() == 401
                     ? HttpStatus.UNAUTHORIZED
                     : HttpStatus.SERVICE_UNAVAILABLE);
@@ -82,20 +68,9 @@ public class AgentHandshakeInterceptor implements HandshakeInterceptor {
             return reject(response, HttpStatus.BAD_GATEWAY);
         }
 
-        UserDeviceMapper.DeviceAuthRecord existing = userDeviceMapper.findAuthState(deviceId);
-        if (existing != null) {
-            if (!Long.valueOf(userId).equals(existing.userId())) {
-                return reject(response, HttpStatus.FORBIDDEN);
-            }
-            if (!Integer.valueOf(1).equals(existing.enabled())) {
-                return reject(response, HttpStatus.FORBIDDEN);
-            }
-        }
-
-        // 只把服务端校验后的可信身份写入 WebSocket Session，客户端不能覆盖这些属性。
+        // 只保存经过服务端校验后的身份，后续消息不得信任客户端自行声明的 userId。
         attributes.put(ATTR_USER_ID, userId);
-        attributes.put(ATTR_DEVICE_ID, deviceId);
-        attributes.put(ATTR_DEVICE_NAME, deviceName);
+        attributes.put(ATTR_DESKTOP_CLIENT_ID, desktopClientId);
         return true;
     }
 
@@ -107,23 +82,15 @@ public class AgentHandshakeInterceptor implements HandshakeInterceptor {
         // 无额外清理动作。
     }
 
-    private static String normalizeDeviceId(String rawDeviceId) {
-        if (rawDeviceId == null || rawDeviceId.isBlank()) {
+    private static String normalizeDesktopClientId(String rawDesktopClientId) {
+        if (rawDesktopClientId == null || rawDesktopClientId.isBlank()) {
             return null;
         }
         try {
-            return UUID.fromString(rawDeviceId.trim()).toString();
+            return UUID.fromString(rawDesktopClientId.trim()).toString();
         } catch (IllegalArgumentException exception) {
             return null;
         }
-    }
-
-    private static String normalizeDeviceName(String rawDeviceName, String deviceId) {
-        if (rawDeviceName == null || rawDeviceName.isBlank()) {
-            return "agent-" + deviceId.substring(0, 8);
-        }
-        String name = rawDeviceName.trim();
-        return name.length() <= 100 ? name : null;
     }
 
     private static boolean reject(ServerHttpResponse response, HttpStatus status) {
