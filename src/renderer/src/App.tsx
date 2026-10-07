@@ -1570,9 +1570,9 @@ export default function App({ sessionId, initialSshDialogOpen = false, platformI
    * lives in the terminal column and must leave the chat page usable underneath.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && !mysqlDialogOpen)
+    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && !mysqlDialogOpen && !nacosDialogOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, mysqlDialogOpen])
+  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, mysqlDialogOpen, nacosDialogOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
