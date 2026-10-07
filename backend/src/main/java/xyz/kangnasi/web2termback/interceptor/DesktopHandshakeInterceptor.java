@@ -11,27 +11,34 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import xyz.kangnasi.web2termback.feignclient.UserServiceClient;
+import xyz.kangnasi.web2termback.mapper.UserDeviceMapper;
 
 import java.util.Map;
 import java.util.UUID;
 
 /**
  * Desktop WebSocket 握手认证。
- * 使用 Bearer JWT 校验用户身份，并使用 X-Desktop-Client-Id 标识桌面端实例。
+ * 使用 Bearer JWT 校验用户身份，并校验 Desktop 客户端 ID 和目标 Agent ID。
  */
 @Component
 public class DesktopHandshakeInterceptor implements HandshakeInterceptor {
 
     public static final String ATTR_USER_ID = "desktopUserId";
     public static final String ATTR_DESKTOP_CLIENT_ID = "desktopClientId";
+    public static final String ATTR_AGENT_ID = "agentId";
 
     private static final String DESKTOP_CLIENT_ID_HEADER = "X-Desktop-Client-Id";
+    private static final String AGENT_ID_HEADER = "X-Agent-Id";
 
     private final UserServiceClient userServiceClient;
+    private final UserDeviceMapper userDeviceMapper;
     private final ObjectMapper objectMapper;
 
-    public DesktopHandshakeInterceptor(UserServiceClient userServiceClient, ObjectMapper objectMapper) {
+    public DesktopHandshakeInterceptor(UserServiceClient userServiceClient,
+                                       UserDeviceMapper userDeviceMapper,
+                                       ObjectMapper objectMapper) {
         this.userServiceClient = userServiceClient;
+        this.userDeviceMapper = userDeviceMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -45,9 +52,14 @@ public class DesktopHandshakeInterceptor implements HandshakeInterceptor {
             return reject(response, HttpStatus.UNAUTHORIZED);
         }
 
-        String desktopClientId = normalizeDesktopClientId(
+        String desktopClientId = normalizeUuid(
                 request.getHeaders().getFirst(DESKTOP_CLIENT_ID_HEADER));
         if (desktopClientId == null) {
+            return reject(response, HttpStatus.BAD_REQUEST);
+        }
+
+        String agentId = normalizeUuid(request.getHeaders().getFirst(AGENT_ID_HEADER));
+        if (agentId == null) {
             return reject(response, HttpStatus.BAD_REQUEST);
         }
 
@@ -68,9 +80,21 @@ public class DesktopHandshakeInterceptor implements HandshakeInterceptor {
             return reject(response, HttpStatus.BAD_GATEWAY);
         }
 
-        // 只保存经过服务端校验后的身份，后续消息不得信任客户端自行声明的 userId。
+        UserDeviceMapper.DeviceAuthRecord agent = userDeviceMapper.findAuthState(agentId);
+        if (agent == null) {
+            return reject(response, HttpStatus.NOT_FOUND);
+        }
+        if (!Long.valueOf(userId).equals(agent.userId())) {
+            return reject(response, HttpStatus.FORBIDDEN);
+        }
+        if (!Integer.valueOf(1).equals(agent.enabled())) {
+            return reject(response, HttpStatus.FORBIDDEN);
+        }
+
+        // 只保存经过服务端校验后的身份和目标设备，后续消息不得信任客户端自行声明的这些字段。
         attributes.put(ATTR_USER_ID, userId);
         attributes.put(ATTR_DESKTOP_CLIENT_ID, desktopClientId);
+        attributes.put(ATTR_AGENT_ID, agentId);
         return true;
     }
 
@@ -82,12 +106,12 @@ public class DesktopHandshakeInterceptor implements HandshakeInterceptor {
         // 无额外清理动作。
     }
 
-    private static String normalizeDesktopClientId(String rawDesktopClientId) {
-        if (rawDesktopClientId == null || rawDesktopClientId.isBlank()) {
+    private static String normalizeUuid(String rawValue) {
+        if (rawValue == null || rawValue.isBlank()) {
             return null;
         }
         try {
-            return UUID.fromString(rawDesktopClientId.trim()).toString();
+            return UUID.fromString(rawValue.trim()).toString();
         } catch (IllegalArgumentException exception) {
             return null;
         }

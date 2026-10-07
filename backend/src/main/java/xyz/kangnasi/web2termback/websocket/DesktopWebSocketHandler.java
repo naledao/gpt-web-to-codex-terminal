@@ -27,21 +27,23 @@ public class DesktopWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         long userId = userId(session);
         String desktopClientId = desktopClientId(session);
+        String agentId = agentId(session);
 
         // 同一个 desktopClientId 只保留最新连接，避免一个客户端标识对应多个活跃 Session。
         WebSocketSession previous = currentSessions.put(desktopClientId, session);
         if (previous != null && previous != session && previous.isOpen()) {
             previous.close(REPLACED);
         }
-        log.info("Desktop connected: userId={}, desktopClientId={}", userId, desktopClientId);
+        log.info("Desktop connected: userId={}, desktopClientId={}, agentId={}",
+                userId, desktopClientId, agentId);
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String desktopClientId = desktopClientId(session);
         if (currentSessions.remove(desktopClientId, session)) {
-            log.info("Desktop disconnected: userId={}, desktopClientId={}, status={}",
-                    userId(session), desktopClientId, status);
+            log.info("Desktop disconnected: userId={}, desktopClientId={}, agentId={}, status={}",
+                    userId(session), desktopClientId, agentId(session), status);
         }
     }
 
@@ -59,5 +61,9 @@ public class DesktopWebSocketHandler extends TextWebSocketHandler {
 
     private static String desktopClientId(WebSocketSession session) {
         return (String) session.getAttributes().get(DesktopHandshakeInterceptor.ATTR_DESKTOP_CLIENT_ID);
+    }
+
+    private static String agentId(WebSocketSession session) {
+        return (String) session.getAttributes().get(DesktopHandshakeInterceptor.ATTR_AGENT_ID);
     }
 }
