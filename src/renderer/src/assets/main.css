@@ -12786,12 +12786,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
-  margin-bottom: 6px;
-  border-radius: 16px;
-  background: #eef2f7;
-  color: #7f8da4;
+  margin-bottom: 10px;
 }
 
 .mysql-page__empty-title {
@@ -13428,7 +13423,6 @@ body {
 }
 
 .workspace[data-theme='dark'] .mysql-page__empty-mark {
-  background: #161d28;
   color: #7d8aa0;
 }
 

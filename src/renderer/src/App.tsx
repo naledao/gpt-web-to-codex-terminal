@@ -10,6 +10,7 @@ import GitDialog from './components/GitDialog'
 import SshDirectoryPicker from './components/SshDirectoryPicker'
 import MysqlDialog from './components/MysqlDialog'
 import NacosDialog from './components/NacosDialog'
+import MysqlIcon from './components/MysqlIcon'
 import ConversationTranscript from './components/ConversationTranscript'
 import { conversationScrollKey } from './conversation-scroll'
 import brandIcon from './assets/brand-icon.png'
@@ -2426,11 +2427,7 @@ ${conversation.url}`}
                     </Menu.Item>
                     <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setMysqlDialogOpen(true) }}>
                       <span className="toolbox-menu__icon">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                          <ellipse cx="12" cy="5.6" rx="7.2" ry="2.8" />
-                          <path d="M4.8 5.6v12.8c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8V5.6" />
-                          <path d="M4.8 12c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8" />
-                        </svg>
+                        <MysqlIcon size={15} />
                       </span>
                       <span>MySQL 连接</span>
                     </Menu.Item>

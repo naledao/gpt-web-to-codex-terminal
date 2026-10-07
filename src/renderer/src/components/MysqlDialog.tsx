@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import MysqlIcon from './MysqlIcon'
 import ConfirmDialog from './ConfirmDialog'
 import type {
   AppTheme,
@@ -8,8 +9,11 @@ import type {
   MysqlConnectionsState,
   MysqlDatabaseList,
   MysqlTableData,
+  MysqlTableDdl,
   MysqlTableList
 } from '../../../shared/types'
+
+const SqlViewer = lazy(() => import('./SqlViewer'))
 
 interface MysqlDialogProps {
   open: boolean
@@ -31,8 +35,8 @@ interface ConnectionForm {
 /**
  * One open page.
  *
- * Two kinds, because they answer different questions: a CONNECTION page is the editable
- * connection plus the list of what is inside it, while a TABLE page is one table's rows.
+ * Connection pages hold the editable connection and table list. Table pages show rows;
+ * DDL pages show the server's CREATE statement.
  * They share the tab strip and nothing else, so the kind is carried on the tab rather
  * than inferred from which fields happen to be set.
  *
@@ -64,7 +68,15 @@ interface TableTab {
   error: string
 }
 
-type MysqlTab = ConnectionTab | TableTab
+interface DdlTab extends Omit<TableTab, 'kind' | 'data'> {
+  kind: 'ddl'
+  data: MysqlTableDdl | null
+  requestId: number
+  copied: boolean
+  copyError: string
+}
+
+type MysqlTab = ConnectionTab | TableTab | DdlTab
 
 const EMPTY_FORM: ConnectionForm = {
   id: '',
@@ -110,7 +122,7 @@ function tabCaption(form: ConnectionForm): string {
 
 /** What a tab is called, whichever kind it is. */
 function tabTitle(tab: MysqlTab): string {
-  return tab.kind === 'connection' ? tabCaption(tab.form) : `${tab.database}.${tab.table}`
+  return tab.kind === 'connection' ? tabCaption(tab.form) : `${tab.database}.${tab.table}${tab.kind === 'ddl' ? ' · DDL' : ''}`
 }
 
 /**
@@ -191,6 +203,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [activeKey, setActiveKey] = useState('')
   const [reveal, setReveal] = useState(false)
   const newTabRef = useRef(0)
+  const ddlRequestRef = useRef(0)
   /** Focused when saving is refused, so the missing field is the one on screen. */
   const databaseRef = useRef<HTMLInputElement>(null)
   /** Id of the connection whose info was just copied, for the transient 已复制 mark. */
@@ -209,6 +222,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null
   const activeConnection = activeTab !== null && activeTab.kind === 'connection' ? activeTab : null
   const activeForm = activeConnection?.form ?? null
+  const activeConnectionId = activeTab === null ? '' : activeTab.kind === 'connection' ? activeTab.form.id : activeTab.connectionId
   const activeSaved =
     activeForm !== null && activeForm.id !== ''
       ? connections.find((connection) => connection.id === activeForm.id) ?? null
@@ -246,7 +260,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -411,6 +425,73 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     [tabs]
   )
 
+  const loadDdl = useCallback(
+    async (key: string, draft: MysqlConnectionDraft, database: string, table: string): Promise<void> => {
+      const requestId = ++ddlRequestRef.current
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.kind === 'ddl' && tab.key === key
+            ? { ...tab, loading: true, data: null, error: '', copied: false, copyError: '', requestId }
+            : tab
+        )
+      )
+      let result: MysqlTableDdl
+      try {
+        result = await window.api.getMysqlTableDdl(draft, database, table)
+      } catch {
+        result = { ok: false, ddl: '', message: '读取 DDL 失败，请重试。' }
+      }
+      // A closed/reopened tab or a newer refresh must not receive an older response.
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.kind === 'ddl' && tab.key === key && tab.requestId === requestId
+            ? { ...tab, loading: false, data: result, error: result.ok ? '' : result.message }
+            : tab
+        )
+      )
+    },
+    []
+  )
+
+  const openDdlTab = useCallback(
+    async (connectionId: string, form: ConnectionForm, table: string): Promise<void> => {
+      const database = form.database.trim()
+      const draft = draftFromForm(form)
+      const key = `ddl:${JSON.stringify([connectionId, database, table])}`
+      setTabs((current) =>
+        current.some((tab) => tab.key === key)
+          ? current
+          : [
+              ...current,
+              {
+                kind: 'ddl', key, connectionId, database, table, draft, loading: true,
+                data: null, error: '', requestId: 0, copied: false, copyError: ''
+              }
+            ]
+      )
+      setActiveKey(key)
+      await loadDdl(key, draft, database, table)
+    },
+    [loadDdl]
+  )
+
+  const copyDdl = useCallback(async (tab: DdlTab): Promise<void> => {
+    if (tab.loading || !tab.data?.ok) return
+    let copyError = ''
+    try {
+      await navigator.clipboard.writeText(tab.data.ddl)
+    } catch {
+      copyError = '复制失败，请重试或手动选择建表语句复制。'
+    }
+    setTabs((current) =>
+      current.map((item) =>
+        item.kind === 'ddl' && item.key === tab.key && item.requestId === tab.requestId
+          ? { ...item, copied: copyError === '', copyError }
+          : item
+      )
+    )
+  }, [])
+
   /**
    * Open the database dropdown, fetching the list on the way in.
    *
@@ -572,7 +653,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                       setError('')
                     }}
                   >
-                    {tab.kind === 'table' ? (
+                    {tab.kind !== 'connection' ? (
                       <span className="mysql-page__tab-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                           <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
@@ -586,7 +667,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     type="button"
                     className="mysql-page__tab-close"
                     aria-label={`关闭 ${tabTitle(tab)}`}
-                    title={tab.kind === 'table' ? '关闭这个表页' : '关闭这个页面（连接仍保留在左侧列表）'}
+                    title={tab.kind === 'connection' ? '关闭这个页面（连接仍保留在左侧列表）' : tab.kind === 'ddl' ? '关闭这个 DDL 页' : '关闭这个表页'}
                     onClick={() => closeTab(tab.key)}
                   >
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
@@ -601,10 +682,10 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
           <span className="panel__spacer" />
           <span
             className={savedNow ? 'mysql-page__badge mysql-page__badge--ok' : 'mysql-page__badge'}
-            title={activeForm === null ? '没有打开的连接' : savedNow ? '与已保存的内容一致' : '有改动尚未保存'}
+            title={activeTab?.kind === 'ddl' ? '正在查看建表语句' : activeForm === null ? '没有打开的连接' : savedNow ? '与已保存的内容一致' : '有改动尚未保存'}
           >
             <i />
-            {activeForm === null ? '未打开' : savedNow ? '已保存' : '未保存'}
+            {activeTab?.kind === 'ddl' ? 'DDL' : activeForm === null ? '未打开' : savedNow ? '已保存' : '未保存'}
           </span>
           <button type="button" className="mysql-page__close" aria-label="关闭" onClick={onClose}>
             <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
@@ -631,7 +712,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   <li key={connection.id}>
                     <div
                       className={
-                        activeForm !== null && activeForm.id === connection.id
+                        activeConnectionId === connection.id
                           ? 'mysql-page__item mysql-page__item--active'
                           : 'mysql-page__item'
                       }
@@ -685,16 +766,51 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
             {activeTab === null ? (
               <div className="mysql-page__empty">
                 <span className="mysql-page__empty-mark" aria-hidden="true">
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                    <ellipse cx="12" cy="5.6" rx="7.2" ry="2.8" />
-                    <path d="M4.8 5.6v12.8c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8V5.6" />
-                    <path d="M4.8 12c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8" />
-                  </svg>
+                  <MysqlIcon size={40} />
                 </span>
                 <p className="mysql-page__empty-title">没有打开的连接</p>
                 <p className="mysql-page__empty-sub">
                   点左上角「添加连接」新建，或在左侧列表里点一个已保存的连接把它打开。
                 </p>
+              </div>
+            ) : activeTab.kind === 'ddl' ? (
+              <div className="mysql-page__table">
+                <div className="mysql-page__card-head mysql-page__ddl-head">
+                  <span className="mysql-page__card-title">{activeTab.table} · DDL</span>
+                  <span className="mysql-page__card-note">{activeTab.database}</span>
+                  <span className="panel__spacer" />
+                  <button
+                    type="button"
+                    className="mysql-page__btn"
+                    disabled={activeTab.loading}
+                    onClick={() => void loadDdl(activeTab.key, activeTab.draft, activeTab.database, activeTab.table)}
+                  >
+                    {activeTab.loading ? '读取中…' : '刷新'}
+                  </button>
+                  <button
+                    type="button"
+                    className="mysql-page__btn"
+                    disabled={activeTab.loading || !activeTab.data?.ok}
+                    onClick={() => void copyDdl(activeTab)}
+                  >
+                    {activeTab.copied ? '已复制' : '复制 DDL'}
+                  </button>
+                </div>
+                {activeTab.loading ? (
+                  <p className="mysql-page__hint" role="status">正在读取 DDL…</p>
+                ) : activeTab.error ? (
+                  <p className="mysql-page__hint mysql-page__hint--error" role="alert">{activeTab.error}</p>
+                ) : activeTab.data?.ok ? (
+                  <Suspense fallback={<p className="mysql-page__hint" role="status">正在加载 SQL 查看器…</p>}>
+                    <SqlViewer
+                      key={activeTab.key}
+                      value={activeTab.data.ddl}
+                      theme={theme}
+                      label={`${activeTab.database}.${activeTab.table} 的建表语句`}
+                    />
+                  </Suspense>
+                ) : null}
+                {activeTab.copyError ? <p className="mysql-page__hint mysql-page__hint--error" role="alert">{activeTab.copyError}</p> : null}
               </div>
             ) : activeTab.kind === 'table' ? (
               <div className="mysql-page__table">
@@ -924,11 +1040,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                                       }}
                                     >
                                       <span className="mysql-page__db-icon" aria-hidden="true">
-                                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                                          <ellipse cx="12" cy="5.6" rx="7.2" ry="2.8" />
-                                          <path d="M4.8 5.6v12.8c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8V5.6" />
-                                          <path d="M4.8 12c0 1.55 3.22 2.8 7.2 2.8s7.2-1.25 7.2-2.8" />
-                                        </svg>
+                                        <MysqlIcon size={14} />
                                       </span>
                                       <span className="mysql-page__db-name">{name}</span>
                                     </button>
@@ -981,7 +1093,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   ) : (
                     <ul className="mysql-page__table-list">
                       {activeConnection.tables.tables.map((table) => (
-                        <li key={table.name}>
+                        <li key={table.name} className="mysql-page__table-row">
                           <button
                             type="button"
                             className="mysql-page__table-item"
@@ -990,9 +1102,19 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                               if (activeForm !== null && activeConnection !== null) void openTableTab(activeConnection.key, activeForm, table.name)
                             }}
                           >
-                            <span className="mysql-page__table-name">{table.name}</span>
+                            <span className="mysql-page__table-name" title={table.name}>{table.name}</span>
                             <span className={table.type === 'VIEW' ? 'mysql-page__table-type mysql-page__table-type--view' : 'mysql-page__table-type'}>{table.type === 'VIEW' ? '视图' : '表'}</span>
                             {table.comment.trim() !== '' ? <span className="mysql-page__table-comment">{table.comment}</span> : null}
+                          </button>
+                          <button
+                            type="button"
+                            className="mysql-page__btn mysql-page__table-ddl"
+                            aria-label={`查看 ${table.name} 的 DDL`}
+                            onClick={() => {
+                              if (activeForm !== null && activeConnection !== null) void openDdlTab(activeConnection.key, activeForm, table.name)
+                            }}
+                          >
+                            查看 DDL
                           </button>
                         </li>
                       ))}
