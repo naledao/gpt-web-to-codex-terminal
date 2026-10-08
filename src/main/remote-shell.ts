@@ -187,12 +187,17 @@ export class RemoteShell implements ExecutionShell {
     return true
   }
 
-  dispose(): void {
+  dispose(stopRunning = false): void {
     this.disposed = true
+    const running = this.pending !== null
     // Settled, not dropped. `run()`'s caller is awaiting this promise, so a
     // pending command left unresolved would park the whole automation loop with
     // the execution stuck at `running` and nothing on screen to explain it.
     this.abandonPending('远端会话在执行这条命令时被关闭。')
+    if (stopRunning && running) {
+      this.terminate()
+      return
+    }
     try {
       this.stream.close()
     } catch {

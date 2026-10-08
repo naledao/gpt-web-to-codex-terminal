@@ -277,6 +277,7 @@ export class SessionRuntime {
   private preferredSendDelaySeconds: number
   private promptInjectionEnabled: boolean
   private remoteShell: RemoteShell | null = null
+  private sshTerminalResetting = false
   readonly web2term: Web2termShell | null
   private customTitle: string
   private sshCwd: string
@@ -396,11 +397,16 @@ export class SessionRuntime {
       this.options.onSummaryChanged()
 
       const next = this.ssh.execShell()
+      const resetting = this.sshTerminalResetting
+      // Retain the closed remote backend while reset reconnects, so commands cannot
+      // fall through to the local shell between the old and new SSH channels.
+      if (resetting && next === null && state.attached) return
+      this.sshTerminalResetting = false
       if (next !== this.remoteShell) {
         const previous = this.remoteShell
         this.remoteShell = next
         this.refreshDirectoryNotes()
-        if (previous === null || next === null) void this.probeEnvironment()
+        if (previous === null || next === null || resetting) void this.probeEnvironment()
       } else if (next === null && state.status === 'error') {
         this.refreshDirectoryNotes()
         void this.probeEnvironment()
@@ -1522,6 +1528,11 @@ export class SessionRuntime {
   removeSshHost(id: string): SshHost[] {
     this.options.store.removeSshHost(id)
     return this.options.store.listSshHosts()
+  }
+
+  resetSshTerminal(): SshState {
+    this.sshTerminalResetting = this.ssh.getState().status === 'connected'
+    return this.ssh.resetTerminal()
   }
 
   connectSsh(draft: SshHostDraft, resumeCwd = ''): SshState {

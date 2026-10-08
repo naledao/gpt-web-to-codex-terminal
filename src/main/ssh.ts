@@ -142,6 +142,8 @@ const EMPTY: SshState = {
  */
 export class SshManager {
   private client: Client | null = null
+  /** Kept only for this live connection, including credentials not saved to disk. */
+  private connectionTarget: SshTarget | null = null
   private stream: ClientChannel | null = null
   private buffer = ''
   /** Index of a PTY line that has not received its newline yet (for password prompts). */
@@ -223,8 +225,9 @@ export class SshManager {
    * `onChanged`. A handshake can take twenty seconds, and blocking an IPC reply
    * on it would freeze the dialog that started it.
    */
-  connect(target: SshTarget, resumeCwd = ''): SshState {
+  connect(target: SshTarget, resumeCwd = '', resumePtyCwd = resumeCwd): SshState {
     this.teardown()
+    this.connectionTarget = { ...target }
 
     this.lines = []
     this.buffer = ''
@@ -256,7 +259,12 @@ export class SshManager {
     this.client = client
 
     client.on('ready', () => {
+      if (this.client !== client) return
       client.shell({ term: 'xterm-256color', cols: 120, rows: 32 }, (error, stream) => {
+        if (this.client !== client) {
+          try { stream?.close() } catch { /* already gone */ }
+          return
+        }
         if (error) {
           this.fail(`无法打开远程 shell：${error.message}`)
           return
@@ -265,15 +273,17 @@ export class SshManager {
         this.state = { ...this.state, status: 'connected', message: `已连接 ${this.state.target}` }
         this.pushLine('notice', `已连接 ${this.state.target}`)
 
-        stream.on('data', (chunk: Buffer) => this.consume(chunk.toString('utf8')))
-        stream.stderr.on('data', (chunk: Buffer) => this.consume(chunk.toString('utf8')))
+        stream.on('data', (chunk: Buffer) => { if (this.client === client) this.consume(chunk.toString('utf8')) })
+        stream.stderr.on('data', (chunk: Buffer) => { if (this.client === client) this.consume(chunk.toString('utf8')) })
         stream.on('close', () => {
+          if (this.client !== client) return
           this.pushLine('notice', '远程会话已关闭')
           this.teardown()
           this.state = { ...this.state, status: 'disconnected', message: '远程会话已关闭' }
           this.emit()
         })
         this.emit()
+        if (resumePtyCwd.trim() !== '') stream.write(`cd ${posixQuote(resumePtyCwd.trim())}\n`)
 
         // Opened after the pane is already usable: the model's channel is not
         // needed for the user to start typing, and waiting for it would delay
@@ -282,12 +292,12 @@ export class SshManager {
       })
     })
 
-    client.on('error', (error: Error) => this.fail(error.message))
+    client.on('error', (error: Error) => { if (this.client === client) this.fail(error.message) })
 
     client.on('close', () => {
       // Fires after both a clean disconnect and a failure; only report it when we
       // were actually connected, so an error message is not overwritten by it.
-      if (this.state.status === 'connected') {
+      if (this.client === client && this.state.status === 'connected') {
         this.teardown()
         this.state = { ...this.state, status: 'disconnected', message: '连接已断开' }
         this.pushLine('notice', '连接已断开')
@@ -327,6 +337,26 @@ export class SshManager {
       }
     })()
 
+    return this.getState()
+  }
+
+  /** Clear the transcript and recreate the current host's shells at the same directory. */
+  resetTerminal(): SshState {
+    const target = this.connectionTarget
+    if (target && this.state.status === 'connected') {
+      const cwd = this.exec?.cwd || this.ptyCwd
+      const ptyCwd = this.ptyCwd || cwd
+      this.exec?.dispose(true)
+      this.connect(target, cwd, ptyCwd)
+      this.pushLine('notice', '终端已重置，正在重新建立 SSH 会话')
+    } else {
+      this.lines = []
+      this.buffer = ''
+      this.partialLineIndex = null
+      this.manualInputPending = false
+      this.pushLine('notice', '终端已重置')
+    }
+    this.emit()
     return this.getState()
   }
 
@@ -778,7 +808,7 @@ export class SshManager {
   private openExecChannel(client: Client, resumeCwd = ''): void {
     this.execAttempts += 1
     if (this.execAttempts > MAX_EXEC_ATTEMPTS) {
-      this.pushLine('error', '命令会话反复断开，已放弃重开。模型命令将继续在本地机器上执行。')
+      this.pushLine('error', '命令会话反复断开，已放弃重开。请重新连接主机后再执行模型命令。')
       this.emit()
       return
     }
@@ -787,24 +817,18 @@ export class SshManager {
       resumeCwd === '' ? REMOTE_SHELL_COMMAND : `cd ${posixQuote(resumeCwd)} && ${REMOTE_SHELL_COMMAND}`
 
     client.exec(command, (error, stream) => {
+      if (this.client !== client) {
+        try { stream?.close() } catch { /* already gone */ }
+        return
+      }
       if (error) {
-        this.pushLine('error', `无法在远端启动命令会话：${error.message}——模型命令将继续在本地执行`)
+        this.pushLine('error', `无法在远端启动命令会话：${error.message}，请重新连接主机后再执行模型命令。`)
         this.emit()
         return
       }
 
-      // The user may have disconnected while the channel was being opened.
-      if (this.client !== client) {
-        try {
-          stream.close()
-        } catch {
-          /* already gone */
-        }
-        return
-      }
-
       const shell = new RemoteShell(stream, {
-        onOutput: (chunk) => this.pushModelOutput(chunk),
+        onOutput: (chunk) => { if (this.client === client) this.pushModelOutput(chunk) },
         onClosed: (interrupted) => {
           // Deliberate command interruption is not a flaky-channel retry.
           // Cancel the attempt consumed by the channel we intentionally killed,
@@ -832,6 +856,7 @@ export class SshManager {
       void shell
         .run('printf "%s\\n" "$HOME"', undefined, true)
         .then((probeResult) => {
+          if (this.client !== client) return
           const home = probeResult.output.trim()
           if (home !== '') {
             this.homeDir = home
@@ -867,6 +892,9 @@ export class SshManager {
   }
 
   private teardown(): void {
+    const client = this.client
+    this.client = null
+    this.connectionTarget = null
     for (const task of this.downloads.values()) {
       if (task.status === 'downloading') this.cancelDownload(task.id)
     }
@@ -901,8 +929,6 @@ export class SshManager {
       }
     }
 
-    const client = this.client
-    this.client = null
     if (client) {
       try {
         client.end()

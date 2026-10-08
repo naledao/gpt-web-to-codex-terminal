@@ -65,6 +65,7 @@ export default function WorkspaceApp(): ReactElement {
   const [updateLive, setUpdateLive] = useState<{ phase: UpdateStatus['phase']; percent: number }>({ phase: 'idle', percent: 0 })
   const [theme, setTheme] = useState<AppTheme>('light')
   const newSessionButton = useRef<HTMLButtonElement>(null)
+  const web2termDeviceDialogTrigger = useRef<HTMLButtonElement | null>(null)
   const noticedVersion = useRef('')
   const [navWidth, setNavWidth] = useState(() => {
     try {
@@ -189,7 +190,8 @@ export default function WorkspaceApp(): ReactElement {
     setWeb2termDeviceDialogOpen(false)
   }
 
-  const openWeb2termDeviceDialog = (): void => {
+  const openWeb2termDeviceDialog = (trigger?: HTMLButtonElement | null): void => {
+    web2termDeviceDialogTrigger.current = trigger ?? newSessionButton.current
     setNewSessionOpen(false)
     setWeb2termDeviceDialogOpen(true)
     // Native embedded pages paint above DOM dialogs; hide them before rendering.
@@ -197,8 +199,12 @@ export default function WorkspaceApp(): ReactElement {
   }
 
   const closeWeb2termDeviceDialog = (): void => {
+    const trigger = web2termDeviceDialogTrigger.current
     setWeb2termDeviceDialogOpen(false)
-    requestAnimationFrame(() => newSessionButton.current?.focus())
+    requestAnimationFrame(() => {
+      if (trigger?.isConnected) trigger.focus()
+      else newSessionButton.current?.focus()
+    })
   }
 
   const activeTransfers = transfers.filter(
@@ -341,6 +347,7 @@ export default function WorkspaceApp(): ReactElement {
             sessionKind={sessions.find(item => item.id === workspace.sessionId)?.kind}
             theme={theme}
             onThemeChange={setTheme}
+            onOpenWeb2termConnection={openWeb2termDeviceDialog}
             initialSshDialogOpen={workspace.openSshDialog}
             globalModalOpen={transfersOpen || pendingDelete !== null || newSessionOpen || web2termDeviceDialogOpen || updateNotice !== null}
             /*
@@ -486,7 +493,7 @@ export default function WorkspaceApp(): ReactElement {
                 </span>
                 <span className="new-session-modal__arrow" aria-hidden="true">›</span>
               </button>
-              <button type="button" className="new-session-modal__option" onClick={openWeb2termDeviceDialog}>
+              <button type="button" className="new-session-modal__option" onClick={() => openWeb2termDeviceDialog()}>
                 <span className="new-session-modal__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="3" width="16" height="6" rx="1.5" /><path d="M12 9v5M6 14h12M6 14v3M18 14v3" /><rect x="3" y="17" width="6" height="4" rx="1" /><rect x="15" y="17" width="6" height="4" rx="1" /></svg>
                 </span>

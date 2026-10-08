@@ -282,6 +282,8 @@ interface AppProps {
   theme: AppTheme
   /** True while a workspace-level modal must cover the native embedded view. */
   globalModalOpen?: boolean
+  /** Opens the existing device picker and restores focus to this trigger on cancel. */
+  onOpenWeb2termConnection: (trigger: HTMLButtonElement | null) => void
   /** Called after settings are saved so the workspace shell changes immediately. */
   onThemeChange: (theme: AppTheme) => void
 }
@@ -356,7 +358,7 @@ function ConversationAttachmentImage({ attachment }: { attachment: ConversationA
     </>
   )
 }
-export default function App({ sessionId, sessionKind, initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onThemeChange }: AppProps): JSX.Element {
+export default function App({ sessionId, sessionKind, initialSshDialogOpen = false, platformId = '', theme, globalModalOpen = false, onOpenWeb2termConnection, onThemeChange }: AppProps): JSX.Element {
   const [embed, setEmbed] = useState<EmbedState>(INITIAL_EMBED_STATE)
   /*
    * The site this session is actually showing.
@@ -540,6 +542,7 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
   const userAvatarEditorRef = useRef<AvatarEditorRef>(null)
   /** The pane the toolbox menu mounts into, so it can never spill under the native web view. */
   const toolboxPaneRef = useRef<HTMLElement>(null)
+  const terminalSwitchRef = useRef<HTMLButtonElement>(null)
   const terminalOutputRef = useRef<HTMLDivElement>(null)
   const promptBodyRef = useRef<HTMLDivElement>(null)
   const promptMatchIndexRef = useRef(-1)
@@ -2367,7 +2370,7 @@ ${conversation.url}`}
       </aside>
 
       <section ref={toolboxPaneRef} className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
-        <div className={web2termActive && !terminalCollapsed ? 'terminal-pane__head terminal-pane__head--web2term' : 'terminal-pane__head'}>
+        <div className={!terminalCollapsed && remoteTerminal ? `terminal-pane__head terminal-pane__head--${web2termActive ? 'web2term' : 'ssh'}` : 'terminal-pane__head'}>
           <span className="panel__title">终端</span>
           <span
             className={
@@ -2433,38 +2436,41 @@ ${conversation.url}`}
                 {terminal?.transport?.status === 'closing' ? '关闭中…' : '关闭'}
               </button>
             </>
-          ) : sshActive ? (
-            <>
-              <button
-                type="button"
-                className="panel__sync"
-                title="已保存的主机，打开连接窗口"
-                onClick={() => setSshDialogOpen(true)}
-              >
-                切换
-              </button>
-              <button
-                type="button"
-                className="panel__sync"
-                title="关闭 SSH 面板，回到本地终端"
-                onClick={() => void dismissSsh()}
-              >
-                关闭
-              </button>
-            </>
           ) : (
             <>
-              <button
-                type="button"
-                className="panel__sync"
-                title="已保存的主机，打开连接窗口"
-                onClick={() => setSshDialogOpen(true)}
-              >
-                SSH
-              </button>
-              <button type="button" className="panel__sync" onClick={() => void resetTerminal()}>
+              <Menu.Root onOpenChange={(open) => { if (open) setSshPickerOpen(false) }}>
+                <Menu.Trigger ref={terminalSwitchRef} className="panel__sync" title="选择 SSH 或 web2term 连接">
+                  切换
+                </Menu.Trigger>
+                <Menu.Portal container={toolboxPaneRef}>
+                  <Menu.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={8} collisionBoundary={toolboxPaneRef.current ?? undefined} className="toolbox-menu__positioner">
+                    <Menu.Popup className="toolbox-menu" aria-label="终端连接方式">
+                      <Menu.Item className="toolbox-menu__item" onClick={() => setSshDialogOpen(true)}>
+                        SSH
+                      </Menu.Item>
+                      <Menu.Item className="toolbox-menu__item" onClick={() => onOpenWeb2termConnection(terminalSwitchRef.current)}>
+                        web2term
+                      </Menu.Item>
+                    </Menu.Popup>
+                  </Menu.Positioner>
+                </Menu.Portal>
+              </Menu.Root>
+              <button type="button" className="panel__sync"
+                disabled={sshActive && ssh?.status === 'connecting'}
+                title={sshActive ? '清空终端记录并重新建立当前 SSH 会话' : '重置本地终端'}
+                onClick={() => void resetTerminal()}>
                 重置
               </button>
+              {sshActive ? (
+                <button
+                  type="button"
+                  className="panel__sync"
+                  title="关闭 SSH 面板，回到本地终端"
+                  onClick={() => void dismissSsh()}
+                >
+                  关闭
+                </button>
+              ) : null}
             </>
           )}
           {terminalCollapsed ? null : (

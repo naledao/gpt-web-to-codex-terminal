@@ -1223,6 +1223,7 @@ function registerIpcHandlers(): void {
       return runtime.runner.getTerminalState()
     }
     runtime.runner.resetTerminal()
+    if (runtime.ssh.getState().attached) runtime.resetSshTerminal()
     runtime.web2term?.reset()
     return runtime.runner.getTerminalState()
   })

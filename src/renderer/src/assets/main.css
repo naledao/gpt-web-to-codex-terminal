@@ -1102,7 +1102,8 @@ body {
   background: var(--bg-chrome);
 }
 
-.terminal-pane__head--web2term {
+.terminal-pane__head--web2term,
+.terminal-pane__head--ssh {
   flex-wrap: wrap;
 }
 
