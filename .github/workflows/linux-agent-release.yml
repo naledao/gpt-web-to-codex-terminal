@@ -1,0 +1,57 @@
+name: Build and Release Linux Agent
+
+on:
+  workflow_run:
+    workflows: ["Build and Release Windows"]
+    types: [completed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-agent-release
+  cancel-in-progress: false
+
+jobs:
+  build-linux-agent:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agents/linux/go.mod
+          cache-dependency-path: agents/linux/go.sum
+
+      - name: Resolve latest release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Latest release tag: $tag"
+
+      - name: Build linux amd64 binary
+        working-directory: agents/linux
+        run: |
+          mkdir -p dist/linux-amd64
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/linux-amd64/web2term-linux-amd64 ./cmd/web2term
+
+      - name: Generate checksum
+        working-directory: agents/linux/dist/linux-amd64
+        run: sha256sum web2term-linux-amd64 > web2term-linux-amd64.sha256
+
+      - name: Upload assets to latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.release.outputs.tag }}" agents/linux/dist/linux-amd64/web2term-linux-amd64 agents/linux/dist/linux-amd64/web2term-linux-amd64.sha256 --clobber
