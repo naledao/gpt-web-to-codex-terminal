@@ -1,0 +1,81 @@
+name: Backend Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: [self-hosted, Linux, ARM64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Java version
+        run: java -version
+
+      - name: Patch application.yml to local addresses
+        working-directory: backend
+        run: |
+          sed -i 's/192\.168\.108\.26/127.0.0.1/g' src/main/resources/application.yml
+          grep -nE 'server-addr|jdbc:mysql' src/main/resources/application.yml
+
+      - name: Build backend jar
+        working-directory: backend
+        run: mvn -B -DskipTests clean package
+
+      - name: Deploy and restart backend
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR=/root/apps/web2term-backend
+          mkdir -p "$DEPLOY_DIR"
+          cp backend/target/Web2TermBack-0.0.1-SNAPSHOT.jar "$DEPLOY_DIR/app.jar"
+
+          if [ -f "$DEPLOY_DIR/app.pid" ]; then
+            OLD_PID="$(cat "$DEPLOY_DIR/app.pid" || true)"
+            if [ -n "${OLD_PID:-}" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+              echo "Stopping old process PID=$OLD_PID"
+              kill "$OLD_PID" 2>/dev/null || true
+              for i in $(seq 1 15); do
+                kill -0 "$OLD_PID" 2>/dev/null || break
+                sleep 1
+              done
+              kill -9 "$OLD_PID" 2>/dev/null || true
+            fi
+          fi
+
+          cd "$DEPLOY_DIR"
+          setsid nohup java -jar app.jar --server.port=8082 > app.log 2>&1 < /dev/null &
+          echo $! > app.pid
+          NEW_PID="$(cat app.pid)"
+          echo "Started PID=$NEW_PID"
+
+          for i in $(seq 1 30); do
+            if ! kill -0 "$NEW_PID" 2>/dev/null; then
+              echo "ERROR: process exited"
+              tail -50 app.log
+              exit 1
+            fi
+            if ss -ltn 2>/dev/null | grep -q ':8082 '; then
+              echo "Port 8082 is ready"
+              tail -20 app.log
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "ERROR: port 8082 not ready in time"
+          tail -50 app.log
+          exit 1
