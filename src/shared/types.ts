@@ -143,7 +143,14 @@ export const IpcChannels = {
   mysqlConnListTables: 'mysql-conn:list-tables',
   mysqlConnQueryTable: 'mysql-conn:query-table',
   mysqlConnTableDdl: 'mysql-conn:table-ddl',
-  mysqlConnChanged: 'mysql-conn:changed'
+  mysqlConnChanged: 'mysql-conn:changed',
+  redisConnList: 'redis-conn:list',
+  redisConnSave: 'redis-conn:save',
+  redisConnRemove: 'redis-conn:remove',
+  redisConnChanged: 'redis-conn:changed',
+  redisTestConnection: 'redis:test-connection',
+  redisScanKeys: 'redis:scan-keys',
+  redisReadKey: 'redis:read-key'
 } as const
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels]
@@ -1695,6 +1702,85 @@ export interface MysqlSaveResult extends MysqlConnectionsState {
   id: string
 }
 
+/** Saved connection metadata. Redis data is only read through the APIs below. */
+export interface RedisConnectionDraft {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  password: string
+  database: number
+  tls: boolean
+}
+
+export interface RedisConnection extends RedisConnectionDraft {
+  scope: 'local' | 'ssh'
+  hostId: string
+  updatedAt: number
+}
+
+export interface RedisConnectionsState {
+  machineLabel: string
+  /** Discards pages when the session switches machines. */
+  ownerKey: string
+  connections: RedisConnection[]
+}
+
+export interface RedisSaveResult extends RedisConnectionsState {
+  id: string
+}
+
+export interface RedisConnectionResult {
+  ok: boolean
+  message: string
+}
+
+export interface RedisKeyInfo {
+  /** Exact key bytes encoded as base64, including binary keys. */
+  id: string
+  name: string
+  type: string
+  /** Milliseconds; -1 means persistent, -2 means missing, null means unavailable. */
+  ttl: number | null
+}
+
+export interface RedisKeyPage {
+  ok: boolean
+  keys: RedisKeyInfo[]
+  cursor: string
+  complete: boolean
+  /** Total keys in the DB, not the number matching the search. */
+  total: number | null
+  message: string
+  notice: string
+}
+
+export interface RedisValueCell {
+  text: string
+  encoding: 'text' | 'hex'
+  bytes: number
+  truncated: boolean
+}
+
+export interface RedisValueRow {
+  id: string
+  cells: RedisValueCell[]
+}
+
+export interface RedisKeyData {
+  ok: boolean
+  key: RedisKeyInfo | null
+  columns: string[]
+  rows: RedisValueRow[]
+  value: RedisValueCell | null
+  total: number | null
+  /** null means complete; SCAN cursors, list offsets, or stream IDs otherwise. */
+  nextCursor: string | null
+  message: string
+  notice: string
+}
+
 
 /* ------------------------------------------------------------------ *
  * Saved Nacos consoles *
@@ -1986,6 +2072,14 @@ export interface AppApi {
   /** Read the CREATE statement without changing the database. */
   getMysqlTableDdl(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl>
   onMysqlConnectionChanged(listener: (state: MysqlConnectionsState) => void): () => void
+
+  listRedisConnections(): Promise<RedisConnectionsState>
+  saveRedisConnection(draft: RedisConnectionDraft): Promise<RedisSaveResult>
+  removeRedisConnection(id: string): Promise<RedisConnectionsState>
+  onRedisConnectionChanged(listener: (state: RedisConnectionsState) => void): () => void
+  testRedisConnection(draft: RedisConnectionDraft): Promise<RedisConnectionResult>
+  scanRedisKeys(draft: RedisConnectionDraft, cursor: string, search: string): Promise<RedisKeyPage>
+  readRedisKey(draft: RedisConnectionDraft, keyId: string, cursor: string): Promise<RedisKeyData>
 
   /**
    * Nacos console: the server's own web UI, shown inside the app.

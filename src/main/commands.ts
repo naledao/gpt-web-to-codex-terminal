@@ -852,6 +852,7 @@ export class CommandRunner {
         text: `等待 ${this.sendDelaySeconds} 秒后再回传给模型`
       })
       await new Promise<void>((resolve) => setTimeout(resolve, this.sendDelaySeconds * 1000))
+      if (this.disposed) return
       if (request !== this.executionRequest) {
         this.deps.store.setExecutionStatus(messageId, 'skipped')
         this.broadcastExecutions(conversationId)
@@ -876,6 +877,7 @@ export class CommandRunner {
     const message = buildResultMessage(record.command, result)
     this.appendLine({ kind: 'notice', text: '正在发送...' })
     const outcome = await this.deps.sendRawToPage(message)
+    if (this.disposed) return
     if (outcome === 'ok') {
       this.appendLine({ kind: 'notice', text: '已把执行结果发回给模型' })
     } else if (outcome === 'busy') {
@@ -1074,7 +1076,11 @@ export class CommandRunner {
   }
 
   disposeAll(): void {
+    if (this.disposed) return
     this.disposed = true
+    // runRecord intentionally ignores late shell results after disposal. Save the
+    // interruption now so closing a session cannot leave its command at running.
+    this.deps.store.interruptRunningCommands(this.inFlight)
     this.fileAbort?.abort()
     for (const result of this.fileResults.values()) void result.cleanup().catch((error) => console.warn('[files] cleanup:', error.message))
     this.fileResults.clear()

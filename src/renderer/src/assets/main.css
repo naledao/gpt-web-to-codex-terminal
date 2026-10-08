@@ -13137,8 +13137,37 @@ body {
 .mysql-page__tables-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.mysql-page__tables-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mysql-page__tables-actions {
+  display: flex;
+  align-items: center;
+  flex: 1 1 280px;
+  min-width: 0;
+  max-width: 380px;
+  margin-left: auto;
+  gap: 8px;
+}
+
+.mysql-page__input.mysql-page__table-search {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+}
+
+.mysql-page__tables-actions .mysql-page__btn {
+  flex: none;
+  white-space: nowrap;
 }
 
 .mysql-page__table-list {
@@ -13323,7 +13352,7 @@ body {
   cursor: pointer;
 }
 
-.mysql-page__btn:hover {
+.mysql-page__btn:hover:not(:disabled):not(.mysql-page__btn--primary) {
   background: #f4f6fa;
 }
 
@@ -13334,7 +13363,9 @@ body {
   font-weight: 600;
 }
 
-.mysql-page__btn--primary:hover {
+.mysql-page__btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #00758f, #00a0b8);
+  color: #fff;
   filter: brightness(1.06);
 }
 
@@ -13653,7 +13684,7 @@ body {
   color: #cbd6e6;
 }
 
-.workspace[data-theme='dark'] .mysql-page__btn:hover {
+.workspace[data-theme='dark'] .mysql-page__btn:hover:not(:disabled):not(.mysql-page__btn--primary) {
   background: #1c2739;
 }
 

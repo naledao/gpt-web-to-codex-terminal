@@ -40,6 +40,12 @@ import type {
   MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
+  RedisConnectionDraft,
+  RedisConnectionResult,
+  RedisConnectionsState,
+  RedisSaveResult,
+  RedisKeyPage,
+  RedisKeyData,
   WorkspaceState,
   SessionImportDraft,
   SessionImportResult,
@@ -422,6 +428,20 @@ removeConversation: (id: string): Promise<Conversation[]> =>
     return () => {
       ipcRenderer.removeListener(IpcChannels.mysqlConnChanged, handler)
     }
+  },
+
+  listRedisConnections: (): Promise<RedisConnectionsState> => ipcRenderer.invoke(IpcChannels.redisConnList),
+  saveRedisConnection: (draft: RedisConnectionDraft): Promise<RedisSaveResult> => ipcRenderer.invoke(IpcChannels.redisConnSave, draft),
+  removeRedisConnection: (id: string): Promise<RedisConnectionsState> => ipcRenderer.invoke(IpcChannels.redisConnRemove, id),
+  testRedisConnection: (draft: RedisConnectionDraft): Promise<RedisConnectionResult> => ipcRenderer.invoke(IpcChannels.redisTestConnection, draft),
+  scanRedisKeys: (draft: RedisConnectionDraft, cursor: string, search: string): Promise<RedisKeyPage> =>
+    ipcRenderer.invoke(IpcChannels.redisScanKeys, draft, cursor, search),
+  readRedisKey: (draft: RedisConnectionDraft, keyId: string, cursor: string): Promise<RedisKeyData> =>
+    ipcRenderer.invoke(IpcChannels.redisReadKey, draft, keyId, cursor),
+  onRedisConnectionChanged: (listener: (state: RedisConnectionsState) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, state: RedisConnectionsState): void => listener(state)
+    ipcRenderer.on(IpcChannels.redisConnChanged, handler)
+    return () => { ipcRenderer.removeListener(IpcChannels.redisConnChanged, handler) }
   },
 
   listNacosConnections: (): Promise<NacosConnectionsState> => ipcRenderer.invoke(IpcChannels.nacosConnList),

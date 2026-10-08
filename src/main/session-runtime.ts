@@ -33,6 +33,12 @@ import type {
   MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
+  RedisConnectionDraft,
+  RedisConnectionResult,
+  RedisConnectionsState,
+  RedisSaveResult,
+  RedisKeyPage,
+  RedisKeyData,
   NacosConnectionDraft,
   NacosConnectionsState,
   NacosSaveResult,
@@ -47,6 +53,7 @@ import type {
 import { CommandRunner } from './commands'
 import { ConversationStore } from './db'
 import { normalizeNacosUrl } from './nacos-view'
+import { RedisReader, normalizeRedisDraft } from './redis-reader'
 import { ChatGptEmbed } from './embed'
 import type { EmbedHandlers } from './embed'
 import { parseRemoteEnvironment, parseWindowsEnvironment } from './environment'
@@ -235,6 +242,7 @@ function normalizeProxy(raw: string): string {
 }
 
 export class SessionRuntime {
+  private readonly redisReader = new RedisReader()
   readonly id: string
   readonly createdAt: number
   readonly runner: CommandRunner
@@ -1386,6 +1394,59 @@ export class SessionRuntime {
     }
   }
 
+  listRedisConnections(): RedisConnectionsState {
+    return this.readRedisConnectionsState()
+  }
+
+  saveRedisConnection(draft: RedisConnectionDraft): RedisSaveResult {
+    const connection = normalizeRedisDraft(draft)
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    if (connection.id && !this.options.store.listRedisConnections(this.environmentScope.scope, machineKey).some((row) => row.id === connection.id)) {
+      throw new Error('连接已被删除或已切换机器，请重新打开连接。')
+    }
+    const secret = encryptSecret(connection.password)
+    if (connection.password && !secret) throw new Error('系统密码加密不可用，连接未保存。')
+    const id = connection.id || randomUUID()
+    this.options.store.upsertRedisConnection({
+      id, scope: this.environmentScope.scope, hostId: machineKey, name: connection.name,
+      host: connection.host, port: connection.port, username: connection.username,
+      secret, database: connection.database, tls: connection.tls
+    })
+    const state = this.readRedisConnectionsState()
+    this.send(IpcChannels.redisConnChanged, state)
+    return { ...state, id }
+  }
+
+  removeRedisConnection(id: string): RedisConnectionsState {
+    const machineKey = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    this.options.store.removeRedisConnection(String(id ?? ''), this.environmentScope.scope, machineKey)
+    const state = this.readRedisConnectionsState()
+    this.send(IpcChannels.redisConnChanged, state)
+    return state
+  }
+
+  private readRedisConnectionsState(): RedisConnectionsState {
+    const hostId = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+    const connections = this.options.store.listRedisConnections(this.environmentScope.scope, hostId).map(({ secret, ...row }) => {
+      const password = decryptSecret(secret)
+      if (secret && !password) throw new Error('已保存的 Redis 密码无法解密，请检查系统加密服务。')
+      return { ...row, password, scope: this.environmentScope.scope, hostId }
+    })
+    return { machineLabel: this.environmentScope.label, ownerKey: `${this.environmentScope.scope}:${hostId}`, connections }
+  }
+
+  testRedisConnection(draft: RedisConnectionDraft): Promise<RedisConnectionResult> {
+    return this.redisReader.testConnection(draft)
+  }
+
+  scanRedisKeys(draft: RedisConnectionDraft, cursor: string, search: string): Promise<RedisKeyPage> {
+    return this.redisReader.scanKeys(draft, cursor, search)
+  }
+
+  readRedisKey(draft: RedisConnectionDraft, keyId: string, cursor: string): Promise<RedisKeyData> {
+    return this.redisReader.readKey(draft, keyId, cursor)
+  }
+
   /* ---------------- nacos connections ---------------- */
 
   /** Every saved Nacos console for whichever machine the terminal is driving. */
@@ -1542,6 +1603,13 @@ export class SessionRuntime {
           : { scope: 'local', hostId: '', label: '本机' }
 
       this.environment = info
+      try { this.send(IpcChannels.redisConnChanged, this.readRedisConnectionsState()) } catch {
+        // Credential failures belong to the Redis page and must not abort environment updates.
+        const hostId = this.environmentScope.scope === 'local' ? this.options.localMachineId : this.environmentScope.hostId
+        this.send(IpcChannels.redisConnChanged, {
+          machineLabel: this.environmentScope.label, ownerKey: `${this.environmentScope.scope}:${hostId}`, connections: []
+        })
+      }
       this.refreshDirectoryNotes(true)
       this.broadcastConversations()
       this.options.onSummaryChanged()
@@ -1560,6 +1628,7 @@ export class SessionRuntime {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.redisReader.dispose()
     this.web2term?.dispose()
     this.active = false
     this.deferredCommands.clear()

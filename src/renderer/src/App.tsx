@@ -9,9 +9,11 @@ import type { AvatarEditorRef } from 'react-avatar-editor'
 import GitDialog from './components/GitDialog'
 import SshDirectoryPicker from './components/SshDirectoryPicker'
 import MysqlDialog from './components/MysqlDialog'
+import RedisDialog from './components/RedisDialog'
 import NacosDialog from './components/NacosDialog'
 import BackendLoginForm from './components/BackendLoginForm'
 import MysqlIcon from './components/MysqlIcon'
+import RedisIcon from './components/RedisIcon'
 import NacosIcon from './components/NacosIcon'
 import ConversationTranscript from './components/ConversationTranscript'
 import { conversationScrollKey } from './conversation-scroll'
@@ -465,6 +467,7 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
   const [gitDialogOpen, setGitDialogOpen] = useState(false)
   /** The MySQL connection dialog opened from the toolbox. */
   const [mysqlDialogOpen, setMysqlDialogOpen] = useState(false)
+  const [redisDialogOpen, setRedisDialogOpen] = useState(false)
   /** The Nacos connection dialog opened from the toolbox. */
   const [nacosDialogOpen, setNacosDialogOpen] = useState(false)
   /** One viewer with separate base-prompt and tool-prompt content. */
@@ -1598,9 +1601,9 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
    * lives in the terminal column and must leave the chat page usable underneath.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && !mysqlDialogOpen && !nacosDialogOpen)
+    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && !mysqlDialogOpen && !redisDialogOpen && !nacosDialogOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, mysqlDialogOpen, nacosDialogOpen])
+  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, mysqlDialogOpen, redisDialogOpen, nacosDialogOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -2491,6 +2494,10 @@ ${conversation.url}`}
                         <MysqlIcon size={15} />
                       </span>
                       <span>MySQL 连接</span>
+                    </Menu.Item>
+                    <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setRedisDialogOpen(true) }}>
+                      <span className="toolbox-menu__icon"><RedisIcon size={15} /></span>
+                      <span>Redis 连接</span>
                     </Menu.Item>
                     <Menu.Item className="toolbox-menu__item" onClick={() => { setSshPickerOpen(false); setNacosDialogOpen(true) }}>
                       <span className="toolbox-menu__icon">
@@ -3797,6 +3804,7 @@ ${record.command}`
         </div>
       ) : null}
       <MysqlDialog open={mysqlDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setMysqlDialogOpen(false)} />
+      <RedisDialog open={redisDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setRedisDialogOpen(false)} />
       <NacosDialog open={nacosDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setNacosDialogOpen(false)} />
       <GitDialog open={gitDialogOpen} cwd={terminal?.cwd ?? ""} theme={settings?.theme ?? "light"} onClose={() => setGitDialogOpen(false)} />
     </div>

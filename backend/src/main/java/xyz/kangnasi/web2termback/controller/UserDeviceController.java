@@ -12,6 +12,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import xyz.kangnasi.web2termback.feignclient.UserServiceClient;
 import xyz.kangnasi.web2termback.mapper.UserDeviceMapper;
+import xyz.kangnasi.web2termback.websocket.AgentDesktopClientRegistry;
 
 import java.util.List;
 
@@ -24,13 +25,16 @@ public class UserDeviceController {
 
     private final UserServiceClient userServiceClient;
     private final UserDeviceMapper userDeviceMapper;
+    private final AgentDesktopClientRegistry agentDesktopClientRegistry;
     private final ObjectMapper objectMapper;
 
     public UserDeviceController(UserServiceClient userServiceClient,
                                 UserDeviceMapper userDeviceMapper,
+                                AgentDesktopClientRegistry agentDesktopClientRegistry,
                                 ObjectMapper objectMapper) {
         this.userServiceClient = userServiceClient;
         this.userDeviceMapper = userDeviceMapper;
+        this.agentDesktopClientRegistry = agentDesktopClientRegistry;
         this.objectMapper = objectMapper;
     }
 
@@ -39,7 +43,33 @@ public class UserDeviceController {
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
         ResponseEntity<String> authResponse = userServiceClient.introspect(authorization);
         long userId = extractUserId(authResponse.getBody());
-        return userDeviceMapper.findByUserId(userId);
+        return userDeviceMapper.findByUserId(userId).stream()
+                .map(device -> {
+                    if (agentDesktopClientRegistry.isBound(device.deviceId())) {
+                        return device;
+                    }
+                    if (Integer.valueOf(1).equals(device.onlineStatus())) {
+                        userDeviceMapper.markOfflineIfOnline(userId, device.deviceId());
+                    }
+                    return new UserDeviceMapper.UserDeviceRecord(
+                                device.deviceId(),
+                                device.deviceName(),
+                                device.enabled(),
+                                0,
+                                device.lastConnectedAt(),
+                                device.lastHeartbeatAt(),
+                                device.lastDisconnectedAt(),
+                                device.terminalConnectionStatus(),
+                                device.terminalSessionId(),
+                                device.desktopClientId(),
+                                device.terminalRequestedAt(),
+                                device.terminalConnectedAt(),
+                                device.terminalDisconnectedAt(),
+                                device.terminalError(),
+                                device.createdAt(),
+                                device.updatedAt());
+                })
+                .toList();
     }
 
     /**

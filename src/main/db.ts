@@ -5,6 +5,7 @@ import { dirname, extname, join } from 'node:path'
 import { nativeImage } from 'electron'
 import { parseReadFilesRequest } from '../shared/file-requests'
 import { normalizeTerminalNotesDirectory } from './terminal-notes'
+import { interruptRunningCommands, recoverInterruptedExecutions } from './execution-recovery'
 import type { StoredFileReadRequest, FileDeliveryStatus } from '../shared/file-requests'
 import type {
   Conversation,
@@ -63,6 +64,34 @@ CREATE TABLE IF NOT EXISTS nacos_connections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_nacos_connections_machine ON nacos_connections (machine_scope, host_id, updated_at);`
+
+const REDIS_CONNECTIONS_TABLE = `
+CREATE TABLE IF NOT EXISTS redis_connections (
+  id TEXT PRIMARY KEY,
+  machine_scope TEXT NOT NULL,
+  host_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 6379,
+  username TEXT NOT NULL DEFAULT '',
+  secret TEXT NOT NULL DEFAULT '',
+  database_index INTEGER NOT NULL DEFAULT 0,
+  tls INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_redis_connections_machine ON redis_connections (machine_scope, host_id, updated_at);`
+
+interface StoredRedisConnection {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  secret: string
+  database: number
+  tls: boolean
+  updatedAt: number
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -205,6 +234,7 @@ CREATE TABLE IF NOT EXISTS terminal_directory_notes (
 
 ${MYSQL_CONNECTIONS_TABLE}
 ${NACOS_CONNECTIONS_TABLE}
+${REDIS_CONNECTIONS_TABLE}
 `
 
 interface ConversationRow {
@@ -336,6 +366,8 @@ export class ConversationStore {
     this.db.exec('PRAGMA journal_mode = WAL;')
     this.db.exec(SCHEMA)
     this.migrate()
+    const interrupted = recoverInterruptedExecutions(this.db)
+    if (interrupted > 0) console.info(`[db] recovered ${interrupted} interrupted execution(s) from the previous run`)
     this.removeDuplicateMessageAttachments()
   }
 
@@ -418,10 +450,6 @@ export class ConversationStore {
     for (const [name, definition] of [['kind', "TEXT NOT NULL DEFAULT 'command'"], ['file_request', 'TEXT'], ['delivery_status', 'TEXT']]) {
       if (!executionColumns.some((column) => column.name === name)) this.db.exec(`ALTER TABLE executions ADD COLUMN ${name} ${definition}`)
     }
-    // A crashed process cannot prove whether an in-progress upload was submitted.
-    this.db.exec("UPDATE executions SET status = 'interrupted', delivery_status = CASE WHEN delivery_status = 'uploading' THEN 'unknown' ELSE 'cancelled' END WHERE kind = 'read_files' AND status = 'running'")
-    this.db.exec("UPDATE executions SET delivery_status = 'unknown' WHERE kind = 'read_files' AND delivery_status = 'uploading'")
-    this.db.exec("UPDATE executions SET delivery_status = 'cancelled' WHERE kind = 'read_files' AND status IN ('done', 'failed') AND delivery_status IN ('pending', 'failed')")
     const conversationColumns = this.db
       .prepare('PRAGMA table_info(conversations)')
       .all() as unknown as Array<{ name: string }>
@@ -743,6 +771,11 @@ export class ConversationStore {
   }
 
   /* ---------------- executions ---------------- */
+
+  /** Persist shutdown synchronously, before shell callbacks or the database are gone. */
+  interruptRunningCommands(messageIds: Iterable<string>): void {
+    interruptRunningCommands(this.db, messageIds)
+  }
 
   /**
    * Record a command the model asked for.
@@ -1189,6 +1222,34 @@ export class ConversationStore {
 
   removeMysqlConnection(id: string): void {
     this.db.prepare('DELETE FROM mysql_connections WHERE id = ?').run(id)
+  }
+
+  listRedisConnections(scope: string, hostId: string): StoredRedisConnection[] {
+    const rows = this.db.prepare(
+      'SELECT id, name, host, port, username, secret, database_index, tls, updated_at FROM redis_connections WHERE machine_scope = ? AND host_id = ? ORDER BY updated_at ASC, id ASC'
+    ).all(scope, hostId) as unknown as Array<Omit<StoredRedisConnection, 'database' | 'tls' | 'updatedAt'> & {
+      database_index: number
+      tls: number
+      updated_at: number
+    }>
+    return rows.map(({ database_index, tls, updated_at, ...row }) => ({
+      ...row, database: database_index, tls: Boolean(tls), updatedAt: updated_at
+    }))
+  }
+
+  upsertRedisConnection(record: Omit<StoredRedisConnection, 'updatedAt'> & { scope: string; hostId: string }): void {
+    this.db.prepare(
+      `INSERT INTO redis_connections (id, machine_scope, host_id, name, host, port, username, secret, database_index, tls, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, host = excluded.host, port = excluded.port,
+         username = excluded.username, secret = excluded.secret, database_index = excluded.database_index,
+         tls = excluded.tls, updated_at = excluded.updated_at`
+    ).run(record.id, record.scope, record.hostId, record.name, record.host, record.port, record.username,
+      record.secret, record.database, record.tls ? 1 : 0, Date.now())
+  }
+
+  removeRedisConnection(id: string, scope: string, hostId: string): void {
+    this.db.prepare('DELETE FROM redis_connections WHERE id = ? AND machine_scope = ? AND host_id = ?').run(id, scope, hostId)
   }
 
   /* ---------------- nacos connections ---------------- */

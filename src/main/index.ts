@@ -10,6 +10,7 @@ import {
   isConversationId
 } from '../shared/types'
 import { readGitDiff, readGitLog } from './git'
+import { emptyRedisKeyPage, emptyRedisKeyData } from './redis-reader'
 import { normalizeBackendUrl, readBackendUrl } from '../shared/backend-url'
 import { BackendAuthService } from './backend-auth'
 import { Web2termConnection } from './web2term-connection'
@@ -60,6 +61,9 @@ import type {
   MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
+  RedisConnectionDraft,
+  RedisConnectionsState,
+  RedisSaveResult,
   UpdateStatus,
   NacosConnectionDraft,
   NacosConnectionsState,
@@ -1260,6 +1264,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.mysqlConnQueryTable, (event, draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> => runtimeForEvent(event)?.queryMysqlTable(draft, database, table) ?? Promise.resolve({ ok: false, sql: '', columns: [], columnComments: [], columnCommentsMessage: '', rows: [], truncated: false, message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnTableDdl, (event, draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl> => runtimeForEvent(event)?.getMysqlTableDdl(draft, database, table) ?? Promise.resolve({ ok: false, ddl: '', message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnRemove, (event, id: string): MysqlConnectionsState => runtimeForEvent(event)?.removeMysqlConnection(id) ?? EMPTY_MYSQL)
+
+  const emptyRedis: RedisConnectionsState = { machineLabel: '', ownerKey: '', connections: [] }
+  ipcMain.handle(IpcChannels.redisConnList, (event) => runtimeForEvent(event)?.listRedisConnections() ?? emptyRedis)
+  ipcMain.handle(IpcChannels.redisConnSave, (event, draft: RedisConnectionDraft): RedisSaveResult => {
+    const runtime = runtimeForEvent(event)
+    if (!runtime) throw new Error('当前会话不可用。')
+    return runtime.saveRedisConnection(draft)
+  })
+  ipcMain.handle(IpcChannels.redisConnRemove, (event, id: string) => runtimeForEvent(event)?.removeRedisConnection(id) ?? emptyRedis)
+  ipcMain.handle(IpcChannels.redisTestConnection, (event, draft: RedisConnectionDraft) =>
+    runtimeForEvent(event)?.testRedisConnection(draft) ?? { ok: false, message: '当前会话不可用。' })
+  ipcMain.handle(IpcChannels.redisScanKeys, (event, draft: RedisConnectionDraft, cursor: string, search: string) =>
+    runtimeForEvent(event)?.scanRedisKeys(draft, cursor, search) ?? emptyRedisKeyPage('当前会话不可用。'))
+  ipcMain.handle(IpcChannels.redisReadKey, (event, draft: RedisConnectionDraft, keyId: string, cursor: string) =>
+    runtimeForEvent(event)?.readRedisKey(draft, keyId, cursor) ?? emptyRedisKeyData('当前会话不可用。'))
 
   ipcMain.handle(IpcChannels.sshGetState, (event): SshState => runtimeForEvent(event)?.ssh.getState() ?? { ...EMPTY_SSH_STATE })
   ipcMain.handle(IpcChannels.sshListHosts, (event): SshHost[] => runtimeForEvent(event)?.listSshHosts() ?? [])

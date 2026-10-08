@@ -67,6 +67,20 @@ public interface UserDeviceMapper {
                          @Param("deviceId") String deviceId);
 
     /**
+     * 仅在设备原本在线时更新离线状态，避免重复刷新断开时间。
+     */
+    @Update("""
+            UPDATE user_device
+            SET online_status = 0,
+                last_disconnected_at = NOW(3)
+            WHERE device_id = #{deviceId}
+              AND user_id = #{userId}
+              AND online_status = 1
+            """)
+    int markOfflineIfOnline(@Param("userId") long userId,
+                            @Param("deviceId") String deviceId);
+
+    /**
      * 查询当前用户的全部设备，供设备列表接口使用。
      */
     @Select("""

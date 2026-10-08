@@ -53,6 +53,7 @@ interface ConnectionTab {
   /** The tables inside this connection, and the state of the fetch that lists them. */
   tablesLoading: boolean
   tables: MysqlTableList | null
+  tableSearch: string
 }
 
 interface TableTab {
@@ -230,6 +231,10 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       ? connections.find((connection) => connection.id === activeForm.id) ?? null
       : null
   const savedNow = activeForm !== null && activeSaved !== null && matchesSaved(activeForm, activeSaved)
+  const tableSearch = activeConnection?.tableSearch.trim().toLowerCase() ?? ''
+  const visibleTables = (activeConnection?.tables?.tables ?? []).filter(
+    (table) => tableSearch === '' || table.name.toLowerCase().includes(tableSearch) || table.comment.toLowerCase().includes(tableSearch)
+  )
 
   useEffect(() => {
     if (!open) return
@@ -285,7 +290,8 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
               key: connection.id,
               form: formFromConnection(connection),
               tablesLoading: false,
-              tables: null
+              tables: null,
+              tableSearch: ''
             }
           ]
     )
@@ -299,7 +305,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     const key = `new:${newTabRef.current}`
     setTabs((current) => [
       ...current,
-      { kind: 'connection', key, form: { ...EMPTY_FORM }, tablesLoading: false, tables: null }
+      { kind: 'connection', key, form: { ...EMPTY_FORM }, tablesLoading: false, tables: null, tableSearch: '' }
     ])
     setActiveKey(key)
     setReveal(false)
@@ -1095,22 +1101,40 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                 </div>
                 <div className="mysql-page__tables">
                   <div className="mysql-page__tables-head">
-                    <span className="mysql-page__card-title">数据表</span>
-                    {activeConnection !== null && activeConnection.tables !== null && activeConnection.tables.ok ? (
-                      <span className="mysql-page__card-note">共 {activeConnection.tables.tables.length} 张</span>
-                    ) : null}
-                    <span className="panel__spacer" />
-                    <button
-                      type="button"
-                      className="mysql-page__btn"
-                      disabled={activeConnection === null || activeConnection.tablesLoading || activeForm.host.trim() === '' || activeForm.database.trim() === ''}
-                      title="重新连接并读取表列表"
-                      onClick={() => {
-                        if (activeConnection !== null && activeForm !== null) void refreshTables(activeConnection.key, activeForm)
-                      }}
-                    >
-                      {activeConnection?.tablesLoading ? '读取中…' : '刷新'}
-                    </button>
+                    <div className="mysql-page__tables-summary">
+                      <span className="mysql-page__card-title">数据表</span>
+                      {activeConnection !== null && activeConnection.tables !== null && activeConnection.tables.ok ? (
+                        <span className="mysql-page__card-note" role="status">
+                          {tableSearch === '' ? `共 ${activeConnection.tables.tables.length} 张` : `匹配 ${visibleTables.length} / 共 ${activeConnection.tables.tables.length} 张`}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mysql-page__tables-actions">
+                      <input
+                        type="search"
+                        className="mysql-page__input mysql-page__table-search"
+                        placeholder="搜索表名或表注释"
+                        aria-label="搜索表名或表注释"
+                        value={activeConnection?.tableSearch ?? ''}
+                        onChange={(event) => {
+                          const tableSearch = event.currentTarget.value
+                          setTabs((current) => current.map((tab) =>
+                            tab.kind === 'connection' && tab.key === activeKey ? { ...tab, tableSearch } : tab
+                          ))
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="mysql-page__btn"
+                        disabled={activeConnection === null || activeConnection.tablesLoading || activeForm.host.trim() === '' || activeForm.database.trim() === ''}
+                        title="重新连接并读取表列表"
+                        onClick={() => {
+                          if (activeConnection !== null && activeForm !== null) void refreshTables(activeConnection.key, activeForm)
+                        }}
+                      >
+                        {activeConnection?.tablesLoading ? '读取中…' : '刷新'}
+                      </button>
+                    </div>
                   </div>
                   {activeConnection === null || activeConnection.tablesLoading ? (
                     <p className="mysql-page__hint">正在读取数据表…</p>
@@ -1120,9 +1144,11 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     <p className="mysql-page__hint mysql-page__hint--error" role="alert">{activeConnection.tables.message}</p>
                   ) : activeConnection.tables.tables.length === 0 ? (
                     <p className="mysql-page__hint">这个数据库里还没有表。</p>
+                  ) : visibleTables.length === 0 ? (
+                    <p className="mysql-page__hint" role="status">没有匹配的表，请修改或清空搜索关键词。</p>
                   ) : (
                     <ul className="mysql-page__table-list">
-                      {activeConnection.tables.tables.map((table) => (
+                      {visibleTables.map((table) => (
                         <li key={table.name} className="mysql-page__table-row">
                           <button
                             type="button"
