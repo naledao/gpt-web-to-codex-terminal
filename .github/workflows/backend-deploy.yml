@@ -26,6 +26,9 @@ jobs:
       - name: Show Java version
         run: java -version
 
+      - name: Debug runner tracking env
+        run: env | grep -iE 'runner|tracking' | sort || true
+
       - name: Patch application.yml to local addresses
         working-directory: backend
         run: |
@@ -57,7 +60,8 @@ jobs:
           fi
 
           cd "$DEPLOY_DIR"
-          setsid nohup java -jar app.jar --server.port=8082 > app.log 2>&1 < /dev/null &
+          unset RUNNER_TRACKING_ID
+          setsid env -u RUNNER_TRACKING_ID nohup java -jar app.jar --server.port=8082 > app.log 2>&1 < /dev/null &
           echo $! > app.pid
           NEW_PID="$(cat app.pid)"
           echo "Started PID=$NEW_PID"
