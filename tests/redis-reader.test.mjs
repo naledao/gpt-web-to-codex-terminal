@@ -66,6 +66,13 @@ test('JSON formatting preserves large integers, exponent tokens and duplicate fi
   assert.equal(formatRedisJson(' {"empty":[]} '), '{\n  "empty": []\n}')
 })
 
+test('deep JSON remains viewable without excessive indentation or changing its number tokens', () => {
+  const raw = '['.repeat(3000) + '9223372036854775807' + ']'.repeat(3000)
+  const formatted = formatRedisJson(raw)
+  assert.equal(formatted, raw)
+  assert.ok(formatted.length < 10000)
+})
+
 test('repeated SCAN entries merge without dropping distinct IDs', () => {
   const previous = [{ id: 'a', value: 1 }, { id: 'b', value: 2 }]
   assert.deepEqual(mergeRedisEntries(previous, [{ id: 'a', value: 3 }, { id: 'c', value: 4 }]), [

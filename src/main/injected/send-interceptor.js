@@ -61,6 +61,7 @@
       'button[aria-label="停止生成"]'
     ],
     assistantSelectors: ['[data-chatgpt-selection-message-id]'],
+    assistantRoleSelectors: [],
     assistantReplySelectors: ['[data-markdown-text-style="assistant-message"]'],
     messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
     messageIdAttr: 'data-chatgpt-selection-message-id',
@@ -279,32 +280,24 @@
    * Falls back to the turn's own text when the marker is absent, which is the correct
    * behaviour on a site that has none.
    */
-  const readReplyText = (node) => {
-    if (!node) return ''
+  const replyRootOf = (node) => {
+    if (!node) return null
     const markers = PAGE.assistantReplySelectors
     if (markers && markers.length > 0) {
       for (const selector of markers) {
-        const answer = node.querySelector(selector)
-        if (answer) return String(answer.innerText || '')
+        const answer = node.matches(selector) ? node : node.querySelector(selector)
+        if (answer) return answer
       }
     }
-    return String(node.innerText || '')
+    return node
   }
+
+  const readReplyText = (node) => String(replyRootOf(node)?.innerText || '')
 
   /** Preserve the rendered answer structure as Markdown for the app-owned transcript. */
   const readReplyMarkdown = (node) => {
-    if (!node) return ''
-    let root = node
-    const markers = PAGE.assistantReplySelectors
-    if (markers && markers.length > 0) {
-      for (const selector of markers) {
-        const answer = node.querySelector(selector)
-        if (answer) {
-          root = answer
-          break
-        }
-      }
-    }
+    const root = replyRootOf(node)
+    if (!root) return ''
 
     const render = (current, depth = 0) => {
       if (!current) return ''
@@ -384,9 +377,13 @@
     // but `readReplyText` right above guards it and this does not — an asymmetry that would
     // turn a future refactor into a TypeError in a page we do not control.
     if (!node) return false
+    // A site's explicit role belongs to the turn, not to its current text renderer.
+    // Claude's code-only replies need not contain the usual answer font class.
+    const roles = PAGE.assistantRoleSelectors
+    if (roles && roles.length > 0) return roles.some((selector) => node.matches(selector))
     const markers = PAGE.assistantReplySelectors
     if (!markers || markers.length === 0) return true
-    return markers.some((selector) => node.querySelector(selector) !== null)
+    return markers.some((selector) => node.matches(selector) || node.querySelector(selector) !== null)
   }
 
   /**
@@ -2129,7 +2126,7 @@
       noteScan(turnKeyOf(node), 'not-assistant-turn', {
         tag: node.tagName.toLowerCase(),
         cls: String(node.className || '').slice(0, 120),
-        wanted: PAGE.assistantReplySelectors
+        wanted: PAGE.assistantRoleSelectors?.length ? PAGE.assistantRoleSelectors : PAGE.assistantReplySelectors
       })
       return
     }
@@ -3026,7 +3023,7 @@
         // read/write path decides from the ELEMENT (see readComposer), so a site that
         // changes its composer still works without a descriptor update.
         const { composerKind: _kind, ...selectors } = config.page
-        PAGE = { ...PAGE, disabledControlSelectors: [], fileTurnPositionAttr: '', fileTurnPositionSelector: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, fileAttachmentCardSelector: '', fileDraftCardSelector: '', fileDraftIgnoreSelector: '', fileDraftImageSelector: '', fileSentImageSelector: '', fileDraftNameReferenceAttribute: '', fileUploadProgressSelector: '', fileComposerRootSelector: '', fileUploadMenuSelectors: [], fileLocalUploadSelector: '', fileLocalUploadLabels: [], ...selectors }
+        PAGE = { ...PAGE, assistantRoleSelectors: [], disabledControlSelectors: [], fileTurnPositionAttr: '', fileTurnPositionSelector: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, fileAttachmentCardSelector: '', fileDraftCardSelector: '', fileDraftIgnoreSelector: '', fileDraftImageSelector: '', fileSentImageSelector: '', fileDraftNameReferenceAttribute: '', fileUploadProgressSelector: '', fileComposerRootSelector: '', fileUploadMenuSelectors: [], fileLocalUploadSelector: '', fileLocalUploadLabels: [], ...selectors }
       }
       // A freshly (re)loaded page has no message of ours outstanding, so nothing
       // it renders can be a reply to us.

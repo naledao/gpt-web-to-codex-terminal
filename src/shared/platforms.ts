@@ -112,6 +112,11 @@ export interface PageAdapter {
   /** One element per assistant turn. */
   assistantSelectors: string[]
   /**
+   * Explicit assistant-role markers on the turn itself, independent of answer markup.
+   * Sites with unmarked turns continue to identify the role by assistantReplySelectors.
+   */
+  assistantRoleSelectors?: string[]
+  /**
    * The element holding ONLY the assistant's answer, inside a turn.
    *
    * A turn's own text is not the answer. DeepSeek's turn carries its reasoning
@@ -730,9 +735,11 @@ export const CLAUDE_PAGE: PageAdapter = {
    */
   stopButtonSelectors: ['button[aria-label="Stop response"]'],
   assistantSelectors: ['[data-testid="assistant-message"]'],
+  assistantRoleSelectors: ['[data-testid="assistant-message"]'],
   /*
-   * Not the turn itself. See trap 1 above: the turn's text carries a screen-reader prefix, and
-   * `font-claude-response` is where the answer actually lives.
+   * Prefer the answer container to omit the screen-reader prefix. This is a text-extraction
+   * hint, not a role marker: code-only replies can lack it. The confirmed assistant turn is
+   * then read as a whole, and the JSON extractor ignores the surrounding UI text.
    */
   assistantReplySelectors: ['[class*="font-claude-response"]'],
   messageSelectors: ['[data-testid="user-message"]', '[data-testid="assistant-message"]'],

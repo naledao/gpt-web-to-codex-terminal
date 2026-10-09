@@ -81,6 +81,11 @@ interface DdlTab extends Omit<TableTab, 'kind' | 'data'> {
 
 type MysqlTab = ConnectionTab | TableTab | DdlTab
 
+interface TabScrollPosition {
+  detail: number
+  tableList: number
+}
+
 const EMPTY_FORM: ConnectionForm = {
   id: '',
   name: '',
@@ -204,6 +209,20 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [state, setState] = useState<MysqlConnectionsState | null>(null)
   const [tabs, setTabs] = useState<MysqlTab[]>([])
   const [activeKey, setActiveKey] = useState('')
+  // Tab contents are unmounted when hidden; keep scroll offsets outside their DOM.
+  const scrollPositionsRef = useRef(new Map<string, TabScrollPosition>())
+  const rememberScroll = useCallback((key: string, area: keyof TabScrollPosition, offset: number): void => {
+    if (key === '') return
+    const previous = scrollPositionsRef.current.get(key) ?? { detail: 0, tableList: 0 }
+    scrollPositionsRef.current.set(key, { ...previous, [area]: offset })
+  }, [])
+  // Callback refs restore before paint, including when a refreshed list mounts again.
+  const detailScrollRef = useCallback((element: HTMLElement | null): void => {
+    if (element) element.scrollTop = scrollPositionsRef.current.get(activeKey)?.detail ?? 0
+  }, [activeKey])
+  const tableListScrollRef = useCallback((element: HTMLUListElement | null): void => {
+    if (element) element.scrollTop = scrollPositionsRef.current.get(activeKey)?.tableList ?? 0
+  }, [activeKey])
   const [reveal, setReveal] = useState(false)
   const newTabRef = useRef(0)
   const ddlRequestRef = useRef(0)
@@ -221,7 +240,6 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const dbBoxRef = useRef<HTMLSpanElement>(null)
 
   const connections = state?.connections ?? []
-  const machineLabel = state?.machineLabel ?? ''
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null
   const activeConnection = activeTab !== null && activeTab.kind === 'connection' ? activeTab : null
   const activeForm = activeConnection?.form ?? null
@@ -346,6 +364,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       const index = tabs.findIndex((tab) => tab.key === key)
       if (index < 0) return
       const next = tabs.filter((tab) => tab.key !== key)
+      scrollPositionsRef.current.delete(key)
       setTabs(next)
       if (activeKey === key) {
         setActiveKey(next.length === 0 ? '' : next[Math.min(index, next.length - 1)].key)
@@ -543,6 +562,11 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       setState({ machineLabel: result.machineLabel, connections: result.connections })
       const saved = result.connections.find((connection) => connection.id === result.id) ?? null
       const nextForm = saved ? formFromConnection(saved) : { ...activeForm, id: result.id }
+      if (key !== result.id) {
+        const position = scrollPositionsRef.current.get(key)
+        if (position) scrollPositionsRef.current.set(result.id, position)
+        scrollPositionsRef.current.delete(key)
+      }
       // A brand-new connection is keyed by a temporary id until this moment; the row id
       // replaces it, so the tab it was opened in becomes the tab of the saved row.
       setTabs((current) =>
@@ -607,6 +631,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       setState(next)
       const index = tabs.findIndex((tab) => tab.key === connection.id)
       const remaining = tabs.filter((tab) => tab.key !== connection.id)
+      scrollPositionsRef.current.delete(connection.id)
       setTabs(remaining)
       if (activeKey === connection.id) {
         setActiveKey(remaining.length === 0 ? "" : remaining[Math.min(index, remaining.length - 1)].key)
@@ -770,7 +795,13 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
             )}
           </aside>
 
-          <section className="mysql-page__detail">
+          <section
+            className="mysql-page__detail"
+            ref={detailScrollRef}
+            onScroll={(event) => {
+              if (event.target === event.currentTarget) rememberScroll(activeKey, 'detail', event.currentTarget.scrollTop)
+            }}
+          >
             {activeTab === null ? (
               <div className="mysql-page__empty">
                 <span className="mysql-page__empty-mark" aria-hidden="true">
@@ -931,9 +962,6 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
               <div className="mysql-page__card">
                 <div className="mysql-page__card-head">
                   <span className="mysql-page__card-title">连接信息</span>
-                  <span className="mysql-page__card-note">
-                    只对当前机器生效{machineLabel ? ` · ${machineLabel}` : ''}
-                  </span>
                 </div>
 
                 <div className="mysql-page__grid">
@@ -1147,7 +1175,11 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   ) : visibleTables.length === 0 ? (
                     <p className="mysql-page__hint" role="status">没有匹配的表，请修改或清空搜索关键词。</p>
                   ) : (
-                    <ul className="mysql-page__table-list">
+                    <ul
+                      className="mysql-page__table-list"
+                      ref={tableListScrollRef}
+                      onScroll={(event) => rememberScroll(activeKey, 'tableList', event.currentTarget.scrollTop)}
+                    >
                       {visibleTables.map((table) => (
                         <li key={table.name} className="mysql-page__table-row">
                           <button
@@ -1177,7 +1209,27 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     </ul>
                   )}
                 </div>
-                <div className="mysql-page__card-foot">                   <span className="mysql-page__card-foot-hint">                     {savedNow ? '已保存到本机' : '有改动尚未保存'}                   </span>                   <span className="panel__spacer" />                   <button                     type="button"                     className="mysql-page__btn"                     title="关闭这个页面，连接仍保留在左侧列表"                     onClick={() => {                       if (activeTab !== null) closeTab(activeTab.key)                     }}                   >                     关闭                   </button>                   <button                     type="button"                     className="mysql-page__btn mysql-page__btn--primary"                     disabled={saving || savedNow || activeForm.database.trim() === ''}                     onClick={() => void save()}                   >                     {saving ? '保存中…' : '保存'}                   </button>                 </div>
+                <div className="mysql-page__card-foot">
+                  <span className="panel__spacer" />
+                  <button
+                    type="button"
+                    className="mysql-page__btn"
+                    title="关闭这个页面，连接仍保留在左侧列表"
+                    onClick={() => {
+                      if (activeTab !== null) closeTab(activeTab.key)
+                    }}
+                  >
+                    关闭
+                  </button>
+                  <button
+                    type="button"
+                    className="mysql-page__btn mysql-page__btn--primary"
+                    disabled={saving || savedNow || activeForm.database.trim() === ''}
+                    onClick={() => void save()}
+                  >
+                    {saving ? '保存中…' : '保存'}
+                  </button>
+                </div>
               </div>
             ) : null}
           </section>

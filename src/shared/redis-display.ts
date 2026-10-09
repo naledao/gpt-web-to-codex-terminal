@@ -10,12 +10,16 @@ export function formatRedisJson(raw: string): string | null {
   let depth = 0
   let result = ''
   const newline = (): string => '\n' + '  '.repeat(depth)
-  tokens.forEach((token, index) => {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
     const previous = tokens[index - 1]
     const next = tokens[index + 1]
     if (token === '{' || token === '[') {
       result += token
       depth += 1
+      // Deep nesting can expand a small document into gigabytes of indentation.
+      // Keep valid JSON in its original form when prettifying would be excessive.
+      if (depth > 100) return raw
       if (next !== '}' && next !== ']') result += newline()
     } else if (token === '}' || token === ']') {
       depth -= 1
@@ -28,6 +32,7 @@ export function formatRedisJson(raw: string): string | null {
     } else {
       result += token
     }
-  })
+    if (result.length > 1024 * 1024) return raw
+  }
   return result
 }

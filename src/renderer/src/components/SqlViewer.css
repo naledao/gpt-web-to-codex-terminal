@@ -52,6 +52,11 @@
   color: var(--sql-muted);
 }
 
+.sql-viewer__copy-error {
+  color: #c0392b;
+  font-size: 12px;
+}
+
 .sql-viewer__button,
 .sql-viewer .cm-button {
   min-height: 32px;
@@ -159,7 +164,8 @@
   cursor: pointer;
 }
 
-.workspace[data-theme='dark'] .sql-viewer {
+.workspace[data-theme='dark'] .sql-viewer,
+.sql-viewer[data-theme='dark'] {
   --sql-surface: #10151d;
   --sql-gutter: #161d28;
   --sql-border: #2a3444;
@@ -171,4 +177,8 @@
   --sql-accent: #4fd1e8;
   --sql-pressed: #143440;
   --sql-pressed-text: #83deed;
+}
+
+.sql-viewer[data-theme='dark'] .sql-viewer__copy-error {
+  color: #ff9a9a;
 }

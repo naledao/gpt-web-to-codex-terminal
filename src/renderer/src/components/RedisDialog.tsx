@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type {
   AppTheme, RedisConnection, RedisConnectionDraft, RedisConnectionsState,
@@ -8,6 +8,8 @@ import { formatRedisJson, mergeRedisEntries } from '../../../shared/redis-displa
 import ConfirmDialog from './ConfirmDialog'
 import RedisIcon from './RedisIcon'
 import './RedisDialog.css'
+
+const CodeViewer = lazy(() => import('./CodeViewer'))
 
 interface ConnectionForm extends Omit<RedisConnectionDraft, 'port' | 'database'> {
   port: string
@@ -30,6 +32,7 @@ interface ConnectionTab {
   valueLoading: boolean
   valueRequest: number
   valueError: string
+  valueFormat: 'text' | 'json'
   testing: boolean
   testRequest: number
   testResult: RedisConnectionResult | null
@@ -40,7 +43,7 @@ const EMPTY_FORM: ConnectionForm = {
 }
 const EMPTY_BROWSER = {
   page: null, keysLoading: false, keysRequest: 0, keysError: '', selected: null,
-  value: null, valueLoading: false, valueRequest: 0, valueError: ''
+  value: null, valueLoading: false, valueRequest: 0, valueError: '', valueFormat: 'json' as const
 }
 
 function makeTab(key: string, form: ConnectionForm, view: ConnectionTab['view']): ConnectionTab {
@@ -86,13 +89,6 @@ function Cell({ value }: { value: RedisValueCell }): ReactElement {
   </span>
 }
 
-function stringPreview(value: RedisValueCell, format: 'text' | 'json'): string {
-  if (format === 'json' && value.encoding === 'text' && !value.truncated) {
-    return formatRedisJson(value.text) ?? value.text
-  }
-  return value.text
-}
-
 export default function RedisDialog({ open, theme, onClose }: {
   open: boolean; theme: AppTheme; onClose: () => void
 }): ReactElement | null {
@@ -103,7 +99,6 @@ export default function RedisDialog({ open, theme, onClose }: {
   const [tabs, setTabs] = useState<ConnectionTab[]>([])
   const [activeKey, setActiveKey] = useState('')
   const [reveal, setReveal] = useState(false)
-  const [format, setFormat] = useState<'text' | 'json'>('text')
   const [pendingDelete, setPendingDelete] = useState<RedisConnection | null>(null)
   const [removing, setRemoving] = useState(false)
   const requestRef = useRef(0)
@@ -112,6 +107,11 @@ export default function RedisDialog({ open, theme, onClose }: {
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null
+  const stringValue = activeTab?.value?.value ?? null
+  const formattedJson = useMemo(() => {
+    if (stringValue?.encoding !== 'text' || stringValue.truncated) return null
+    return formatRedisJson(stringValue.text)
+  }, [stringValue])
   const connections = state?.connections ?? []
   const activeSaved = connections.find((connection) => connection.id === activeTab?.form.id)
   const savedNow = activeTab !== null && activeSaved !== undefined &&
@@ -176,9 +176,9 @@ export default function RedisDialog({ open, theme, onClose }: {
 
   const loadValue = useCallback(async (tab: ConnectionTab, key: RedisKeyInfo, append = false): Promise<void> => {
     const request = ++requestRef.current
-    setFormat('text')
     setTabs((current) => current.map((item) => item.key === tab.key ? {
-      ...item, selected: key, value: append ? item.value : null, valueLoading: true, valueRequest: request, valueError: ''
+      ...item, selected: key, value: append ? item.value : null, valueLoading: true, valueRequest: request, valueError: '',
+      valueFormat: append ? item.valueFormat : 'json'
     } : item))
     let result: RedisKeyData
     try { result = await window.api.readRedisKey(draftFromForm(tab.form, tab.database), key.id, append ? tab.value?.nextCursor ?? '0' : '0') }
@@ -376,8 +376,14 @@ export default function RedisDialog({ open, theme, onClose }: {
                     {activeTab.value?.notice ? <p className="mysql-page__hint redis-page__notice">{activeTab.value.notice}</p> : null}
                     {activeTab.value?.value ? <>
                       <div className="redis-page__format"><span className="mysql-page__card-note">{activeTab.value.value.encoding === 'hex' ? '十六进制预览' : '字符串内容'}</span>
-                        {activeTab.value.value.encoding === 'text' && !activeTab.value.value.truncated ? <label>显示格式 <select value={format} onChange={(event) => setFormat(event.currentTarget.value as 'text' | 'json')}><option value="text">原始文本</option><option value="json">JSON 格式化</option></select></label> : null}</div>
-                      <pre className="redis-page__string">{stringPreview(activeTab.value.value, format) || '（空字符串）'}</pre>
+                        {activeTab.value.value.encoding === 'text' && !activeTab.value.value.truncated ? <label>显示格式 <select value={formattedJson === null ? 'text' : activeTab.valueFormat} onChange={(event) => {
+                          const valueFormat = event.currentTarget.value as 'text' | 'json'
+                          setTabs((current) => current.map((tab) => tab.key === activeKey ? { ...tab, valueFormat } : tab))
+                        }}><option value="json" disabled={formattedJson === null}>JSON 视图</option><option value="text">原始文本</option></select></label> : null}</div>
+                      {formattedJson !== null && activeTab.valueFormat === 'json' ? <Suspense fallback={<p className="mysql-page__hint" role="status">正在加载 JSON 视图…</p>}>
+                        <CodeViewer key={`${activeTab.key}:${activeTab.selected.id}`} value={formattedJson} theme={theme} language="json" label={`${activeTab.selected.name || '空键名'} 的 JSON 内容`} />
+                      </Suspense> : <pre className="redis-page__string">{activeTab.value.value.text || '（空字符串）'}</pre>}
+                      {formattedJson === null && activeTab.value.value.encoding === 'text' && !activeTab.value.value.truncated ? <p className="mysql-page__hint">内容不是有效 JSON，已按原始文本展示。</p> : null}
                     </> : null}
                     {activeTab.value && activeTab.value.columns.length > 0 ? <div className="redis-page__table-scroll"><table className="redis-page__table">
                       <thead><tr>{activeTab.value.columns.map((column) => <th key={column} scope="col">{column}</th>)}</tr></thead>
