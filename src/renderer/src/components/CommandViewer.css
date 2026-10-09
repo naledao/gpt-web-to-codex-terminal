@@ -1,0 +1,215 @@
+.current__command-wrap {
+  position: relative;
+  min-height: 0;
+}
+
+.current__command-wrap .current__command,
+.workspace:not(.workspace--manager) .current__command-wrap .current__command {
+  padding-right: 56px;
+}
+
+.current__expand {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #c7d4e6;
+  border-radius: 6px;
+  background: #f6f8fd;
+  color: #46658b;
+  cursor: pointer;
+}
+
+.current__expand:hover {
+  background: #e0eaf8;
+  color: #244f89;
+}
+
+.workspace[data-theme='dark'] .current__expand {
+  background: #1b283a;
+  border-color: #344760;
+  color: #bcd3f6;
+}
+
+.workspace[data-theme='dark'] .current__expand:hover {
+  background: #2c4665;
+  color: #e5efff;
+}
+
+.command-viewer__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 499;
+  background: rgba(8, 18, 35, 0.38);
+}
+
+.command-viewer {
+  --command-surface: #fff;
+  --command-chrome: #f6f8fb;
+  --command-border: #d8e0ed;
+  --command-text: #1f2733;
+  --command-muted: #64748b;
+  --command-hover: #edf3fb;
+  --command-accent: #3d72c2;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 500;
+  width: min(1040px, calc(100vw - 48px));
+  height: min(720px, calc(100vh - 80px));
+  max-height: 85vh;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--command-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(8, 18, 35, 0.25);
+  background: var(--command-surface);
+  color: var(--command-text);
+  color-scheme: light;
+}
+
+.command-viewer[data-theme='dark'] {
+  --command-surface: #10151d;
+  --command-chrome: #161d28;
+  --command-border: #2a3444;
+  --command-text: #e6ecf6;
+  --command-muted: #a0afc5;
+  --command-hover: #243147;
+  --command-accent: #86b6ff;
+  color-scheme: dark;
+}
+
+.command-viewer__head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--command-border);
+  background: var(--command-chrome);
+}
+
+.command-viewer__heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.command-viewer__language {
+  color: var(--command-muted);
+  font-size: 13px;
+}
+
+.command-viewer__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.command-viewer__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.command-viewer__button {
+  padding: 7px 12px;
+  border: 1px solid var(--command-border);
+  border-radius: 7px;
+  background: var(--command-surface);
+  color: var(--command-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.command-viewer__button:hover {
+  background: var(--command-hover);
+  color: var(--command-text);
+}
+
+.command-viewer__button[aria-pressed='true'] {
+  border-color: var(--command-accent);
+  color: var(--command-accent);
+}
+
+.current__expand:focus-visible,
+.command-viewer__button:focus-visible {
+  outline: 2px solid #5b86c9;
+  outline-offset: 2px;
+}
+
+.command-viewer__description {
+  flex: none;
+  max-height: 20vh;
+  margin: 0;
+  padding: 12px 20px;
+  overflow: auto;
+  border-bottom: 1px solid var(--command-border);
+  color: var(--command-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.command-viewer__body,
+.command-viewer__body > div {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.command-viewer .cm-editor {
+  background: var(--command-surface);
+  color: var(--command-text);
+}
+
+.command-viewer .cm-editor.cm-focused {
+  outline: none;
+}
+
+.command-viewer .cm-scroller {
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.command-viewer .cm-content {
+  padding: 14px 0;
+  user-select: text;
+}
+
+.command-viewer .cm-line {
+  padding: 0 16px;
+}
+
+.command-viewer .cm-gutters,
+.command-viewer .cm-panels {
+  border-color: var(--command-border);
+  background: var(--command-chrome);
+  color: var(--command-muted);
+}
+
+.command-viewer__error {
+  color: #d44b4b;
+  font-size: 12px;
+}
+
+.command-viewer__loading {
+  padding: 20px;
+  color: var(--command-muted);
+}

@@ -62,6 +62,7 @@
     ],
     assistantSelectors: ['[data-chatgpt-selection-message-id]'],
     assistantRoleSelectors: [],
+    replyStreamingAttribute: '',
     assistantReplySelectors: ['[data-markdown-text-style="assistant-message"]'],
     messageSelectors: ['[data-content-search-unit-key]', '[data-chatgpt-selection-message-id]'],
     messageIdAttr: 'data-chatgpt-selection-message-id',
@@ -185,9 +186,26 @@
   let lastDraftImageAttachments = []
   let lastDraftImageCapturedAt = 0
   let lastDraftImagePromise = Promise.resolve([])
+  const replyDiagnosticEvents = new Set([
+    'installed', 'configured', 'sent', 'sent-raw', 'scan', 'reply-state', 'question',
+    'question-cleared', 'command', 'read-files', 'parse-failed', 'task-finished', 'end-task', 'reply-watchdog'
+  ])
+  const replyScanEvents = new Set(['scan', 'question', 'command', 'read-files', 'parse-failed', 'task-finished'])
+  let replyScanSnapshot = {}
   const report = (payload) => {
     try {
-      console.log(LOG_TAG + JSON.stringify(payload))
+      const includeScan = replyScanEvents.has(payload.event) ||
+        (payload.event === 'reply-state' && ['non-command-reply', 'question-detected'].includes(payload.reason))
+      const diagnostic = replyDiagnosticEvents.has(payload.event) ? {
+        ...(includeScan ? replyScanSnapshot : {}),
+        enabled: state.enabled,
+        awaitingReply: state.awaitingReplySince !== 0,
+        taskActive: state.taskActive,
+        taskPromptGeneration: state.taskPromptGeneration,
+        pendingQuestionFound: state.pendingQuestion !== null,
+        lastHandledMessageId: state.lastCommandMessageId
+      } : {}
+      console.log(LOG_TAG + JSON.stringify({ ...diagnostic, ...payload }))
     } catch (_) {
       /* never break the page because reporting failed */
     }
@@ -290,6 +308,12 @@
       }
     }
     return node
+  }
+
+  const setReplyWaiting = (since, reason, messageId = null) => {
+    const awaitingReplyBefore = state.awaitingReplySince !== 0
+    state.awaitingReplySince = since
+    report({ event: 'reply-state', reason, messageId, awaitingReplyBefore })
   }
 
   const readReplyText = (node) => String(replyRootOf(node)?.innerText || '')
@@ -1311,7 +1335,7 @@
           draftRejected = false
         }
         // Once a message actually goes out, the next assistant turn is ours.
-        state.awaitingReplySince = Date.now()
+        setReplyWaiting(Date.now(), isRaw ? 'result-sent' : 'user-sent')
         state.taskActive = true
         // Ignore only the assistant turn that existed BEFORE this send. Never
         // baseline the new placeholder/reply that may already have appeared.
@@ -2059,14 +2083,19 @@
   }
 
   let settleTimer = null
+  let lastReplyScanAt = 0
+  let lastReplyMutationAt = 0
 
   const scheduleCheck = () => {
     if (settleTimer) clearTimeout(settleTimer)
-    settleTimer = setTimeout(checkForCommand, REPLY_SETTLE_MS)
+    settleTimer = setTimeout(() => {
+      settleTimer = null
+      checkForCommand()
+    }, REPLY_SETTLE_MS)
   }
 
   /**
-   * One line explaining why a settled reply produced no command — at most once per reason.
+   * Record why a settled reply produced no command, including changes within that same reply.
    *
    * WHY THIS EXISTS. Every early return in `checkForCommand` below is silent, and between them
    * they cover the whole distance from "the reply is on screen" to "a command ran". So when a
@@ -2075,16 +2104,73 @@
    * hypothetical — it is why this was added, after a DeepSeek reply sat there unexecuted with
    * only three `injected` lines in the log to show for the session.
    *
-   * Deduped by (turn, reason) rather than throttled by time: the settle timer re-runs on every
-   * mutation, so an undeduped note would bury the log, while a time throttle would hide the
-   * ONE transition that matters — the same turn moving from "no command yet" to "handled".
+   * Suppress unchanged snapshots, not just repeated message ids/reasons. A cached old turn
+   * can keep returning "already-handled" even after a visible JSON reply arrives elsewhere.
    */
   let lastScanNote = ''
   const noteScan = (messageId, reason, extra) => {
-    const key = `${messageId}\u0000${reason}`
+    const key = JSON.stringify([
+      location.pathname, messageId, reason, state.enabled, state.awaitingReplySince !== 0,
+      state.taskActive, state.taskPromptGeneration, state.lastCommandMessageId,
+      state.pendingQuestion !== null, replyScanSnapshot
+    ])
     if (key === lastScanNote) return
     lastScanNote = key
     report({ event: 'scan', reason, messageId, ...extra })
+  }
+
+  const diagnosticReplyKind = (text) => !text.trim() ? 'empty' : looksLikeQuestionReply(text) ? 'questions' :
+    looksLikeReadFilesReply(text) ? 'read-files' : looksLikeCommandReply(text) ? 'command' : 'prose'
+
+  /** Compare the scanner's chosen node with rendered answers; never change its decisions. */
+  const snapshotReplyScan = (node, nodes) => {
+    try {
+      const text = readReplyText(node)
+      const replyRoot = replyRootOf(node)
+      const toolbar = composerToolbarRoot()
+      const streaming = node && PAGE.replyStreamingAttribute ? node.getAttribute(PAGE.replyStreamingAttribute) : null
+      const visibleTurns = nodes.filter((candidate) => isAssistantTurn(candidate) && isVisibleElement(candidate))
+      const lastVisibleTurn = visibleTurns[visibleTurns.length - 1] || null
+      const lastVisibleText = readReplyText(lastVisibleTurn)
+      // Query answer markers independently: a new reply may lack the wrapper/id selector.
+      const visibleAnswers = queryAll(PAGE.assistantReplySelectors).filter(isVisibleElement)
+      const visibleAnswer = visibleAnswers[visibleAnswers.length - 1] || null
+      const visibleAnswerText = String(visibleAnswer?.innerText || '')
+      const visibleAnswerOwner = visibleAnswer && PAGE.assistantSelectors
+        .map((selector) => visibleAnswer.closest(selector)).find(Boolean)
+      return {
+        replySnapshotAvailable: true,
+        assistantTurnCount: nodes.length,
+        replyTextLength: text.length,
+        replyKind: diagnosticReplyKind(text),
+        answerMarkerFound: !!node && PAGE.assistantReplySelectors.some((selector) => node.matches(selector) || node.querySelector(selector)),
+        replyRootIsTurn: !!node && replyRoot === node,
+        selectedNodeVisible: isVisibleElement(node),
+        selectedReplyVisible: isVisibleElement(replyRoot),
+        selectedNodeTextLength: String(node?.innerText || '').length,
+        replyTextContentLength: String(replyRoot?.textContent || '').length,
+        visibleAssistantTurnCount: visibleTurns.length,
+        lastVisibleMessageId: lastVisibleTurn ? turnKeyOf(lastVisibleTurn) : null,
+        selectedMatchesLastVisible: !!node && node === lastVisibleTurn,
+        lastVisibleReplyTextLength: lastVisibleText.length,
+        lastVisibleReplyKind: diagnosticReplyKind(lastVisibleText),
+        lastVisibleReplyCodeBlockCount: lastVisibleTurn ? lastVisibleTurn.querySelectorAll('pre').length : 0,
+        visibleAnswerMarkerCount: visibleAnswers.length,
+        visibleAnswerOwnerMessageId: visibleAnswerOwner ? turnKeyOf(visibleAnswerOwner) : null,
+        visibleAnswerTextLength: visibleAnswerText.length,
+        visibleAnswerKind: diagnosticReplyKind(visibleAnswerText),
+        visibleAnswerCodeBlockCount: visibleAnswer ? visibleAnswer.querySelectorAll('pre').length : 0,
+        visibleCodeBlockCount: [...document.querySelectorAll('pre')].filter(isVisibleElement).length,
+        codeBlockCount: node ? node.querySelectorAll('pre').length : 0,
+        replyStreamingState: streaming === null ? 'missing' : streaming === 'true' || streaming === 'false' ? streaming : 'unknown',
+        stopButtonFound: queryFirstVisible(PAGE.stopButtonSelectors, toolbar || document) !== null,
+        stopButtonOnPage: queryFirstVisible(PAGE.stopButtonSelectors) !== null,
+        composerFound: getComposer() !== null,
+        toolbarRootFound: toolbar !== null
+      }
+    } catch (_) {
+      return { replySnapshotAvailable: false }
+    }
   }
 
   /**
@@ -2093,12 +2179,15 @@
    * once — the main process does the durable deduplication against SQLite.
    */
   const checkForCommand = () => {
+    lastReplyScanAt = Date.now()
+    replyScanSnapshot = {}
     // Confirm our submitted user turn before accepting a fast next assistant action.
     if (fileSend?.submitted) {
       fileSendStatus(fileSend.token)
       if (fileSend?.submitted) return
     }
     const nodes = queryAllAssistant()
+    replyScanSnapshot = snapshotReplyScan(nodes[nodes.length - 1] || null, nodes)
     if (nodes.length === 0) {
       noteScan('', 'no-turns', { selectors: PAGE.assistantSelectors })
       return
@@ -2202,7 +2291,7 @@
         return
       }
       state.lastCommandMessageId = messageId
-      state.awaitingReplySince = 0
+      setReplyWaiting(0, 'question-detected', messageId)
       state.pendingQuestion = { messageId, ...question }
       report({ event: 'question', messageId, ...question, live: true })
       // Keep readable questions in the app transcript, rather than the transport JSON.
@@ -2275,7 +2364,7 @@
       if (text.trim() && state.awaitingReplySince !== 0 && !findStopButton()) {
         const completed = text.trimStart().startsWith('【任务完成】')
         state.lastCommandMessageId = messageId
-        state.awaitingReplySince = 0
+        setReplyWaiting(0, 'non-command-reply', messageId)
         if (completed) {
           state.taskActive = false
           resetTaskPrompt()
@@ -2381,7 +2470,7 @@
    * creates the conversation, so that URL change must not land here.
    */
   const armBaseline = () => {
-    state.awaitingReplySince = 0
+    setReplyWaiting(0, 'history-baseline')
     state.lastCommandMessageId = null
     state.pendingQuestion = null
     state.answerDraft = null
@@ -2397,8 +2486,9 @@
    */
   const checkNow = () => {
     if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = null
     state.lastCommandMessageId = null
-    state.awaitingReplySince = Date.now()
+    setReplyWaiting(Date.now(), 'manual-resume')
     state.taskActive = true
     checkForCommand()
     return true
@@ -2423,6 +2513,7 @@
 
   let historyPath = location.pathname
   const observer = new MutationObserver(() => {
+    lastReplyMutationAt = Date.now()
     scheduleCheck()
     if (location.pathname !== historyPath) {
       historyPath = location.pathname
@@ -2975,7 +3066,7 @@
       fileSend.baselineAssistant = lastAssistantId()
       fileSend.submitted = true
       // Mark the reply before clicking: a synchronous new assistant turn must not be baselined.
-      state.awaitingReplySince = Date.now()
+      setReplyWaiting(Date.now(), 'file-send-submitted')
       state.taskActive = true
       state.lastCommandMessageId = fileSend.baselineAssistant
       pressButton(button)
@@ -3023,12 +3114,12 @@
         // read/write path decides from the ELEMENT (see readComposer), so a site that
         // changes its composer still works without a descriptor update.
         const { composerKind: _kind, ...selectors } = config.page
-        PAGE = { ...PAGE, assistantRoleSelectors: [], disabledControlSelectors: [], fileTurnPositionAttr: '', fileTurnPositionSelector: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, fileAttachmentCardSelector: '', fileDraftCardSelector: '', fileDraftIgnoreSelector: '', fileDraftImageSelector: '', fileSentImageSelector: '', fileDraftNameReferenceAttribute: '', fileUploadProgressSelector: '', fileComposerRootSelector: '', fileUploadMenuSelectors: [], fileLocalUploadSelector: '', fileLocalUploadLabels: [], ...selectors }
+        PAGE = { ...PAGE, assistantRoleSelectors: [], replyStreamingAttribute: '', disabledControlSelectors: [], fileTurnPositionAttr: '', fileTurnPositionSelector: '', fileAssistantSelectors: [], fileUserTurnSelector: '', fileUserTurnFallbackSelector: '', fileUserTurnKeyAttr: '', fileImagesMayUseNames: false, fileAttachmentCardSelector: '', fileDraftCardSelector: '', fileDraftIgnoreSelector: '', fileDraftImageSelector: '', fileSentImageSelector: '', fileDraftNameReferenceAttribute: '', fileUploadProgressSelector: '', fileComposerRootSelector: '', fileUploadMenuSelectors: [], fileLocalUploadSelector: '', fileLocalUploadLabels: [], ...selectors }
       }
       // A freshly (re)loaded page has no message of ours outstanding, so nothing
       // it renders can be a reply to us.
       if (config.armBaseline === true) {
-        state.awaitingReplySince = 0
+        setReplyWaiting(0, 'configured-baseline')
         state.lastCommandMessageId = null
         state.pendingQuestion = null
         state.answerDraft = null
@@ -3103,7 +3194,7 @@
 
       if (stop && typeof stop.click === 'function') stop.click()
       state.programmatic = false
-      state.awaitingReplySince = 0
+      setReplyWaiting(0, 'task-ended')
       state.taskActive = false
       resetTaskPrompt()
       draftRejected = false
@@ -3245,5 +3336,30 @@
     status: () => ({ ...state })
   }
 
+  // Passive snapshots still run when continuous mutations postpone the settle timer.
+  // They never parse, accept or execute a command, and stop recording when the task is idle.
+  const replyWatchdog = () => {
+    try {
+      if (state.awaitingReplySince !== 0 || state.taskActive) {
+        const nodes = queryAllAssistant()
+        const node = nodes[nodes.length - 1] || null
+        const now = Date.now()
+        report({
+          event: 'reply-watchdog',
+          ...snapshotReplyScan(node, nodes),
+          messageId: node ? turnKeyOf(node) : null,
+          lastScanAgeMs: lastReplyScanAt ? Math.max(0, now - lastReplyScanAt) : null,
+          lastMutationAgeMs: lastReplyMutationAt ? Math.max(0, now - lastReplyMutationAt) : null,
+          replySettlePending: settleTimer !== null,
+          fileSendPending: fileSend?.submitted === true
+        })
+      }
+    } catch (_) {
+      report({ event: 'reply-watchdog', replySnapshotAvailable: false })
+    } finally {
+      setTimeout(replyWatchdog, 5000)
+    }
+  }
+  setTimeout(replyWatchdog, 5000)
   report({ event: 'installed' })
 })()

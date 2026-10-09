@@ -20,13 +20,14 @@ new Script(ts.transpileModule(platformSource, {
     return { isConversationId() { throw new Error('Unexpected conversation validation') } }
   }
 })
-const { CLAUDE_PAGE, DEEPSEEK_PAGE } = platformExports
+const { CHATGPT_PAGE, CLAUDE_PAGE, DEEPSEEK_PAGE } = platformExports
 
 class ElementFixture {
   nodeType = 1
   isConnected = true
   parentElement = null
   position = 0
+  rendered = true
 
   constructor(tag, attributes = {}, content = []) {
     this.tagName = tag.toUpperCase()
@@ -41,7 +42,10 @@ class ElementFixture {
   get textContent() { return this.childNodes.map((child) => child.nodeType === 3 ? child.nodeValue : child.textContent).join('') }
   get innerText() { return this.textContent }
   getAttribute(name) { return this.attributes[name] ?? null }
-  getClientRects() { return [{}] }
+  getClientRects() {
+    for (let node = this; node; node = node.parentElement) if (!node.rendered) return []
+    return [{}]
+  }
   compareDocumentPosition(other) { return this.position < other.position ? 4 : this.position > other.position ? 2 : 0 }
 
   matches(selector) {
@@ -78,6 +82,10 @@ const codeReply = (command = 'uname -a') => element('div', { 'data-testid': 'ass
   element('span', { class: 'sr-only' }, 'Claude responded: '),
   element('pre', {}, [element('code', {}, commandJson(command))])
 ])
+const chatgptAnswer = (command) => element('div', { 'data-markdown-text-style': 'assistant-message' }, [
+  element('pre', {}, [element('code', {}, commandJson(command))])
+])
+const chatgptReply = (id, command) => element('div', { 'data-chatgpt-selection-message-id': id }, [chatgptAnswer(command)])
 
 function fixture(nodes, page = CLAUDE_PAGE) {
   const events = []
@@ -118,6 +126,14 @@ function fixture(nodes, page = CLAUDE_PAGE) {
     replaceNodes(next) {
       body.childNodes = next
       for (const node of next) node.parentElement = body
+    },
+    mutate() { notifyMutation() },
+    tick(delay) {
+      for (const [id, timer] of [...timers]) {
+        if (timer.delay !== delay) continue
+        timers.delete(id)
+        timer.callback()
+      }
     },
     scan() {
       notifyMutation()
@@ -214,4 +230,136 @@ test('reconfiguration clears Claude roles and retains DeepSeek answer-based reco
   app.scan()
   assert.equal(app.commands().length, 1)
   assert.equal(app.commands()[0].command, 'pwd')
+})
+
+test('diagnostics explain a waiting-state reset during thinking before a skipped question', () => {
+  const thinking = element('div', { 'data-testid': 'assistant-message', 'data-is-streaming': 'true' }, '权衡中 Claude 正在思考')
+  const app = fixture([thinking])
+  app.controller.checkNow()
+  const reset = app.events.find((event) => event.event === 'reply-state' && event.reason === 'non-command-reply')
+  assert.equal(reset.awaitingReplyBefore, true)
+  assert.equal(reset.awaitingReply, false)
+  assert.equal(reset.replyStreamingState, 'true')
+  assert.equal(reset.stopButtonFound, false)
+  assert.equal(reset.stopButtonOnPage, false)
+  const question = JSON.stringify({ type: 'questions', questions: [{ question: '选择哪个安装方式？' }] })
+  app.replaceNodes([element('div', { 'data-testid': 'assistant-message', 'data-is-streaming': 'false' }, question)])
+  app.scan()
+  const skipped = app.events.find((event) => event.reason === 'question-not-live')
+  assert.equal(skipped.awaitingReply, false)
+  assert.equal(skipped.replyKind, 'questions')
+  assert.equal(skipped.replyStreamingState, 'false')
+  assert.equal(skipped.replyTextLength, question.length)
+})
+
+test('question detection records its live-state transition and pending status', () => {
+  const question = JSON.stringify({ type: 'questions', questions: [{ question: '选择哪个安装方式？' }] })
+  const app = fixture([element('div', { 'data-testid': 'assistant-message' }, question)])
+  app.controller.checkNow()
+  const transition = app.events.find((event) => event.event === 'reply-state' && event.reason === 'question-detected')
+  assert.equal(transition.awaitingReplyBefore, true)
+  assert.equal(transition.awaitingReply, false)
+  const detected = app.events.find((event) => event.event === 'question')
+  assert.equal(detected.live, true)
+  assert.equal(detected.pendingQuestionFound, true)
+  assert.equal(detected.replyKind, 'questions')
+})
+
+test('unavailable diagnostic DOM metadata does not block command recognition', () => {
+  const reply = codeReply()
+  const getAttribute = reply.getAttribute.bind(reply)
+  reply.getAttribute = (name) => {
+    if (name === 'data-is-streaming') throw new Error('Unavailable diagnostic attribute')
+    return getAttribute(name)
+  }
+  const app = fixture([reply])
+  app.controller.checkNow()
+  assert.equal(app.commands().length, 1)
+  assert.equal(app.commands()[0].replySnapshotAvailable, false)
+})
+
+test('an already-handled reply logs changed content and generation state without repeating commands', () => {
+  const app = fixture([chatgptReply('handled-message', 'pwd')], CHATGPT_PAGE)
+  app.controller.checkNow()
+  app.scan()
+  const skipped = () => app.events.filter((event) => event.reason === 'already-handled')
+  assert.equal(skipped().length, 1)
+  app.scan()
+  assert.equal(skipped().length, 1, 'unchanged scans are still suppressed')
+  const changed = chatgptReply('handled-message', 'Get-Command mysqlsh')
+  const stop = element('button', { 'aria-label': '停止' })
+  app.replaceNodes([changed, stop])
+  app.scan()
+  assert.equal(skipped().length, 2)
+  assert.equal(skipped()[1].replyTextLength, commandJson('Get-Command mysqlsh').length)
+  assert.equal(skipped()[1].stopButtonFound, true)
+  app.replaceNodes([changed])
+  app.scan()
+  assert.equal(skipped().length, 3)
+  assert.equal(skipped()[2].stopButtonFound, false)
+  assert.equal(app.commands().length, 1, 'diagnostic changes must not bypass command deduplication')
+})
+
+test('diagnostics distinguish a hidden selected message from a visible answer missing its wrapper', () => {
+  const oldReply = chatgptReply('old-message', 'pwd')
+  const app = fixture([oldReply], CHATGPT_PAGE)
+  app.controller.checkNow()
+  oldReply.rendered = false
+  app.replaceNodes([chatgptAnswer('Get-Command mysqlsh'), oldReply])
+  app.scan()
+  const skipped = app.events.find((event) => event.reason === 'already-handled')
+  assert.equal(skipped.messageId, 'old-message')
+  assert.equal(skipped.selectedNodeVisible, false)
+  assert.equal(skipped.selectedReplyVisible, false)
+  assert.equal(skipped.visibleAssistantTurnCount, 0)
+  assert.equal(skipped.lastVisibleMessageId, null)
+  assert.equal(skipped.visibleAnswerMarkerCount, 1)
+  assert.equal(skipped.visibleAnswerOwnerMessageId, null)
+  assert.equal(skipped.visibleAnswerKind, 'command')
+  assert.equal(skipped.visibleCodeBlockCount, 1)
+  assert.equal(app.commands().length, 1)
+})
+
+test('a passive watchdog records a visible new reply while mutations keep the scanner pending', () => {
+  const oldReply = chatgptReply('old-message', 'pwd')
+  const app = fixture([oldReply], CHATGPT_PAGE)
+  app.controller.checkNow()
+  oldReply.rendered = false
+  app.replaceNodes([chatgptReply('new-message', 'Get-Command mysqlsh'), oldReply])
+  app.mutate() // Leave the 800 ms settle callback pending, as on a continually mutating page.
+  app.tick(5000)
+  const heartbeat = app.events.find((event) => event.event === 'reply-watchdog')
+  assert.equal(heartbeat.messageId, 'old-message')
+  assert.equal(heartbeat.lastVisibleMessageId, 'new-message')
+  assert.equal(heartbeat.visibleAnswerOwnerMessageId, 'new-message')
+  assert.equal(heartbeat.selectedMatchesLastVisible, false)
+  assert.equal(heartbeat.replySettlePending, true)
+  assert.equal(heartbeat.lastVisibleReplyKind, 'command')
+  assert.equal(typeof heartbeat.lastScanAgeMs, 'number')
+  assert.equal(typeof heartbeat.lastMutationAgeMs, 'number')
+  assert.equal(app.commands().length, 1, 'the watchdog must never execute the new reply')
+  app.scan()
+  app.tick(5000)
+  const settled = app.events.filter((event) => event.event === 'reply-watchdog').at(-1)
+  assert.equal(settled.replySettlePending, false)
+})
+
+test('idle pages produce no watchdog records and diagnostic failures leave the timer alive', () => {
+  const idle = fixture([])
+  idle.tick(5000)
+  assert.equal(idle.events.some((event) => event.event === 'reply-watchdog'), false)
+  const reply = codeReply()
+  const getAttribute = reply.getAttribute.bind(reply)
+  reply.getAttribute = (name) => {
+    if (name === 'data-is-streaming') throw new Error('Unavailable diagnostic attribute')
+    return getAttribute(name)
+  }
+  const app = fixture([reply])
+  app.controller.checkNow()
+  app.tick(5000)
+  app.tick(5000)
+  const heartbeats = app.events.filter((event) => event.event === 'reply-watchdog')
+  assert.equal(heartbeats.length, 2)
+  assert.ok(heartbeats.every((event) => event.replySnapshotAvailable === false))
+  assert.equal(app.commands().length, 1)
 })

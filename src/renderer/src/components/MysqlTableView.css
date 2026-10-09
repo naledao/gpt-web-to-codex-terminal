@@ -15,6 +15,22 @@
   min-width: 140px;
 }
 
+.mysql-page__table .mysql-page__card-title,
+.mysql-page__table .mysql-page__card-note,
+.mysql-page__grid-table,
+.mysql-page__grid-table th,
+.mysql-page__grid-table td,
+.mysql-page__column-trigger,
+.mysql-page__column-tooltip {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.mysql-page__table .mysql-page__card-title,
+.mysql-page__table .mysql-page__card-note {
+  cursor: text;
+}
+
 .mysql-page__column-trigger {
   display: inline-block;
   max-width: 100%;
@@ -70,4 +86,60 @@
 .mysql-page__grid-table td.mysql-page__empty-cell {
   padding: 20px 12px;
   text-align: center;
+}
+
+.mysql-page__grid-table .mysql-page__row-actions {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  width: 68px;
+  text-align: center;
+  background: #fff;
+  box-shadow: -1px 0 #e6e9f0;
+}
+
+.mysql-page__grid-table th.mysql-page__row-actions {
+  z-index: 2;
+  background: #f6f8fb;
+}
+
+.mysql-page__row-delete {
+  padding: 4px 10px;
+  border: 1px solid #efb5b5;
+  border-radius: 6px;
+  background: #fff;
+  color: #bd3535;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mysql-page__row-delete:hover:not(:disabled) {
+  background: #fff0f0;
+  border-color: #dc6767;
+}
+
+.mysql-page__row-delete:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mysql-page--dark .mysql-page__grid-table td.mysql-page__row-actions {
+  background: #10151d;
+  box-shadow: -1px 0 #232b38;
+}
+
+.mysql-page--dark .mysql-page__grid-table th.mysql-page__row-actions {
+  background: #161d28;
+  box-shadow: -1px 0 #232b38;
+}
+
+.mysql-page--dark .mysql-page__row-delete {
+  background: #21171c;
+  border-color: #67333b;
+  color: #f29d9d;
+}
+
+.mysql-page--dark .mysql-page__row-delete:hover:not(:disabled) {
+  background: #352027;
+  border-color: #aa5965;
 }

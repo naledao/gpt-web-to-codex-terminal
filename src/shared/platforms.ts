@@ -116,6 +116,8 @@ export interface PageAdapter {
    * Sites with unmarked turns continue to identify the role by assistantReplySelectors.
    */
   assistantRoleSelectors?: string[]
+  /** Optional per-turn streaming attribute, observed for reply diagnostics only. */
+  replyStreamingAttribute?: string
   /**
    * The element holding ONLY the assistant's answer, inside a turn.
    *
@@ -736,6 +738,7 @@ export const CLAUDE_PAGE: PageAdapter = {
   stopButtonSelectors: ['button[aria-label="Stop response"]'],
   assistantSelectors: ['[data-testid="assistant-message"]'],
   assistantRoleSelectors: ['[data-testid="assistant-message"]'],
+  replyStreamingAttribute: 'data-is-streaming',
   /*
    * Prefer the answer container to omit the screen-reader prefix. This is a text-extraction
    * hint, not a role marker: code-only replies can lack it. The confirmed assistant turn is

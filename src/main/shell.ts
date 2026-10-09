@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { DETECT_COMMAND } from './environment'
+import { WINDOWS_PATH_REFRESH_SCRIPT } from './shell-path'
 import type { EnvironmentKind } from '../shared/types'
 
 /**
@@ -707,6 +708,9 @@ function buildWrapper(token: string): string {
   const donePrefix = `'__CT_DONE_${token}_'`
 
   return [
+    // A restarted shell can still inherit an old PATH from Electron/npm's parent terminal.
+    // Read the current Windows registration inside the new process before its first command.
+    WINDOWS_PATH_REFRESH_SCRIPT,
     // PowerShell can set its OWN redirected-output encoding, which cmd could not:
     // `chcp` only affects a console, and a program writing to a pipe never sees it.
     'try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }',

@@ -37,6 +37,8 @@ import type {
   MysqlConnectionsState,
   MysqlDatabaseList,
   MysqlTableData,
+  MysqlRowKey,
+  MysqlRowDeleteResult,
   MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
@@ -412,6 +414,9 @@ removeConversation: (id: string): Promise<Conversation[]> =>
 
   queryMysqlTable: (draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> =>
     ipcRenderer.invoke(IpcChannels.mysqlConnQueryTable, draft, database, table),
+
+  deleteMysqlTableRow: (draft: MysqlConnectionDraft, database: string, table: string, key: MysqlRowKey): Promise<MysqlRowDeleteResult> =>
+    ipcRenderer.invoke(IpcChannels.mysqlConnDeleteRow, draft, database, table, key),
 
   getMysqlTableDdl: (draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl> =>
     ipcRenderer.invoke(IpcChannels.mysqlConnTableDdl, draft, database, table),

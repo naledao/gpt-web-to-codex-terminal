@@ -142,6 +142,7 @@ export const IpcChannels = {
   mysqlConnListDatabases: 'mysql-conn:list-databases',
   mysqlConnListTables: 'mysql-conn:list-tables',
   mysqlConnQueryTable: 'mysql-conn:query-table',
+  mysqlConnDeleteRow: 'mysql-conn:delete-row',
   mysqlConnTableDdl: 'mysql-conn:table-ddl',
   mysqlConnChanged: 'mysql-conn:changed',
   redisConnList: 'redis-conn:list',
@@ -1139,6 +1140,8 @@ export interface InterceptorPageEvent {
     | 'read-files'
     | 'parse-failed'
     | 'scan'
+    | 'reply-state'
+    | 'reply-watchdog'
     | 'sent-raw'
     | 'raw-busy'
     /** Reported by the injected theme script; see src/main/injected/theme.js. */
@@ -1265,9 +1268,42 @@ export interface InterceptorPageEvent {
   selectors?: string[]
   tag?: string
   cls?: string
-  /** Present on `end-task`: the page-side flags at the moment the task was stopped. */
+  /** Reply diagnostics: state at the report, and before a waiting-state transition. */
   awaitingReply?: boolean
+  awaitingReplyBefore?: boolean
   taskActive?: boolean
+  pendingQuestionFound?: boolean
+  lastHandledMessageId?: string | null
+  assistantTurnCount?: number
+  replySnapshotAvailable?: boolean
+  replyTextLength?: number
+  selectedNodeVisible?: boolean
+  selectedReplyVisible?: boolean
+  selectedNodeTextLength?: number
+  replyTextContentLength?: number
+  visibleAssistantTurnCount?: number
+  lastVisibleMessageId?: string | null
+  selectedMatchesLastVisible?: boolean
+  lastVisibleReplyTextLength?: number
+  lastVisibleReplyCodeBlockCount?: number
+  lastVisibleReplyKind?: 'empty' | 'questions' | 'read-files' | 'command' | 'prose'
+  visibleAnswerMarkerCount?: number
+  visibleAnswerOwnerMessageId?: string | null
+  visibleAnswerTextLength?: number
+  visibleAnswerCodeBlockCount?: number
+  visibleAnswerKind?: 'empty' | 'questions' | 'read-files' | 'command' | 'prose'
+  visibleCodeBlockCount?: number
+  lastScanAgeMs?: number | null
+  lastMutationAgeMs?: number | null
+  replySettlePending?: boolean
+  fileSendPending?: boolean
+  codeBlockCount?: number
+  replyKind?: 'empty' | 'questions' | 'read-files' | 'command' | 'prose'
+  answerMarkerFound?: boolean
+  replyRootIsTurn?: boolean
+  replyStreamingState?: 'true' | 'false' | 'missing' | 'unknown'
+  stopButtonOnPage?: boolean
+  toolbarRootFound?: boolean
 
   /*
    * Present on `theme`: what the app asked the page for, what the page actually looks like,
@@ -1666,6 +1702,22 @@ export interface MysqlTableList {
   message: string
 }
 
+/** An exact primary-key value, separate from the rendered cell text. */
+export interface MysqlRowKeyPart {
+  column: string
+  value: string
+  /** Binary primary keys keep their actual bytes instead of the display placeholder. */
+  encoding: 'text' | 'hex'
+}
+
+export type MysqlRowKey = MysqlRowKeyPart[]
+
+export interface MysqlRowDeleteResult {
+  ok: boolean
+  affectedRows: number
+  message: string
+}
+
 /** One page of rows from a table, for the table viewer. */
 export interface MysqlTableData {
   ok: boolean
@@ -1679,6 +1731,10 @@ export interface MysqlTableData {
   columnCommentsMessage: string
   /** Each row cells, already rendered as text. A SQL NULL stays null. */
   rows: Array<Array<string | null>>
+  /** Complete primary keys aligned with rows; null means this row cannot be deleted. */
+  rowKeys: Array<MysqlRowKey | null>
+  /** Why deletion is unavailable for this table, empty when primary keys are readable. */
+  rowDeleteMessage: string
   /** True when the table held more rows than the viewer asked for. */
   truncated: boolean
   message: string
@@ -2069,6 +2125,8 @@ export interface AppApi {
   listMysqlTables(draft: MysqlConnectionDraft, database: string): Promise<MysqlTableList>
   /** Read a page of rows from one table. */
   queryMysqlTable(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData>
+  /** Delete exactly one record by its complete primary key. */
+  deleteMysqlTableRow(draft: MysqlConnectionDraft, database: string, table: string, key: MysqlRowKey): Promise<MysqlRowDeleteResult>
   /** Read the CREATE statement without changing the database. */
   getMysqlTableDdl(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl>
   onMysqlConnectionChanged(listener: (state: MysqlConnectionsState) => void): () => void

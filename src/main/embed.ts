@@ -4,6 +4,7 @@ import themeSource from './injected/theme.js?raw'
 import { sendPageFiles } from './page-files'
 import { writeRawSendDiagnostic } from './raw-send-log'
 import { writePromptDiagnostic } from './prompt-log'
+import { writeReplyDiagnostic } from './reply-log'
 import { parseReadFilesRequest } from '../shared/file-requests'
 import type { FileSendOutcome } from '../shared/file-requests'
 import type { PreparedFileResult } from './file-access'
@@ -315,6 +316,7 @@ export class ChatGptEmbed {
   /** Kept per view so a full page reload preserves the current task's injection. */
   private taskPromptInjected = false
   private taskPromptGeneration = 0
+  private replyDiagnosticLogPath: string | null = null
 
   /**
    * Replace the injected prompt.
@@ -1203,6 +1205,7 @@ export class ChatGptEmbed {
       return
     }
 
+    let questionAccepted: boolean | undefined
     switch (payload.event) {
       case 'installed':
         this.interceptor.installed = true
@@ -1302,13 +1305,16 @@ export class ChatGptEmbed {
               placeholder: typeof value.placeholder === 'string' ? value.placeholder.trim() : ''
             }
           }).filter((item): item is PendingQuestionItem => item !== null)
-          if (
+          const messageId = payload.messageId
+          const validQuestion = (
             payload.live === true &&
-            typeof payload.messageId === 'string' && payload.messageId !== '' &&
+            typeof messageId === 'string' && messageId !== '' &&
             questions.length === candidates.length && questions.length >= 1 && questions.length <= 20
-          ) {
+          )
+          questionAccepted = validQuestion
+          if (validQuestion) {
             this.interceptor.pendingQuestion = {
-              messageId: payload.messageId,
+              messageId,
               questions
             }
             console.info(`[embed:${this.platform.id}] question waiting messageId=${payload.messageId}`)
@@ -1317,7 +1323,7 @@ export class ChatGptEmbed {
             // page script also reports assistant-message for this turn; the database's
             // source-message uniqueness makes that duplicate harmless.
             this.handlers.onAssistantMessage(
-              payload.messageId,
+              messageId,
               questions.map((item, index) => `${index + 1}. ${item.question}`).join('\n')
             )
           }
@@ -1379,7 +1385,7 @@ export class ChatGptEmbed {
         break
       }
       /*
-       * The scan notes: one line per (turn, reason) saying why a settled reply produced no
+        * The scan notes: one line per changed snapshot saying why a settled reply produced no
        * command. Without them, "the model answered with JSON and nothing happened" is
        * undiagnosable — every path leading there returns silently.
        */
@@ -1432,6 +1438,17 @@ export class ChatGptEmbed {
         break
     }
 
+    const contents = this.liveContents()
+    const replyLogPath = writeReplyDiagnostic(this.platform.id, payload, {
+      viewId: contents?.id ?? null,
+      conversationId: contents ? conversationIdOf(this.platform, contents.getURL()) : null,
+      mainPendingQuestion: this.interceptor.pendingQuestion !== null,
+      questionAccepted
+    })
+    if (replyLogPath && replyLogPath !== this.replyDiagnosticLogPath) {
+      this.replyDiagnosticLogPath = replyLogPath
+      console.info(`[embed:${this.platform.id}] reply diagnostics log: ${replyLogPath}`)
+    }
     writePromptDiagnostic(this.platform.id, payload, {
       taskPromptInjected: this.taskPromptInjected,
       taskPromptGeneration: this.taskPromptGeneration

@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filemanager, Willow } from '@svar-ui/react-filemanager'
 import MDEditor from '@uiw/react-md-editor'
 import * as mdCommands from '@uiw/react-md-editor/commands'
@@ -16,6 +16,7 @@ import MysqlIcon from './components/MysqlIcon'
 import RedisIcon from './components/RedisIcon'
 import NacosIcon from './components/NacosIcon'
 import ConversationTranscript from './components/ConversationTranscript'
+import type { CommandLanguage } from './components/CommandViewer'
 import { conversationScrollKey } from './conversation-scroll'
 import brandIcon from './assets/brand-icon.png'
 import type { IApi as FilemanagerApi, IEntity as FilemanagerEntity } from '@svar-ui/react-filemanager'
@@ -23,6 +24,7 @@ import type { CSSProperties, DragEvent as ReactDragEvent, FormEvent, JSX, MouseE
 import { SESSION_COOKIE_NAME, terminalNotesOwnerKey } from '@shared/types'
 import { normalizeBackendUrl } from '@shared/backend-url'
 import './assets/terminal-notes.css'
+import './components/CommandViewer.css'
 import { CHAT_PLATFORMS } from '@shared/platforms'
 import type {
   AppTheme,
@@ -46,6 +48,8 @@ import type {
   TerminalState,
   UpdateStatus
 } from '@shared/types'
+
+const CommandViewer = lazy(() => import('./components/CommandViewer'))
 
 const INITIAL_EMBED_STATE: EmbedState = {
   url: '',
@@ -440,6 +444,9 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
   const [cookieSetResult, setCookieSetResult] = useState<SessionImportResult | null>(null)
   const [importingCookieSet, setImportingCookieSet] = useState(false)
   const [commandDraft, setCommandDraft] = useState('')
+  // Keep the opened instruction stable while the runner moves on to another command.
+  const [commandPreview, setCommandPreview] = useState<{ command: string; description: string; language: CommandLanguage } | null>(null)
+  const commandPreviewOpen = commandPreview !== null
   const [questionDrafts, setQuestionDrafts] = useState<string[]>([])
   const [questionPage, setQuestionPage] = useState(0)
   const [questionError, setQuestionError] = useState('')
@@ -1604,9 +1611,9 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
    * lives in the terminal column and must leave the chat page usable underneath.
    */
   useEffect(() => {
-    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && !mysqlDialogOpen && !redisDialogOpen && !nacosDialogOpen)
+    window.api.setEmbedVisible(!placeholderToggle && !settingsOpen && !sshDialogOpen && !notesOpen && !sshFilesOpen && !globalModalOpen && !promptOpen && !gitDialogOpen && !mysqlDialogOpen && !redisDialogOpen && !nacosDialogOpen && !commandPreviewOpen)
     window.api.setWorkspaceSshDialogOpen(sshDialogOpen)
-  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, mysqlDialogOpen, redisDialogOpen, nacosDialogOpen])
+  }, [placeholderToggle, settingsOpen, sshDialogOpen, notesOpen, sshFilesOpen, globalModalOpen, promptOpen, gitDialogOpen, mysqlDialogOpen, redisDialogOpen, nacosDialogOpen, commandPreviewOpen])
 
   // SSH state and saved hosts.
   useEffect(() => {
@@ -2936,7 +2943,26 @@ ${conversation.url}`}
                     <span className="current__code">退出码 {currentExecution.exitCode}</span>
                   ) : null}
                 </div>
-                <pre className="current__command">{currentExecution.command || '（空命令）'}</pre>
+                <div className="current__command-wrap">
+                  <button
+                    type="button"
+                    className="current__expand"
+                    title="查看完整指令"
+                    aria-label="查看完整指令"
+                    aria-haspopup="dialog"
+                    onClick={() => setCommandPreview({
+                      command: currentExecution.command,
+                      description: currentExecution.description,
+                      language: remoteTerminal ? 'shell' : 'powershell'
+                    })}
+                  >
+                    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
+                      <path d="M2.5 7.5h15M5.5 5.5h.01M8 5.5h.01" />
+                    </svg>
+                  </button>
+                  <pre className="current__command">{currentExecution.command || '（空命令）'}</pre>
+                </div>
               </div>
             ) : null}
 
@@ -3808,6 +3834,28 @@ ${record.command}`
             </div>
           </div>
         </div>
+      ) : null}
+      {commandPreview !== null ? (
+        <Suspense fallback={
+          <>
+          <div className="command-viewer__backdrop" onClick={() => setCommandPreview(null)} aria-hidden="true" />
+          <div className="command-viewer" data-theme={theme} role="dialog" aria-modal="true" aria-label="完整指令">
+            <header className="command-viewer__head">
+              <h2 className="command-viewer__title">完整指令</h2>
+              <button type="button" className="command-viewer__button" onClick={() => setCommandPreview(null)}>关闭</button>
+            </header>
+            <p className="command-viewer__loading" role="status">正在加载指令查看器…</p>
+          </div>
+          </>
+        }>
+          <CommandViewer
+            command={commandPreview.command}
+            description={commandPreview.description}
+            language={commandPreview.language}
+            theme={theme}
+            onClose={() => setCommandPreview(null)}
+          />
+        </Suspense>
       ) : null}
       <MysqlDialog open={mysqlDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setMysqlDialogOpen(false)} />
       <RedisDialog open={redisDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setRedisDialogOpen(false)} />

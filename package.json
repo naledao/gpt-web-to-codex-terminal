@@ -31,6 +31,7 @@
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.12.4",
+    "@codemirror/legacy-modes": "6.5.2",
     "@codemirror/search": "^6.7.2",
     "@git-diff-view/react": "^0.1.7",
     "@lezer/highlight": "^1.2.5",

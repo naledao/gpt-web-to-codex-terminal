@@ -4,6 +4,15 @@ import { Tooltip } from '@base-ui/react/tooltip'
 import MysqlIcon from './MysqlIcon'
 import ConfirmDialog from './ConfirmDialog'
 import './MysqlTableView.css'
+import {
+  mysqlTableVisitScope,
+  readMysqlTableVisitHistory,
+  recordMysqlTableVisit,
+  renameMysqlTableVisitConnection,
+  sortMysqlTablesByVisits,
+  writeMysqlTableVisitHistory
+} from '../mysql-table-history'
+import type { MysqlTableVisitHistory } from '../mysql-table-history'
 import type {
   AppTheme,
   MysqlConnection,
@@ -11,6 +20,7 @@ import type {
   MysqlConnectionsState,
   MysqlDatabaseList,
   MysqlTableData,
+  MysqlRowKey,
   MysqlTableDdl,
   MysqlTableList
 } from '../../../shared/types'
@@ -67,8 +77,11 @@ interface TableTab {
   /** The connection it was opened with. Carries the password, so it stays in memory. */
   draft: MysqlConnectionDraft
   loading: boolean
+  requestId: number
   data: MysqlTableData | null
   error: string
+  rowActionMessage?: string
+  rowActionError?: boolean
 }
 
 interface DdlTab extends Omit<TableTab, 'kind' | 'data'> {
@@ -84,6 +97,14 @@ type MysqlTab = ConnectionTab | TableTab | DdlTab
 interface TabScrollPosition {
   detail: number
   tableList: number
+}
+
+interface PendingRowDelete {
+  tabKey: string
+  draft: MysqlConnectionDraft
+  database: string
+  table: string
+  rowKey: MysqlRowKey
 }
 
 const EMPTY_FORM: ConnectionForm = {
@@ -209,6 +230,24 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [state, setState] = useState<MysqlConnectionsState | null>(null)
   const [tabs, setTabs] = useState<MysqlTab[]>([])
   const [activeKey, setActiveKey] = useState('')
+  const [tableVisits, setTableVisits] = useState<MysqlTableVisitHistory>(() => readMysqlTableVisitHistory() ?? {})
+  const tableVisitsRef = useRef(tableVisits)
+  const tableVisitsStorageAvailableRef = useRef(true)
+  const latestTableVisits = useCallback((): MysqlTableVisitHistory => {
+    if (!tableVisitsStorageAvailableRef.current) return tableVisitsRef.current
+    return readMysqlTableVisitHistory() ?? tableVisitsRef.current
+  }, [])
+  const updateTableVisits = useCallback((next: MysqlTableVisitHistory): void => {
+    tableVisitsRef.current = next
+    setTableVisits(next)
+  }, [])
+  const recordTableVisit = useCallback((scope: string, table: string): void => {
+    // Read the latest stored history before writing, so another window's visits survive.
+    const previous = latestTableVisits()
+    const next = recordMysqlTableVisit(previous, scope, table)
+    if (next !== previous) tableVisitsStorageAvailableRef.current = writeMysqlTableVisitHistory(next)
+    updateTableVisits(next)
+  }, [latestTableVisits, updateTableVisits])
   // Tab contents are unmounted when hidden; keep scroll offsets outside their DOM.
   const scrollPositionsRef = useRef(new Map<string, TabScrollPosition>())
   const rememberScroll = useCallback((key: string, area: keyof TabScrollPosition, offset: number): void => {
@@ -226,6 +265,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [reveal, setReveal] = useState(false)
   const newTabRef = useRef(0)
   const ddlRequestRef = useRef(0)
+  const tableRequestRef = useRef(0)
   /** Focused when saving is refused, so the missing field is the one on screen. */
   const databaseRef = useRef<HTMLInputElement>(null)
   /** Id of the connection whose info was just copied, for the transient 已复制 mark. */
@@ -233,6 +273,9 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const copyTimerRef = useRef<number | null>(null)
   /** The connection a delete is waiting on; non-null while the confirm dialog is up. */
   const [pendingDelete, setPendingDelete] = useState<MysqlConnection | null>(null)
+  const [pendingRowDelete, setPendingRowDelete] = useState<PendingRowDelete | null>(null)
+  const [deletingRow, setDeletingRow] = useState(false)
+  const deletingRowRef = useRef(false)
   /** The database picker: whether it is open, what it is fetching, and what came back. */
   const [dbPickerOpen, setDbPickerOpen] = useState(false)
   const [dbLoading, setDbLoading] = useState(false)
@@ -250,9 +293,29 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       : null
   const savedNow = activeForm !== null && activeSaved !== null && matchesSaved(activeForm, activeSaved)
   const tableSearch = activeConnection?.tableSearch.trim().toLowerCase() ?? ''
-  const visibleTables = (activeConnection?.tables?.tables ?? []).filter(
-    (table) => tableSearch === '' || table.name.toLowerCase().includes(tableSearch) || table.comment.toLowerCase().includes(tableSearch)
+  const connectionVisitScope = activeConnection !== null
+    ? mysqlTableVisitScope(activeConnection.key, draftFromForm(activeConnection.form), activeConnection.form.database)
+    : ''
+  const visibleTables = sortMysqlTablesByVisits(
+    (activeConnection?.tables?.tables ?? []).filter(
+      (table) => tableSearch === '' || table.name.toLowerCase().includes(tableSearch) || table.comment.toLowerCase().includes(tableSearch)
+    ),
+    tableVisits[connectionVisitScope] ?? []
   )
+  const visitedScope = activeTab !== null && activeTab.kind !== 'connection'
+    ? mysqlTableVisitScope(activeTab.connectionId, activeTab.draft, activeTab.database)
+    : ''
+  const visitedTable = activeTab !== null && activeTab.kind !== 'connection' ? activeTab.table : ''
+
+  // Count activating either a data tab or a DDL tab, including already-open tabs.
+  // Primitive dependencies avoid counting async query updates as new visits.
+  useEffect(() => {
+    if (open && visitedScope !== '' && visitedTable !== '') recordTableVisit(visitedScope, visitedTable)
+  }, [open, activeKey, visitedScope, visitedTable, recordTableVisit])
+
+  useEffect(() => {
+    if (open && connectionVisitScope !== '') updateTableVisits(latestTableVisits())
+  }, [open, connectionVisitScope, latestTableVisits, updateTableVisits])
 
   useEffect(() => {
     if (!open) return
@@ -285,11 +348,11 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !event.defaultPrevented) onClose()
+      if (event.key === 'Escape' && !event.defaultPrevented && pendingDelete === null && pendingRowDelete === null) onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
+  }, [open, onClose, pendingDelete, pendingRowDelete])
 
   /**
    * Open a saved connection in its own tab, or bring the tab it already has to the front.
@@ -361,16 +424,18 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   }, [])
   const closeTab = useCallback(
     (key: string) => {
+      if (deletingRowRef.current && pendingRowDelete?.tabKey === key) return
       const index = tabs.findIndex((tab) => tab.key === key)
       if (index < 0) return
       const next = tabs.filter((tab) => tab.key !== key)
       scrollPositionsRef.current.delete(key)
+      if (pendingRowDelete?.tabKey === key) setPendingRowDelete(null)
       setTabs(next)
       if (activeKey === key) {
         setActiveKey(next.length === 0 ? '' : next[Math.min(index, next.length - 1)].key)
       }
     },
-    [tabs, activeKey]
+    [tabs, activeKey, pendingRowDelete]
   )
 
   const updateForm = useCallback(
@@ -416,6 +481,53 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     )
   }, [])
 
+  const loadTable = useCallback(
+    async (key: string, draft: MysqlConnectionDraft, database: string, table: string): Promise<void> => {
+      const requestId = ++tableRequestRef.current
+      setTabs((current) => current.map((tab) =>
+        tab.kind === 'table' && tab.key === key ? { ...tab, loading: true, error: '', requestId } : tab
+      ))
+      let result: MysqlTableData
+      try {
+        result = await window.api.queryMysqlTable(draft, database, table)
+      } catch {
+        result = { ok: false, sql: '', columns: [], columnComments: [], columnCommentsMessage: '', rows: [], rowKeys: [], rowDeleteMessage: '', truncated: false, message: '读取失败，请重试。' }
+      }
+      // A refresh after deletion must not be overwritten by an older data query.
+      setTabs((current) => current.map((tab) =>
+        tab.kind === 'table' && tab.key === key && tab.requestId === requestId
+          ? { ...tab, loading: false, data: result, error: result.ok ? '' : result.message }
+          : tab
+      ))
+    }, []
+  )
+
+  const confirmDeleteRow = useCallback(async (): Promise<void> => {
+    const target = pendingRowDelete
+    if (target === null || deletingRowRef.current) return
+    deletingRowRef.current = true
+    setDeletingRow(true)
+    const showResult = (message: string, failed: boolean): void => {
+      setTabs((current) => current.map((tab) =>
+        tab.kind === 'table' && tab.key === target.tabKey
+          ? { ...tab, rowActionMessage: message, rowActionError: failed }
+          : tab
+      ))
+    }
+    showResult('', false)
+    try {
+      const result = await window.api.deleteMysqlTableRow(target.draft, target.database, target.table, target.rowKey)
+      showResult(result.message, !result.ok)
+      if (result.ok) await loadTable(target.tabKey, target.draft, target.database, target.table)
+    } catch {
+      showResult('删除结果未确认，请刷新表数据后检查。', true)
+    } finally {
+      deletingRowRef.current = false
+      setDeletingRow(false)
+      setPendingRowDelete(null)
+    }
+  }, [pendingRowDelete, loadTable])
+
   /**
    * Open one table in its own tab and read its first page.
    *
@@ -425,31 +537,19 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const openTableTab = useCallback(
     async (connectionId: string, form: ConnectionForm, table: string): Promise<void> => {
       const database = form.database.trim()
-      const key = `table:${connectionId}:${database}:${table}`
-      const alreadyOpen = tabs.some((tab) => tab.key === key)
+      const existing = tabs.find((tab) => tab.kind === 'table' && tab.connectionId === connectionId && tab.database === database && tab.table === table)
+      const key = existing?.key ?? `table:${connectionId}:${database}:${table}`
       const draft = draftFromForm(form)
-      if (!alreadyOpen) {
+      if (!existing) {
         setTabs((current) => [
           ...current,
-          { kind: 'table', key, connectionId, database, table, draft, loading: true, data: null, error: '' }
+          { kind: 'table', key, connectionId, database, table, draft, loading: true, requestId: 0, data: null, error: '' }
         ])
       }
       setActiveKey(key)
-      let result: MysqlTableData
-      try {
-        result = await window.api.queryMysqlTable(draft, database, table)
-      } catch {
-        result = { ok: false, sql: '', columns: [], columnComments: [], columnCommentsMessage: '', rows: [], truncated: false, message: '读取失败，请重试。' }
-      }
-      setTabs((current) =>
-        current.map((tab) =>
-          tab.kind === 'table' && tab.key === key
-            ? { ...tab, loading: false, data: result, error: result.ok ? '' : result.message }
-            : tab
-        )
-      )
+      await loadTable(key, draft, database, table)
     },
-    [tabs]
+    [tabs, loadTable]
   )
 
   const loadDdl = useCallback(
@@ -484,7 +584,8 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     async (connectionId: string, form: ConnectionForm, table: string): Promise<void> => {
       const database = form.database.trim()
       const draft = draftFromForm(form)
-      const key = `ddl:${JSON.stringify([connectionId, database, table])}`
+      const existing = tabs.find((tab) => tab.kind === 'ddl' && tab.connectionId === connectionId && tab.database === database && tab.table === table)
+      const key = existing?.key ?? `ddl:${JSON.stringify([connectionId, database, table])}`
       setTabs((current) =>
         current.some((tab) => tab.key === key)
           ? current
@@ -499,7 +600,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       setActiveKey(key)
       await loadDdl(key, draft, database, table)
     },
-    [loadDdl]
+    [loadDdl, tabs]
   )
 
   const copyDdl = useCallback(async (tab: DdlTab): Promise<void> => {
@@ -566,12 +667,19 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
         const position = scrollPositionsRef.current.get(key)
         if (position) scrollPositionsRef.current.set(result.id, position)
         scrollPositionsRef.current.delete(key)
+        const nextVisits = renameMysqlTableVisitConnection(latestTableVisits(), key, result.id)
+        tableVisitsStorageAvailableRef.current = writeMysqlTableVisitHistory(nextVisits)
+        updateTableVisits(nextVisits)
       }
       // A brand-new connection is keyed by a temporary id until this moment; the row id
       // replaces it, so the tab it was opened in becomes the tab of the saved row.
       setTabs((current) =>
         current.map((tab) =>
-          tab.kind === 'connection' && tab.key === key ? { ...tab, key: result.id, form: nextForm } : tab
+          tab.kind === 'connection' && tab.key === key
+            ? { ...tab, key: result.id, form: nextForm }
+            : tab.kind !== 'connection' && tab.connectionId === key
+              ? { ...tab, connectionId: result.id, draft: { ...tab.draft, id: result.id } }
+              : tab
         )
       )
       setActiveKey((active) => (active === key ? result.id : active))
@@ -582,7 +690,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     } finally {
       setSaving(false)
     }
-  }, [activeForm, activeConnection, saving, refreshTables])
+  }, [activeForm, activeConnection, saving, refreshTables, latestTableVisits, updateTableVisits])
 
   /**
    * Load a connection page's table list the first time it is shown.
@@ -699,6 +807,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   <button
                     type="button"
                     className="mysql-page__tab-close"
+                    disabled={deletingRow && pendingRowDelete?.tabKey === tab.key}
                     aria-label={`关闭 ${tabTitle(tab)}`}
                     title={tab.kind === 'connection' ? '关闭这个页面（连接仍保留在左侧列表）' : tab.kind === 'ddl' ? '关闭这个 DDL 页' : '关闭这个表页'}
                     onClick={() => closeTab(tab.key)}
@@ -713,13 +822,6 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
           </div>
 
           <span className="panel__spacer" />
-          <span
-            className={savedNow ? 'mysql-page__badge mysql-page__badge--ok' : 'mysql-page__badge'}
-            title={activeTab?.kind === 'ddl' ? '正在查看建表语句' : activeForm === null ? '没有打开的连接' : savedNow ? '与已保存的内容一致' : '有改动尚未保存'}
-          >
-            <i />
-            {activeTab?.kind === 'ddl' ? 'DDL' : activeForm === null ? '未打开' : savedNow ? '已保存' : '未保存'}
-          </span>
           <button type="button" className="mysql-page__close" aria-label="关闭" onClick={onClose}>
             <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
               <path d="M4 4l8 8M12 4l-8 8" />
@@ -866,40 +968,18 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   <button
                     type="button"
                     className="mysql-page__btn"
-                    disabled={activeTab.loading}
+                    disabled={activeTab.loading || deletingRow}
                     title="重新读取这张表"
-                    onClick={() => {
-                      const key = activeTab.key
-                      setTabs((current) =>
-                        current.map((item) =>
-                          item.kind === 'table' && item.key === key ? { ...item, loading: true } : item
-                        )
-                      )
-                      void window.api
-                        .queryMysqlTable(activeTab.draft, activeTab.database, activeTab.table)
-                        .then((result) => {
-                          setTabs((current) =>
-                            current.map((item) =>
-                              item.kind === 'table' && item.key === key
-                                ? { ...item, loading: false, data: result, error: result.ok ? '' : result.message }
-                                : item
-                            )
-                          )
-                        })
-                        .catch(() => {
-                          setTabs((current) =>
-                            current.map((item) =>
-                              item.kind === 'table' && item.key === key
-                                ? { ...item, loading: false, error: '读取失败，请重试。' }
-                                : item
-                            )
-                          )
-                        })
-                    }}
+                    onClick={() => void loadTable(activeTab.key, activeTab.draft, activeTab.database, activeTab.table)}
                   >
                     {activeTab.loading ? '读取中…' : '刷新'}
                   </button>
                 </div>
+                {activeTab.rowActionMessage ? (
+                  <p className={activeTab.rowActionError ? 'mysql-page__hint mysql-page__hint--error' : 'mysql-page__hint'} role={activeTab.rowActionError ? 'alert' : 'status'}>
+                    {activeTab.rowActionMessage}
+                  </p>
+                ) : null}
                 {activeTab.loading ? (
                   <p className="mysql-page__hint">正在读取表数据…</p>
                 ) : activeTab.error ? (
@@ -930,11 +1010,12 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                                   </Tooltip.Root>
                                 </th>
                               ))}
+                              <th scope="col" className="mysql-page__row-actions">操作</th>
                             </tr>
                           </thead>
                           <tbody>
                             {activeTab.data.rows.length === 0 ? (
-                              <tr><td colSpan={activeTab.data.columns.length} className="mysql-page__empty-cell">这张表没有数据。</td></tr>
+                              <tr><td colSpan={activeTab.data.columns.length + 1} className="mysql-page__empty-cell">这张表没有数据。</td></tr>
                             ) : null}
                             {activeTab.data.rows.map((row, rowIndex) => (
                               <tr key={rowIndex}>
@@ -943,6 +1024,23 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                                     {cell === null ? <span className="mysql-page__null">NULL</span> : cell}
                                   </td>
                                 ))}
+                                <td className="mysql-page__row-actions">
+                                  <button
+                                    type="button"
+                                    className="mysql-page__row-delete"
+                                    disabled={deletingRow || !activeTab.data?.rowKeys[rowIndex]?.length}
+                                    aria-label={`删除第 ${rowIndex + 1} 行记录`}
+                                    title={activeTab.data?.rowKeys[rowIndex]?.length ? '删除这条记录' : activeTab.data?.rowDeleteMessage || '无法读取完整主键，请刷新数据。'}
+                                    onClick={() => {
+                                      const rowKey = activeTab.data?.rowKeys[rowIndex]
+                                      if (deletingRowRef.current || !rowKey?.length) return
+                                      setPendingRowDelete({
+                                        tabKey: activeTab.key, draft: { ...activeTab.draft }, database: activeTab.database,
+                                        table: activeTab.table, rowKey: rowKey.map((part) => ({ ...part }))
+                                      })
+                                    }}
+                                  >删除</button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -952,6 +1050,9 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     <p className="mysql-page__hint mysql-page__table-note">
                       共 {activeTab.data.rows.length} 行{activeTab.data.truncated ? '（只显示前 200 行）' : ''}
                     </p>
+                    {activeTab.data.rowDeleteMessage ? (
+                      <p className="mysql-page__hint" role="status">{activeTab.data.rowDeleteMessage}</p>
+                    ) : null}
                     {activeTab.data.columnCommentsMessage ? (
                       <p className="mysql-page__hint" role="status">{activeTab.data.columnCommentsMessage}</p>
                     ) : null}
@@ -1263,7 +1364,27 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
         confirmLabel='确认删除'
         onConfirm={() => void confirmRemove()}
         onCancel={() => setPendingDelete(null)}
-      />      </div>
+      />
+      <ConfirmDialog
+        open={pendingRowDelete !== null}
+        danger
+        icon='🗑'
+        title='删除记录'
+        description='确认从数据库中删除这条记录？此操作会直接删除数据。'
+        busy={deletingRow}
+        items={pendingRowDelete === null ? [] : [
+          { icon: '🗄', label: '数据库', value: pendingRowDelete.database },
+          { icon: '▤', label: '数据表', value: pendingRowDelete.table },
+          ...pendingRowDelete.rowKey.map((part) => ({
+            icon: '🔑', label: part.column, value: part.encoding === 'hex' ? `0x${part.value}` : part.value,
+            tone: 'danger' as const
+          }))
+        ]}
+        confirmLabel='确认删除'
+        onConfirm={() => void confirmDeleteRow()}
+        onCancel={() => { if (!deletingRowRef.current) setPendingRowDelete(null) }}
+      />
+      </div>
     </div>
   )
 }
