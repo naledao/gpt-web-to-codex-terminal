@@ -1107,6 +1107,14 @@ body {
   flex-wrap: wrap;
 }
 
+.terminal-pane__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  white-space: nowrap;
+}
+
 .workspace:not(.workspace--manager) .terminal-pane__head .terminal__dot.terminal__dot--disconnected {
   background: var(--text-muted);
   box-shadow: none;
@@ -7398,6 +7406,14 @@ body {
 }
 
 /* Terminal pane - align to the sidebar control-panel palette */
+.workspace:not(.workspace--manager) .terminal-pane__head {
+  column-gap: 8px;
+}
+.workspace:not(.workspace--manager) .terminal-pane__head .panel__sync {
+  padding-inline: 9px;
+}
+
+
 .workspace:not(.workspace--manager) .terminal-pane {
   border-color: #dce4ef;
   border-radius: 14px;

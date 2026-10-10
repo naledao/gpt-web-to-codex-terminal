@@ -1,6 +1,7 @@
 import { join, posix } from 'node:path'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { taskbarCountIcon } from './taskbar-badge'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, screen, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
@@ -156,6 +157,23 @@ let localMachineId = ''
 let settings: AppSettings = { theme: 'light', backendUrl: '', embedProxy: {}, sshProxy: '', updateProxy: '', userAvatarDataUrl: '', userAvatarSourceDataUrl: '', userAvatarPositionX: 50, userAvatarPositionY: 50, userAvatarScale: 1 }
 const runtimes = new Map<string, SessionRuntime>()
 let currentSessionId: string | null = null
+const unseenCompletedTasks = new Map<string, number>()
+
+function refreshTaskbarCount(): void {
+  if (process.platform !== 'win32' || !managerWindow || managerWindow.isDestroyed()) return
+  const count = [...unseenCompletedTasks.values()].reduce((sum, value) => sum + value, 0)
+  managerWindow.setOverlayIcon(count > 0 ? taskbarCountIcon(count) : null, count > 0 ? `${count} 个已完成任务尚未查看` : '')
+}
+
+function markSessionViewed(id: string | null): void {
+  if (id && unseenCompletedTasks.delete(id)) refreshTaskbarCount()
+}
+
+function recordCompletedTask(id: string): void {
+  if (id === currentSessionId && managerWindow && !managerWindow.isDestroyed() && managerWindow.isFocused()) return
+  unseenCompletedTasks.set(id, (unseenCompletedTasks.get(id) ?? 0) + 1)
+  refreshTaskbarCount()
+}
 let workspaceOpenSshDialog = false
 
 /** The user's own Nacos console, shown inside the window on demand. Null until first opened. */
@@ -281,6 +299,7 @@ function createSplashWindow(): void {
   }
   window.once('ready-to-show', revealSplash)
   window.webContents.once('did-finish-load', revealSplash)
+  window.on('focus', () => markSessionViewed(currentSessionId))
   window.on('closed', () => {
     if (splashWindow === window) splashWindow = null
     showManagerWhenReady()
@@ -615,6 +634,7 @@ function selectSession(id: string, openSshDialog = false): boolean {
   currentSessionId = id
   workspaceOpenSshDialog = openSshDialog
   runtime.setActive(true)
+  if (managerWindow?.isFocused()) markSessionViewed(id)
   persistWorkspaceState()
   broadcastWorkspaceState()
   if (managerWindow && !managerWindow.isDestroyed()) {
@@ -715,6 +735,7 @@ function createSession(
     onTerminalNotesSaved: (owner) => {
       for (const other of runtimes.values()) other.refreshTerminalNotesForOwner(owner)
     },
+    onTaskCompleted: recordCompletedTask,
     onActivate: (id) => { selectSession(id) },
     /*
      * Ends the startup splash. Only the session the user is actually shown reports here,
@@ -753,6 +774,7 @@ function destroySession(id: string): boolean {
     workspaceOpenSshDialog = false
   }
 
+  markSessionViewed(id)
   runtimes.delete(id)
   store?.removeManagedSession(id)
   store?.setSetting(`web2termSession:${id}`, '')
@@ -836,9 +858,11 @@ function createManagerWindow(): void {
     event.preventDefault()
     window.hide()
   })
+  window.on('focus', () => markSessionViewed(currentSessionId))
   window.on('closed', () => {
     for (const runtime of runtimes.values()) runtime.dispose()
     runtimes.clear()
+    unseenCompletedTasks.clear()
     currentSessionId = null
     workspaceOpenSshDialog = false
     // The console view is a child of THIS window, so it dies with it; dropping the

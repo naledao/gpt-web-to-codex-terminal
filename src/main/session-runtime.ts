@@ -179,6 +179,7 @@ export interface SessionRuntimeOptions {
   onSummaryChanged: () => void
   onTransfersChanged: () => void
   onTerminalNotesSaved: (owner: TerminalNotesOwner) => void
+  onTaskCompleted: (id: string) => void
   onActivate: (id: string) => void
   /**
    * The ACTIVE platform's view loaded its page for the first time.
@@ -1778,6 +1779,7 @@ export class SessionRuntime {
 
   private notifyTaskCompleted(body: string): void {
     const window = this.window
+    this.options.onTaskCompleted(this.id)
     if (this.active && window && !window.isDestroyed() && window.isFocused()) return
     if (!Notification.isSupported()) return
     const notification = new Notification({ title: 'GPT Web to Codex Terminal', body })

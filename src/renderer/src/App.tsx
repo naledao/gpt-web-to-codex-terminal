@@ -2378,6 +2378,7 @@ ${conversation.url}`}
 
       <section ref={toolboxPaneRef} className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
         <div className={!terminalCollapsed && remoteTerminal ? `terminal-pane__head terminal-pane__head--${web2termActive ? 'web2term' : 'ssh'}` : 'terminal-pane__head'}>
+          <span className="terminal-pane__identity">
           <span className="panel__title">终端</span>
           <span
             className={
@@ -2397,7 +2398,6 @@ ${conversation.url}`}
             }
             title={terminal?.transport?.message}
           />
-          <span className="panel__spacer" />
           {terminalCollapsed ? null : (
             <span className="panel__delay">
               <input
@@ -2420,6 +2420,8 @@ ${conversation.url}`}
               <span className="panel__delay-unit">秒</span>
             </span>
           )}
+          </span>
+          {terminalCollapsed ? <span className="panel__spacer" /> : null}
           {terminalCollapsed ? null : (
             <button
               type="button"
