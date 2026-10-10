@@ -18,6 +18,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test:redis": "node --experimental-strip-types --test tests/redis-reader.test.mjs",
     "test:execution-recovery": "node --experimental-strip-types --test tests/execution-recovery.test.mjs",
+    "test:mac": "node --test tests/macos-terminal.test.mjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "pack:dir": "npm run build && electron-builder --dir",

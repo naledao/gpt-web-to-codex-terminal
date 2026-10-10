@@ -334,7 +334,7 @@ export function executionKeyOf(parsed: ParsedCommand, conversationId: string): s
 
 export class CommandRunner {
   /**
-   * The one local PowerShell session.
+   * The one local PowerShell/zsh session.
    *
    * There is exactly ONE, for the whole app — never one per conversation. The
    * terminal is a window onto a machine, and the machine does not change when you
@@ -902,6 +902,8 @@ export class CommandRunner {
     const transport = this.deps.terminalTransport?.()
     const remote = transport ? this.deps.remoteShell() : null
     return {
+      shellKind: remote?.kind ?? this.localShell?.kind ?? (process.platform === 'win32' ? 'windows' : 'posix'),
+      shellLabel: remote ? 'Shell' : this.localShell?.label ?? (process.platform === 'win32' ? 'PowerShell' : process.platform === 'darwin' ? 'zsh' : 'sh'),
       alive: remote ? remote.alive : this.localShell?.alive ?? false,
       cwd: remote ? remote.cwd : this.localShell?.cwd ?? this.localCwd,
       lines: [...this.lines],
@@ -933,7 +935,7 @@ export class CommandRunner {
     const shell = this.ensureShell()
     this.appendLine({
       kind: 'notice',
-      text: shell.kind === 'posix' ? '探测远端主机环境' : '探测本机环境'
+      text: shell === this.localShell ? '探测本机环境' : '探测远端主机环境'
     })
     this.appendLine({ kind: 'command', text: shell.probeCommand })
     const result = await this.runOnShell(shell, shell.probeCommand)
@@ -1123,7 +1125,7 @@ export class CommandRunner {
       return await shell.run(command, timeoutMs)
     } finally {
       if (shell === this.localShell) this.localCwd = shell.cwd
-      // A local PowerShell restart reuses the same ConversationShell object.
+      // A local shell restart reuses the same ConversationShell object.
       // Compare the run id as well, otherwise the old interrupted run can clear
       // activeShell after its replacement has already started on that same object.
       if (this.activeRunId === runId) this.activeShell = null
@@ -1150,7 +1152,7 @@ export class CommandRunner {
       return this.ensureShell()
     }
 
-    const wasRemote = active.kind === 'posix'
+    const wasRemote = active !== this.localShell
     const interrupted = await active.interrupt()
     if (!interrupted) return this.ensureShell()
     // interrupt() waits for the backend to close; it is safe to release the old
@@ -1207,7 +1209,7 @@ export class CommandRunner {
           if (this.localShell !== created) return
           this.appendLine({
             kind: 'notice',
-            text: 'PowerShell 会话已结束，下一条命令会自动重开'
+            text: `${created.label} 会话已结束，下一条命令会自动重开`
           })
         }
       })

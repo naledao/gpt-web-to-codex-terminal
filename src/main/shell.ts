@@ -2,8 +2,10 @@ import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { existsSync } from 'node:fs'
-import { DETECT_COMMAND } from './environment'
+import { statSync } from 'node:fs'
+import { StringDecoder } from 'node:string_decoder'
+import { DETECT_COMMAND, LOCAL_POSIX_DETECT_COMMAND } from './environment'
+import { buildPosixWrapper, localPosixShellPath } from './posix-shell'
 import { WINDOWS_PATH_REFRESH_SCRIPT } from './shell-path'
 import type { EnvironmentKind } from '../shared/types'
 
@@ -175,9 +177,8 @@ const INTERRUPT_CONFIRM_MS = 3000
 /**
  * What the command runner needs from an execution backend.
  *
- * There are two — a local PowerShell session and a shell on the far side of an
- * SSH connection — and the runner must not care which one it holds, because which
- * one is correct changes while the app is running.
+ * Local PowerShell/zsh and remote shells share this contract. The dialect does
+ * not identify the transport: a POSIX shell can also run on the local Mac.
  */
 export interface ExecutionShell {
   /** Which dialect this backend speaks. Decides both the prompt and the cwd command. */
@@ -223,7 +224,7 @@ export interface ConversationShellOptions {
 }
 
 /**
- * One long-lived PowerShell session per conversation.
+ * One long-lived local shell: PowerShell on Windows, zsh on macOS.
  *
  * The session is a wrapper script that loops reading commands from stdin. That
  * gives the model what a real terminal gives it — variables, functions, imported
@@ -264,12 +265,15 @@ export class ConversationShell implements ExecutionShell {
   private pending: PendingRun | null = null
   private readyResolve: ((ok: boolean) => void) | null = null
 
-  readonly kind: EnvironmentKind = 'windows'
-  readonly probeCommand: string = DETECT_COMMAND
+  readonly kind: EnvironmentKind = process.platform === 'win32' ? 'windows' : 'posix'
+  readonly probeCommand: string = this.kind === 'windows' ? DETECT_COMMAND : LOCAL_POSIX_DETECT_COMMAND
+  readonly label: string = this.kind === 'windows' ? 'PowerShell' : localPosixShellPath().split('/').pop()!
 
   constructor(private readonly options: ConversationShellOptions = {}) {
     const initialCwd = options.initialCwd?.trim() ?? ''
-    if (initialCwd !== '' && existsSync(initialCwd)) this.currentCwd = initialCwd
+    try {
+      if (initialCwd !== '' && statSync(initialCwd).isDirectory()) this.currentCwd = initialCwd
+    } catch { /* A removed directory falls back to the user's home. */ }
   }
 
   get cwd(): string {
@@ -300,11 +304,13 @@ export class ConversationShell implements ExecutionShell {
     }
 
     const ready = await this.ensureSession()
-    if (!ready) return this.reject('无法启动 PowerShell 会话。')
+    if (!ready || this.disposed) return this.reject(`无法启动 ${this.label} 会话。`)
+    // Two callers can both await the same startup; only one may own stdin.
+    if (this.pending) return this.reject('终端正忙，忽略了这条命令。')
 
     const child = this.child
     if (!child || child.exitCode !== null || !child.stdin) {
-      return this.reject('PowerShell 会话不可用。')
+      return this.reject(`${this.label} 会话不可用。`)
     }
 
     // Captured here: TypeScript cannot keep the null-check narrowing inside the
@@ -331,7 +337,7 @@ export class ConversationShell implements ExecutionShell {
       this.pending = { seq, output: '', resolve, idleTimer, ceilingTimer, ceilingMs, timedOut: false, interrupted: false }
 
       try {
-        stdin.write(`${Buffer.from(cleaned, 'utf16le').toString('base64')}\n`)
+        stdin.write(`${Buffer.from(cleaned, this.kind === 'windows' ? 'utf16le' : 'utf8').toString('base64')}\n`)
       } catch {
         this.clearPending()
         resolve(this.reject('写入终端失败。'))
@@ -448,8 +454,8 @@ export class ConversationShell implements ExecutionShell {
   }
 
   private async ensureSession(): Promise<boolean> {
-    if (this.alive) return true
     if (this.starting) return this.starting
+    if (this.alive) return true
 
     this.starting = this.startSession()
     try {
@@ -464,30 +470,32 @@ export class ConversationShell implements ExecutionShell {
       this.sessionToken = randomUUID().replace(/-/g, '').slice(0, 10)
       this.seq = 0
       this.lineBuffer = ''
-      this.decode = createDecoder()
+      const decoder = new StringDecoder('utf8')
+      this.decode = this.kind === 'windows' ? createDecoder() : (chunk) => decoder.write(chunk)
 
-      const encoded = Buffer.from(buildWrapper(this.sessionToken), 'utf16le').toString('base64')
+      const windows = this.kind === 'windows'
+      const executable = windows ? resolvePowerShell() : localPosixShellPath()
+      const args = windows
+        ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand',
+            Buffer.from(buildWrapper(this.sessionToken), 'utf16le').toString('base64')]
+        : ['-l', '-c', buildPosixWrapper(this.sessionToken), 'codex-terminal', this.currentCwd]
 
       let child: ChildProcess
       try {
         child = spawn(
-          resolvePowerShell(),
-          [
-            '-NoProfile',
-            '-NonInteractive',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-EncodedCommand',
-            encoded
-          ],
+          executable,
+          args,
           {
             // Start where the previous session left off, so a restart does not
             // silently move the model to a different directory.
             cwd: this.currentCwd,
             windowsHide: true,
+            // A separate POSIX process group lets interrupt/reset stop children too.
+            detached: !windows,
             stdio: ['pipe', 'pipe', 'pipe'],
             env: {
               ...process.env,
+              ...(!windows ? { SHELL: executable } : {}),
               // External programs are a different story from PowerShell itself:
               // this is the only lever that makes common runtimes emit UTF-8
               // rather than the ANSI code page.
@@ -515,15 +523,21 @@ export class ConversationShell implements ExecutionShell {
         resolve(ok)
       }
 
-      child.stdout?.on('data', (chunk: Buffer) => this.handleData(chunk))
-      child.stderr?.on('data', (chunk: Buffer) => this.handleData(chunk))
-      child.on('error', () => this.handleExit())
-      child.on('close', () => this.handleExit())
+      child.stdout?.on('data', (chunk: Buffer) => { if (this.child === child) this.handleData(chunk) })
+      child.stderr?.on('data', (chunk: Buffer) => { if (this.child === child) this.handleData(chunk) })
+      child.stdin?.on('error', () => { this.killChild(child); this.handleExit(child) })
+      child.on('error', () => this.handleExit(child))
+      child.on('close', () => this.handleExit(child))
     })
   }
 
-  private handleExit(): void {
-    const wasAlive = this.child !== null
+  private handleExit(child: ChildProcess): void {
+    // A late close from the previous process must not clear its replacement.
+    if (this.child !== child) return
+    if (this.lineBuffer !== '') {
+      this.handleLine(this.lineBuffer)
+      this.lineBuffer = ''
+    }
     this.child = null
 
     this.readyResolve?.(false)
@@ -555,10 +569,12 @@ export class ConversationShell implements ExecutionShell {
       })
     }
 
-    if (wasAlive && !deliberate) this.options.onExit?.()
+    if (!this.disposed && !deliberate) this.options.onExit?.()
   }
 
   private handleData(chunk: Buffer): void {
+    // Progress can arrive without a newline (download progress bars, for example).
+    if (this.pending) this.pending.idleTimer.refresh()
     this.lineBuffer += this.decode(chunk)
 
     let newline = this.lineBuffer.indexOf('\n')
@@ -591,7 +607,9 @@ export class ConversationShell implements ExecutionShell {
       if (match && this.pending !== null && Number(match[1]) === this.pending.seq) {
         const pending = this.pending
         this.clearPending()
-        const cwd = match[3].trim()
+        const cwd = this.kind === 'posix'
+          ? Buffer.from(match[3].trim(), 'base64').toString('utf8')
+          : match[3].trim()
         if (cwd !== '') this.currentCwd = cwd
         pending.resolve({
           output: pending.output.trimEnd(),
@@ -646,6 +664,13 @@ export class ConversationShell implements ExecutionShell {
    * all. `taskkill /T` kills the parent itself, so nothing is lost by not pre-killing it.
    */
   private killChild(child: ChildProcess): void {
+    if (this.kind === 'posix') {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
+        else this.forceKill(child)
+      } catch { this.forceKill(child) }
+      return
+    }
     if (child.pid === undefined) {
       this.forceKill(child)
       return

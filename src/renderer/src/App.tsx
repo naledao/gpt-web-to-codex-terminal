@@ -203,8 +203,8 @@ function statusTone(status: ExecutionStatus): string {
   return 'badge'
 }
 
-function formatTerminalCommand(text: string, remote: boolean): string {
-  if (!remote) return `> ${text}`
+function formatTerminalCommand(text: string, posix: boolean): string {
+  if (!posix) return `> ${text}`
   return /(?:^|\s)[$#]\s+\S/.test(text) ? text : `$ ${text}`
 }
 
@@ -535,6 +535,7 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
   const sshActive = ssh !== null && ssh.attached
   const web2termActive = sessionKind === 'web2term' || terminal?.transport?.kind === 'web2term'
   const remoteTerminal = sshActive || web2termActive
+  const posixTerminal = remoteTerminal || terminal?.shellKind === 'posix'
   /**
    * True while a host is actually in charge — as opposed to the pane merely still
    * showing a transcript after a disconnect or a failure. Deciding this in one
@@ -2602,7 +2603,7 @@ ${conversation.url}`}
         ) : (
           <div className="terminal-pane__meta">
             <span className="terminal-pane__id" title={web2termActive ? [terminal?.transport?.deviceId, terminal?.transport?.message, terminal?.transport?.logPath && `日志：${terminal.transport.logPath}`].filter(Boolean).join('\n') : undefined}>
-              {web2termActive ? `web2term · ${terminal?.transport?.deviceName || '设备'}` : '本机'}
+              {web2termActive ? `web2term · ${terminal?.transport?.deviceName || '设备'}` : `本机${terminal?.shellLabel ? ` · ${terminal.shellLabel}` : ''}`}
             </span>
             {cwdDraft !== null ? (
               <form className="terminal-pane__cwd-form" onSubmit={submitCwd}>
@@ -2953,7 +2954,7 @@ ${conversation.url}`}
                     onClick={() => setCommandPreview({
                       command: currentExecution.command,
                       description: currentExecution.description,
-                      language: remoteTerminal ? 'shell' : 'powershell'
+                      language: posixTerminal ? 'shell' : 'powershell'
                     })}
                   >
                     <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -3018,7 +3019,7 @@ ${record.command}`
                   >
                     {block.command ? (
                       <pre className="line line--command">
-                        {formatTerminalCommand(block.command.text, remoteTerminal)}
+                        {formatTerminalCommand(block.command.text, posixTerminal)}
                       </pre>
                     ) : null}
                     {block.lines.length > 0 ? (
@@ -3037,7 +3038,7 @@ ${record.command}`
 
             <form className={remoteTerminal ? 'terminal-pane__input terminal-pane__input--ssh' : 'terminal-pane__input'} onSubmit={submitCommand}>
               <span className={remoteTerminal ? 'terminal-pane__prompt terminal-pane__prompt--ssh' : 'terminal-pane__prompt'} aria-hidden="true">
-                {remoteTerminal ? '$' : <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>}
+                {posixTerminal ? '$' : <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>}
               </span>
               <textarea
                 className="address__input terminal-pane__command-input"
