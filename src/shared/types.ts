@@ -944,6 +944,7 @@ function buildWindowsPrompt(env: EnvironmentInfo): string {
  */
 function buildPosixPrompt(env: EnvironmentInfo): string {
   const osName = env.osCaption.trim() === '' ? 'Linux' : env.osCaption.trim()
+  const mac = /mac\s?os|darwin/i.test(osName)
   const osDetail = [env.osVersion.trim(), env.architecture.trim()]
     .filter((part) => part !== '')
     .join('，')
@@ -956,7 +957,7 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
 
   return [
     '【角色】',
-    '你是 Linux 终端助手；仅终端路线每轮输出一条命令。',
+    `你是 ${mac ? 'macOS' : 'Linux / POSIX'} 终端助手；仅终端路线每轮输出一条命令。`,
     '',
     TASK_ROUTING_SECTION,
     '',
@@ -989,15 +990,19 @@ function buildPosixPrompt(env: EnvironmentInfo): string {
     '- 不要用 exit（会结束会话）；stdin 为空，勿用交互命令。sudo 要密码时停下让用户手动执行。',
     '',
     '【命令规范】',
-    '直接写命令，不要包 bash -c/sh -c；可用 &&、||、;。语法符号半角，中文不能代替语法标点。',
-    '路径用正斜杠且区分大小写，空格路径加引号。避免 sort/uniq/column -t/tac 等收齐输入的管道；全仓搜索排除 node_modules/.git/out。',
+    '直接写命令，不要包 zsh -c/bash -c/sh -c；可用 &&、||、;。语法符号半角，中文不能代替语法标点。',
+    '路径用正斜杠，保留原始大小写，空格路径加引号。避免 sort/uniq/column -t/tac 等收齐输入的管道；全仓搜索排除 node_modules/.git/out。',
     '',
     '【编码】',
     '文件一律按 UTF-8 处理，不依赖 terminal locale。',
     '',
     '【优先使用】',
-    '- 这是 Linux，禁用 PowerShell/cmd 语法（Get-ChildItem、Get-CimInstance、$env:、dir /s、Remove-Item）；用 ls/cat/grep/find/sed/awk。',
-    '- 包管理按发行版用 apt-get、dnf/yum 或 apk；结构化数据用 jq 或 python3。'
+    `- 这是 ${mac ? 'macOS' : osName}，禁用 PowerShell/cmd 语法（Get-ChildItem、Get-CimInstance、$env:、dir /s、Remove-Item）；用 ls/cat/grep/find/sed/awk。`,
+    ...(mac ? [
+      '- 使用 macOS 自带的 BSD 工具参数；不要假定有 GNU sed/grep/date/readlink，禁用 apt-get、yum、systemctl 等 Linux 专用命令。',
+      '- 包管理先用 command -v brew 确认 Homebrew 可用；Apple Silicon 常见目录 /opt/homebrew，Intel 常见目录 /usr/local。不要假定 jq/python3 已安装。',
+      '- zsh 的未匹配通配符会报错，find 的模式须加引号；数组和下标遵循实际 Shell 语法。'
+    ] : ['- 包管理按发行版用 apt-get、dnf/yum 或 apk；结构化数据用 jq 或 python3。'])
   ].join('\n')
 }
 
@@ -1432,6 +1437,9 @@ export interface TerminalLine {
  * shell belongs to the workspace rather than to an individual chat conversation.
  */
 export interface TerminalState {
+  /** Local dialect, or the device dialect when web2term owns this pane. */
+  shellKind: EnvironmentKind
+  shellLabel: string
   /** Present only when this managed session uses the web2term relay. */
   transport?: {
     kind: 'web2term'
@@ -2296,6 +2304,5 @@ export interface GitLogResult {
   files: GitFileChange[]
   error?: string
 }
-
 
 

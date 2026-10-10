@@ -61,7 +61,7 @@ import { readMysqlColumnMetadata, mysqlRowKey, mysqlRowDeleteUnavailable, delete
 import { RedisReader, normalizeRedisDraft } from './redis-reader'
 import { ChatGptEmbed } from './embed'
 import type { EmbedHandlers } from './embed'
-import { parseRemoteEnvironment, parseWindowsEnvironment } from './environment'
+import { nodeFallback, parseLocalPosixEnvironment, parseRemoteEnvironment, parseWindowsEnvironment } from './environment'
 import { resolvePowerShell } from './shell'
 import { SshManager } from './ssh'
 import type { RemoteShell } from './remote-shell'
@@ -255,7 +255,7 @@ export class SessionRuntime {
   readonly ssh: SshManager
 
   window: BrowserWindow | null = null
-  environment: EnvironmentInfo = { ...FALLBACK_ENVIRONMENT }
+  environment: EnvironmentInfo = nodeFallback()
   environmentScope: Pick<TerminalNotes, 'scope' | 'hostId' | 'label'> = {
     scope: 'local',
     hostId: '',
@@ -1698,12 +1698,12 @@ export class SessionRuntime {
 
       const sshState = this.ssh.getState()
       const info =
-        kind === 'posix'
+        backend
           ? parseRemoteEnvironment(result.output, this.web2term?.binding.deviceName ?? sshState.name ?? '', this.web2term?.binding.agentId ?? sshState.target ?? '')
-          : parseWindowsEnvironment(result.output, resolvePowerShell())
+          : kind === 'posix' ? parseLocalPosixEnvironment(result.output) : parseWindowsEnvironment(result.output, resolvePowerShell())
 
       this.environmentScope =
-        kind === 'posix'
+        backend
           ? {
               scope: 'ssh',
               hostId: this.web2term?.hostId ?? sshState.hostId ?? '',

@@ -89,7 +89,7 @@ export default function CommandViewer({ command, description, language, theme, o
           <header className="command-viewer__head">
             <div className="command-viewer__heading">
               <Dialog.Title className="command-viewer__title">完整指令</Dialog.Title>
-              <span className="command-viewer__language">{language === 'powershell' ? 'PowerShell' : 'Bash / Shell'}</span>
+              <span className="command-viewer__language">{language === 'powershell' ? 'PowerShell' : 'Shell / zsh / bash'}</span>
             </div>
             <div className="command-viewer__tools">
               {copyState === 'failed' ? <span className="command-viewer__error" role="alert">复制失败，请重试。</span> : null}

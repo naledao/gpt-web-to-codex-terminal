@@ -1,16 +1,17 @@
 import { join, posix } from 'node:path'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, screen, session, shell, Tray } from 'electron'
 import { taskbarCountIcon } from './taskbar-badge'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, screen, session, shell, Tray } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   EMBED_LOGIN_URL,
-  FALLBACK_ENVIRONMENT,
   IpcChannels,
   isConversationId
 } from '../shared/types'
 import { readGitDiff, readGitLog } from './git'
+import { nodeFallback } from './environment'
 import { emptyRedisKeyPage, emptyRedisKeyData } from './redis-reader'
 import { normalizeBackendUrl, readBackendUrl } from '../shared/backend-url'
 import { BackendAuthService } from './backend-auth'
@@ -468,7 +469,11 @@ const FALLBACK_INTERCEPTOR_STATE: InterceptorStatus = {
 }
 
 const FALLBACK_AUTOMATION: AutomationState = { mode: 'manual', paused: true }
-const FALLBACK_TERMINAL_STATE: TerminalState = { alive: false, cwd: '', lines: [], sendDelaySeconds: 0 }
+const FALLBACK_TERMINAL_STATE: TerminalState = {
+  shellKind: process.platform === 'win32' ? 'windows' : 'posix',
+  shellLabel: process.platform === 'win32' ? 'PowerShell' : process.platform === 'darwin' ? 'zsh' : 'sh',
+  alive: false, cwd: '', lines: [], sendDelaySeconds: 0
+}
 const EMPTY_NOTES: TerminalNotes = { scope: 'local', hostId: '', directoryKey: '', directory: '', label: '', text: '', legacyText: '' }
 const EMPTY_MYSQL: MysqlConnectionsState = { machineLabel: '', connections: [] }
 
@@ -798,7 +803,10 @@ function createTray(): void {
     ? join(process.resourcesPath, 'tray-icon.png')
     : join(app.getAppPath(), 'build', 'icon.png')
 
-  tray = new Tray(iconPath)
+  // macOS uses the image's intrinsic size for its status item. The full 512px
+  // app icon otherwise stretches across the menu bar and is vertically clipped.
+  const icon = nativeImage.createFromPath(iconPath)
+  tray = new Tray(process.platform === 'darwin' ? icon.resize({ width: 18, height: 18 }) : icon)
   tray.setToolTip(app.getName())
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '显示主窗口', click: () => createManagerWindow() },
@@ -1296,7 +1304,7 @@ function registerIpcHandlers(): void {
     return result.filePaths[0] ?? null
   })
   ipcMain.handle(IpcChannels.terminalSetSendDelay, (event, seconds: number): TerminalState => runtimeForEvent(event)?.setTerminalSendDelay(Number(seconds ?? 0)) ?? FALLBACK_TERMINAL_STATE)
-  ipcMain.handle(IpcChannels.environmentGet, (event) => ({ ...(runtimeForEvent(event)?.environment ?? FALLBACK_ENVIRONMENT) }))
+  ipcMain.handle(IpcChannels.environmentGet, (event) => ({ ...(runtimeForEvent(event)?.environment ?? nodeFallback()) }))
   ipcMain.handle(IpcChannels.terminalNotesGet, (event): TerminalNotes => runtimeForEvent(event)?.currentNotes() ?? EMPTY_NOTES)
   ipcMain.handle(IpcChannels.terminalNotesSet, (event, text: string, owner: TerminalNotesOwner): TerminalNotes => {
     const runtime = runtimeForEvent(event)
@@ -1686,5 +1694,3 @@ app.on('will-quit', () => {
   store?.close()
   store = null
 })
-
-

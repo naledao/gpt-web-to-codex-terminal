@@ -1,4 +1,5 @@
-import { arch, release } from 'node:os'
+import { arch, homedir, release } from 'node:os'
+import { localPosixShellPath } from './posix-shell'
 import { FALLBACK_ENVIRONMENT } from '../shared/types'
 import type { EnvironmentInfo } from '../shared/types'
 
@@ -22,13 +23,48 @@ export const DETECT_COMMAND = [
   '} | ConvertTo-Json -Compress'
 ].join(' ')
 
-/** Best effort without PowerShell, so a failed probe still beats a hard-coded guess. */
+/** Best effort without a shell, keeping the local platform correct before startup. */
 export function nodeFallback(): EnvironmentInfo {
   const archNames: Record<string, string> = { x64: '64-bit', arm64: 'ARM64', ia32: '32-bit' }
   return {
     ...FALLBACK_ENVIRONMENT,
+    ...(process.platform !== 'win32' ? {
+      kind: 'posix' as const,
+      osCaption: process.platform === 'darwin' ? 'macOS' : 'Linux',
+      powerShellExe: '',
+      shellPath: localPosixShellPath(),
+      workingDirectory: homedir()
+    } : {}),
     osVersion: release(),
     architecture: archNames[arch()] ?? arch()
+  }
+}
+
+/** Run visibly in the local shell; macOS has sw_vers, not /etc/os-release. */
+export const LOCAL_POSIX_DETECT_COMMAND = [
+  "printf 'OSCAP=%s|OSVER=%s|BUILD=%s|ARCH=%s|SHELLP=%s|SHELLV=%s|CWD64=%s\\n'",
+  ...(process.platform === 'darwin'
+    ? ['"$(/usr/bin/sw_vers -productName)"', '"$(/usr/bin/sw_vers -productVersion)"', '"$(/usr/bin/sw_vers -buildVersion)"']
+    : ['"$(uname -s)"', '"$(uname -r)"', "''"]),
+  '"$(uname -m)"', '"$SHELL"', '"${ZSH_VERSION:-${BASH_VERSION:-}}"',
+  // A directory may contain | or newlines, the delimiters of the report.
+  '"$(printf \'%s\' "$PWD" | /usr/bin/base64 | /usr/bin/tr -d \'\\r\\n\')"'
+].join(' ')
+
+export function parseLocalPosixEnvironment(raw: string): EnvironmentInfo {
+  const base = nodeFallback()
+  const fields = parseKeyValues(raw)
+  if (!fields) return base
+  return {
+    ...base,
+    osCaption: fields.OSCAP || base.osCaption,
+    osVersion: fields.OSVER || base.osVersion,
+    buildNumber: fields.BUILD || '',
+    architecture: fields.ARCH || base.architecture,
+    shellPath: fields.SHELLP || base.shellPath,
+    shellVersion: fields.SHELLV || '',
+    workingDirectory: fields.CWD64 ? Buffer.from(fields.CWD64, 'base64').toString('utf8') : base.workingDirectory,
+    detected: Boolean(fields.OSCAP && fields.OSVER)
   }
 }
 
