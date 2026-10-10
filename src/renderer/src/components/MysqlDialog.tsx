@@ -20,6 +20,7 @@ import type {
   MysqlConnectionsState,
   MysqlDatabaseList,
   MysqlTableData,
+  MysqlSqlExecutionResult,
   MysqlRowKey,
   MysqlTableDdl,
   MysqlTableList
@@ -80,11 +81,16 @@ interface TableTab {
   requestId: number
   data: MysqlTableData | null
   error: string
+  sqlOpen: boolean
+  sqlText: string
+  sqlRunning: boolean
+  sqlRequestId: number
+  sqlResult: MysqlSqlExecutionResult | null
   rowActionMessage?: string
   rowActionError?: boolean
 }
 
-interface DdlTab extends Omit<TableTab, 'kind' | 'data'> {
+interface DdlTab extends Omit<TableTab, 'kind' | 'data' | 'sqlOpen' | 'sqlText' | 'sqlRunning' | 'sqlRequestId' | 'sqlResult'> {
   kind: 'ddl'
   data: MysqlTableDdl | null
   requestId: number
@@ -266,6 +272,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const newTabRef = useRef(0)
   const ddlRequestRef = useRef(0)
   const tableRequestRef = useRef(0)
+  const sqlRequestRef = useRef(0)
   /** Focused when saving is refused, so the missing field is the one on screen. */
   const databaseRef = useRef<HTMLInputElement>(null)
   /** Id of the connection whose info was just copied, for the transient 已复制 mark. */
@@ -277,6 +284,10 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [deletingRow, setDeletingRow] = useState(false)
   const deletingRowRef = useRef(false)
   /** The database picker: whether it is open, what it is fetching, and what came back. */
+  const [createTableOpen, setCreateTableOpen] = useState(false)
+  const [createTableSql, setCreateTableSql] = useState('')
+  const [createTableBusy, setCreateTableBusy] = useState(false)
+  const [createTableError, setCreateTableError] = useState('')
   const [dbPickerOpen, setDbPickerOpen] = useState(false)
   const [dbLoading, setDbLoading] = useState(false)
   const [dbResult, setDbResult] = useState<MysqlDatabaseList | null>(null)
@@ -481,6 +492,33 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     )
   }, [])
 
+  const submitCreateTable = async (): Promise<void> => {
+    if (activeConnection === null || activeForm === null || createTableBusy) return
+    const sql = createTableSql.trim()
+    if (sql === '') {
+      setCreateTableError('请输入 CREATE TABLE SQL 语句。')
+      return
+    }
+    const key = activeConnection.key
+    const form = { ...activeForm }
+    setCreateTableBusy(true)
+    setCreateTableError('')
+    try {
+      const result = await window.api.createMysqlTable(draftFromForm(form), form.database.trim(), sql)
+      if (!result.ok) {
+        setCreateTableError(result.message || '创建数据表失败。')
+        return
+      }
+      setCreateTableOpen(false)
+      setCreateTableSql('')
+      void refreshTables(key, form)
+    } catch {
+      setCreateTableError('创建数据表失败，请检查数据库连接。')
+    } finally {
+      setCreateTableBusy(false)
+    }
+  }
+
   const loadTable = useCallback(
     async (key: string, draft: MysqlConnectionDraft, database: string, table: string): Promise<void> => {
       const requestId = ++tableRequestRef.current
@@ -502,6 +540,45 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
     }, []
   )
 
+  const executeTableSql = async (tab: TableTab): Promise<void> => {
+    const sql = tab.sqlText.trim()
+    if (tab.sqlRunning || sql === '') return
+    const requestId = ++sqlRequestRef.current
+    const tableRequestId = ++tableRequestRef.current
+    setTabs((current) => current.map((item) => item.kind === 'table' && item.key === tab.key
+      ? { ...item, sqlRunning: true, sqlResult: null, sqlRequestId: requestId, requestId: tableRequestId, loading: false }
+      : item))
+    let result: MysqlSqlExecutionResult
+    try {
+      result = await window.api.executeMysqlSql(tab.draft, tab.database, sql)
+    } catch {
+      result = { ok: false, columns: [], rows: [], affectedRows: null, truncated: false, message: 'SQL 执行失败，请检查数据库连接。' }
+    }
+    const queryData: MysqlTableData | null = result.ok && result.affectedRows === null ? {
+      ok: true,
+      sql,
+      columns: result.columns,
+      columnComments: result.columns.map(() => ''),
+      columnCommentsMessage: '',
+      rows: result.rows,
+      rowKeys: result.rows.map(() => null),
+      rowDeleteMessage: '自定义 SQL 查询结果不可直接删除记录，点击刷新可恢复原始表数据。',
+      truncated: result.truncated,
+      message: ''
+    } : null
+    setTabs((current) => current.map((item) => item.kind === 'table' && item.key === tab.key && item.sqlRequestId === requestId
+      ? {
+          ...item,
+          sqlRunning: false,
+          sqlResult: result,
+          data: queryData ?? item.data,
+          error: queryData ? '' : item.error,
+          rowActionMessage: queryData ? '' : item.rowActionMessage,
+          rowActionError: queryData ? false : item.rowActionError
+        }
+      : item))
+    if (result.ok && result.affectedRows !== null) void loadTable(tab.key, tab.draft, tab.database, tab.table)
+  }
   const confirmDeleteRow = useCallback(async (): Promise<void> => {
     const target = pendingRowDelete
     if (target === null || deletingRowRef.current) return
@@ -543,7 +620,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       if (!existing) {
         setTabs((current) => [
           ...current,
-          { kind: 'table', key, connectionId, database, table, draft, loading: true, requestId: 0, data: null, error: '' }
+          { kind: 'table', key, connectionId, database, table, draft, loading: true, requestId: 0, data: null, error: '', sqlOpen: false, sqlText: `SELECT * FROM \`${table.replace(/`/g, '``')}\` LIMIT 100;`, sqlRunning: false, sqlRequestId: 0, sqlResult: null }
         ])
       }
       setActiveKey(key)
@@ -966,15 +1043,72 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                     ) : null}
                   </div>
                   <button
+                    type='button'
+                    className={activeTab.sqlOpen ? 'mysql-page__btn mysql-page__btn--primary' : 'mysql-page__btn'}
+                    aria-expanded={activeTab.sqlOpen}
+                    aria-controls='mysql-table-sql-panel'
+                    onClick={() => setTabs((current) => current.map((item) => item.kind === 'table' && item.key === activeTab.key ? { ...item, sqlOpen: !item.sqlOpen } : item))}
+                  >
+                    执行 SQL
+                  </button>
+                  <button
                     type="button"
                     className="mysql-page__btn"
-                    disabled={activeTab.loading || deletingRow}
+                    disabled={activeTab.loading || deletingRow || activeTab.sqlRunning}
                     title="重新读取这张表"
                     onClick={() => void loadTable(activeTab.key, activeTab.draft, activeTab.database, activeTab.table)}
                   >
                     {activeTab.loading ? '读取中…' : '刷新'}
                   </button>
                 </div>
+                {activeTab.sqlOpen ? (
+                  <section id='mysql-table-sql-panel' className='mysql-page__sql-panel' aria-label='SQL 编辑器'>
+                    <div className='mysql-page__sql-panel-head'>
+                      <div>
+                        <strong>SQL 编辑器</strong>
+                        <span>当前数据库：{activeTab.database} · 表：{activeTab.table}</span>
+                      </div>
+                      <span className='mysql-page__sql-shortcut'>Ctrl + Enter 执行</span>
+                    </div>
+                    <textarea
+                      className='mysql-page__sql-editor'
+                      aria-label='SQL 语句'
+                      value={activeTab.sqlText}
+                      rows={6}
+                      spellCheck={false}
+                      disabled={activeTab.sqlRunning}
+                      onChange={(event) => {
+                        const sqlText = event.currentTarget.value
+                        setTabs((current) => current.map((item) => item.kind === 'table' && item.key === activeTab.key ? { ...item, sqlText } : item))
+                      }}
+                      onKeyDown={(event) => {
+                        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                          event.preventDefault()
+                          void executeTableSql(activeTab)
+                        }
+                      }}
+                    />
+                    <div className='mysql-page__sql-actions'>
+                      <span>仅执行单条 SQL，修改操作将直接生效；查询结果最多展示 200 行。</span>
+                      <button type='button' className='mysql-page__btn mysql-page__btn--primary' disabled={activeTab.sqlRunning || activeTab.sqlText.trim() === ''} onClick={() => void executeTableSql(activeTab)}>
+                        {activeTab.sqlRunning ? '执行中…' : '运行 SQL'}
+                      </button>
+                    </div>
+                    {activeTab.sqlResult ? (
+                      <div className='mysql-page__sql-output'>
+                        <p className={activeTab.sqlResult.ok ? 'mysql-page__sql-status' : 'mysql-page__sql-status mysql-page__sql-status--error'} role={activeTab.sqlResult.ok ? 'status' : 'alert'}>
+                          {activeTab.sqlResult.ok
+                            ? activeTab.sqlResult.affectedRows !== null
+                              ? `执行成功 · 影响 ${activeTab.sqlResult.affectedRows} 行`
+                              : `查询成功 · 返回 ${activeTab.sqlResult.rows.length}${activeTab.sqlResult.truncated ? '+' : ''} 行`
+                            : activeTab.sqlResult.message}
+                        </p>
+
+                        {activeTab.sqlResult.ok && activeTab.sqlResult.truncated ? <p className='mysql-page__sql-notice'>仅展示前 200 行，请使用 LIMIT 缩小查询范围。</p> : null}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
                 {activeTab.rowActionMessage ? (
                   <p className={activeTab.rowActionError ? 'mysql-page__hint mysql-page__hint--error' : 'mysql-page__hint'} role={activeTab.rowActionError ? 'alert' : 'status'}>
                     {activeTab.rowActionMessage}
@@ -1253,6 +1387,19 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                         }}
                       />
                       <button
+                        type='button'
+                        className='mysql-page__btn mysql-page__btn--primary'
+                        disabled={activeConnection === null || activeForm.host.trim() === '' || activeForm.database.trim() === ''}
+                        title='输入 CREATE TABLE SQL 创建数据表'
+                        onClick={() => {
+                          setCreateTableSql('')
+                          setCreateTableError('')
+                          setCreateTableOpen(true)
+                        }}
+                      >
+                        创建表
+                      </button>
+                      <button
                         type="button"
                         className="mysql-page__btn"
                         disabled={activeConnection === null || activeConnection.tablesLoading || activeForm.host.trim() === '' || activeForm.database.trim() === ''}
@@ -1340,6 +1487,44 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
         than window.confirm: same styling and theme as everything else, and it can name
         the connection and where it points before anything is lost.
       */}
+      {createTableOpen ? (
+        <div
+          className='mysql-page__create-overlay'
+          onMouseDown={(event) => { if (event.target === event.currentTarget && !createTableBusy) setCreateTableOpen(false) }}
+          onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); if (!createTableBusy) setCreateTableOpen(false) } }}
+        >
+          <div className='mysql-page__create-dialog' role='dialog' aria-modal='true' aria-labelledby='mysql-create-table-title'>
+            <div className='mysql-page__create-header'>
+              <div>
+                <h3 id='mysql-create-table-title'>创建数据表</h3>
+                <p>在当前数据库中执行 CREATE TABLE 语句</p>
+              </div>
+              <button type='button' className='mysql-page__create-close' aria-label='关闭' disabled={createTableBusy} onClick={() => setCreateTableOpen(false)}>×</button>
+            </div>
+            <div className='mysql-page__create-body'>
+              <div className='mysql-page__create-target'>目标数据库：<strong>{activeForm?.database ?? ''}</strong></div>
+              <label htmlFor='mysql-create-table-sql' className='mysql-page__create-label'>建表 SQL</label>
+              <textarea
+                id='mysql-create-table-sql'
+                className='mysql-page__create-sql'
+                value={createTableSql}
+                onChange={(event) => { setCreateTableSql(event.currentTarget.value); if (createTableError) setCreateTableError('') }}
+                placeholder={'CREATE TABLE users (\n  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n  name VARCHAR(100) NOT NULL\n);'}
+                rows={10}
+                autoFocus
+                spellCheck={false}
+                disabled={createTableBusy}
+              />
+              <p className='mysql-page__create-tip'>仅支持单条 CREATE TABLE 语句，成功后自动刷新数据表列表。</p>
+              {createTableError ? <p className='mysql-page__create-error' role='alert'>{createTableError}</p> : null}
+            </div>
+            <div className='mysql-page__create-footer'>
+              <button type='button' className='mysql-page__btn' disabled={createTableBusy} onClick={() => setCreateTableOpen(false)}>取消</button>
+              <button type='button' className='mysql-page__btn mysql-page__btn--primary' disabled={createTableBusy || createTableSql.trim() === ''} onClick={() => void submitCreateTable()}>{createTableBusy ? '创建中…' : '执行并创建'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <ConfirmDialog
         open={pendingDelete !== null}
         danger

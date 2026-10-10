@@ -60,6 +60,7 @@ import type {
   MysqlTableData,
   MysqlRowKey,
   MysqlRowDeleteResult,
+  MysqlSqlExecutionResult,
   MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
@@ -1266,6 +1267,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.mysqlConnListTables, (event, draft: MysqlConnectionDraft, database: string): Promise<MysqlTableList> => runtimeForEvent(event)?.listMysqlTables(draft, database) ?? Promise.resolve({ ok: false, tables: [], message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnQueryTable, (event, draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData> => runtimeForEvent(event)?.queryMysqlTable(draft, database, table) ?? Promise.resolve({ ok: false, sql: '', columns: [], columnComments: [], columnCommentsMessage: '', rows: [], rowKeys: [], rowDeleteMessage: '', truncated: false, message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnDeleteRow, (event, draft: MysqlConnectionDraft, database: string, table: string, key: MysqlRowKey): Promise<MysqlRowDeleteResult> => runtimeForEvent(event)?.deleteMysqlTableRow(draft, database, table, key) ?? Promise.resolve({ ok: false, affectedRows: 0, message: '当前会话不可用。' }))
+  ipcMain.handle(IpcChannels.mysqlConnExecuteSql, (event, draft: MysqlConnectionDraft, database: string, sql: string): Promise<MysqlSqlExecutionResult> => runtimeForEvent(event)?.executeMysqlSql(draft, database, sql) ?? Promise.resolve({ ok: false, columns: [], rows: [], affectedRows: null, truncated: false, message: '当前会话不可用。' }))
+  ipcMain.handle(IpcChannels.mysqlConnCreateTable, (event, draft: MysqlConnectionDraft, database: string, sql: string): Promise<{ ok: boolean; message: string }> => runtimeForEvent(event)?.createMysqlTable(draft, database, sql) ?? Promise.resolve({ ok: false, message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnTableDdl, (event, draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl> => runtimeForEvent(event)?.getMysqlTableDdl(draft, database, table) ?? Promise.resolve({ ok: false, ddl: '', message: '当前会话不可用。' }))
   ipcMain.handle(IpcChannels.mysqlConnRemove, (event, id: string): MysqlConnectionsState => runtimeForEvent(event)?.removeMysqlConnection(id) ?? EMPTY_MYSQL)
 
