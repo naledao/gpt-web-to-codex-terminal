@@ -143,6 +143,8 @@ export const IpcChannels = {
   mysqlConnListTables: 'mysql-conn:list-tables',
   mysqlConnQueryTable: 'mysql-conn:query-table',
   mysqlConnDeleteRow: 'mysql-conn:delete-row',
+  mysqlConnExecuteSql: 'mysql-conn:execute-sql',
+  mysqlConnCreateTable: 'mysql-conn:create-table',
   mysqlConnTableDdl: 'mysql-conn:table-ddl',
   mysqlConnChanged: 'mysql-conn:changed',
   redisConnList: 'redis-conn:list',
@@ -1747,6 +1749,16 @@ export interface MysqlTableData {
   truncated: boolean
   message: string
 }
+/** Result of a single SQL statement executed in the selected MySQL database. */
+export interface MysqlSqlExecutionResult {
+  ok: boolean
+  columns: string[]
+  rows: Array<Array<string | null>>
+  affectedRows: number | null
+  truncated: boolean
+  message: string
+}
+
 /** The server's CREATE statement for one table or view. */
 export interface MysqlTableDdl {
   ok: boolean
@@ -2135,6 +2147,10 @@ export interface AppApi {
   queryMysqlTable(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableData>
   /** Delete exactly one record by its complete primary key. */
   deleteMysqlTableRow(draft: MysqlConnectionDraft, database: string, table: string, key: MysqlRowKey): Promise<MysqlRowDeleteResult>
+  /** Execute SQL from a table tab. */
+  executeMysqlSql(draft: MysqlConnectionDraft, database: string, sql: string): Promise<MysqlSqlExecutionResult>
+  /** Execute one CREATE TABLE statement. */
+  createMysqlTable(draft: MysqlConnectionDraft, database: string, sql: string): Promise<{ ok: boolean; message: string }>
   /** Read the CREATE statement without changing the database. */
   getMysqlTableDdl(draft: MysqlConnectionDraft, database: string, table: string): Promise<MysqlTableDdl>
   onMysqlConnectionChanged(listener: (state: MysqlConnectionsState) => void): () => void

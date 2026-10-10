@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { AppTheme, GitLogEntry, GitLogResult } from '../../../shared/types'
 import GitFilesView from './GitFilesView'
@@ -131,8 +131,8 @@ export default function GitDialog({ open, cwd, theme, onClose }: GitDialogProps)
       .then((result) => {
         if (!cancelled) setLog(result)
       })
-      .catch(() => {
-        if (!cancelled) setLog({ ...EMPTY, error: '读取 Git 仓库失败' })
+      .catch((error: unknown) => {
+        if (!cancelled) setLog({ ...EMPTY, error: error instanceof Error ? error.message : '读取 Git 仓库失败' })
       })
       .finally(() => {
         if (!cancelled) setLoading(false)

@@ -143,3 +143,59 @@
   background: #352027;
   border-color: #aa5965;
 }
+.mysql-page__grid-table .mysql-page__cell-value {
+  display: block;
+  width: 100%;
+  max-width: 296px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: zoom-in;
+}
+.mysql-page__grid-table .mysql-page__cell-value:hover { color: #087eac; text-decoration: underline dotted; text-underline-offset: 3px; }
+.mysql-page__grid-table .mysql-page__cell-value:focus-visible { outline: 2px solid #087eac; outline-offset: 2px; border-radius: 2px; }
+.mysql-page__cell-backdrop { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8, 17, 32, .60); }
+.mysql-page__cell-dialog { display: flex; flex-direction: column; width: min(900px, 100%); max-height: min(850px, 90vh); min-height: 180px; overflow: hidden; border: 1px solid #dce4ed; border-radius: 14px; background: #fff; color: #1f2733; box-shadow: 0 24px 80px rgba(0, 0, 0, .25); }
+.mysql-page__cell-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 22px; border-bottom: 1px solid #e6e9f0; }
+.mysql-page__cell-dialog-heading { min-width: 0; }
+.mysql-page__cell-dialog-kicker { display: block; margin-bottom: 4px; color: #758196; font-size: 12px; }
+.mysql-page__cell-dialog-heading h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+.mysql-page__cell-dialog-close { flex: none; width: 32px; height: 32px; border: 0; border-radius: 8px; background: #f1f4f8; color: inherit; font-size: 22px; cursor: pointer; }
+.mysql-page__cell-dialog-close:hover { background: #e4eaf2; }
+.mysql-page__cell-dialog-close:focus-visible { outline: 2px solid #087eac; outline-offset: 2px; }
+.mysql-page__cell-dialog-content { flex: 1; min-height: 0; margin: 0; padding: 22px; overflow: auto; font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.mysql-page__cell-dialog-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 13px 22px; border-top: 1px solid #e6e9f0; color: #758196; font-size: 12px; }
+.mysql-page--dark .mysql-page__cell-dialog { background: #171f2b; border-color: #364253; color: #e6ecf6; }
+.mysql-page--dark .mysql-page__cell-dialog-head, .mysql-page--dark .mysql-page__cell-dialog-footer { border-color: #364253; }
+.mysql-page--dark .mysql-page__cell-dialog-close { background: #283446; }
+.mysql-page--dark .mysql-page__cell-dialog-close:hover { background: #37475e; }
+.mysql-page--dark .mysql-page__grid-table .mysql-page__cell-value:hover { color: #62caee; }
+@media (max-width: 600px) {
+  .mysql-page__cell-backdrop { padding: 12px; }
+  .mysql-page__cell-dialog { max-height: 94vh; }
+  .mysql-page__cell-dialog-head, .mysql-page__cell-dialog-content, .mysql-page__cell-dialog-footer { padding: 14px; }
+}
+.mysql-page__selection-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 8px 0 12px; padding: 10px 12px; border: 1px solid #e4e9f0; border-radius: 9px; background: #f8fafc; }
+.mysql-page__selection-status { color: #586579; font-size: 13px; }
+.mysql-page__bulk-delete { padding: 6px 13px; border: 1px solid #d76060; border-radius: 7px; background: #fff; color: #b92f38; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s; }
+.mysql-page__bulk-delete:hover:not(:disabled) { background: #fff0f0; border-color: #b92f38; }
+.mysql-page__bulk-delete:disabled { opacity: .45; cursor: default; }
+.mysql-page__grid-table .mysql-page__row-select { position: sticky; left: 0; z-index: 1; width: 44px; min-width: 44px; padding: 7px 10px; text-align: center; background: #fff; box-shadow: 1px 0 #e6e9f0; }
+.mysql-page__grid-table th.mysql-page__row-select { z-index: 2; background: #f6f8fb; }
+.mysql-page__row-select input { display: inline-block; width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: #1386a9; cursor: pointer; }
+.mysql-page__row-select input:disabled { cursor: not-allowed; opacity: .4; }
+.mysql-page__grid-table .mysql-page__selected-row td { background: #eaf6fb; }
+.mysql-page__grid-table .mysql-page__selected-row td.mysql-page__row-actions { background: #eaf6fb; }
+.mysql-page--dark .mysql-page__selection-bar { border-color: #344053; background: #1b2532; }
+.mysql-page--dark .mysql-page__selection-status { color: #b9c5d6; }
+.mysql-page--dark .mysql-page__bulk-delete { background: #291d25; border-color: #82505a; color: #ffb4b4; }
+.mysql-page--dark .mysql-page__bulk-delete:hover:not(:disabled) { background: #40252b; }
+.mysql-page--dark .mysql-page__grid-table td.mysql-page__row-select { background: #10151d; box-shadow: 1px 0 #232b38; }
+.mysql-page--dark .mysql-page__grid-table th.mysql-page__row-select { background: #161d28; box-shadow: 1px 0 #232b38; }
+.mysql-page--dark .mysql-page__grid-table .mysql-page__selected-row td { background: #193443; }

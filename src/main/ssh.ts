@@ -8,6 +8,7 @@ import type { Socket } from 'node:net'
 import { basename, posix } from 'node:path'
 import type { SshDownloadTask, SshFileEntry, SshState, SshUploadTask, TerminalLine } from '../shared/types'
 import { REMOTE_SHELL_COMMAND, RemoteShell } from './remote-shell'
+import type { GitBackend } from './git'
 
 /** Strips ANSI/VT and OSC sequences — there is no terminal emulator to render them. */
 const ANSI_RE = /\u001B(?:\][^\u0007]*(?:\u0007|\u001B\\)|[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
@@ -398,6 +399,74 @@ export class SshManager {
     return this.getState()
   }
 
+  /** Run toolbox Git on a separate channel of the existing SSH connection. */
+  gitBackend(): GitBackend {
+    const client = this.client
+    const hostId = this.state.hostId
+    if (!client || this.state.status !== 'connected' || !hostId) {
+      throw new Error('SSH 尚未连接，Git 不会回退到本机执行。')
+    }
+    const verify = (): void => {
+      if (this.client !== client || this.state.status !== 'connected' || this.state.hostId !== hostId) {
+        throw new Error('SSH 连接已经变化，远程 Git 操作已取消。')
+      }
+    }
+    return {
+      runGit: (cwd, args) => {
+        verify()
+        if (!cwd.startsWith('/')) return Promise.reject(new Error('SSH Git 工作目录无效。'))
+        const command = `GIT_OPTIONAL_LOCKS=0 GIT_PAGER=cat git -C ${posixQuote(cwd)} ${args.map(posixQuote).join(' ')}`
+        return new Promise<string>((resolve, reject) => {
+          let channel: ClientChannel | null = null
+          let finished = false
+          let bytes = 0
+          const chunks: Buffer[] = []
+          const errors: Buffer[] = []
+          const done = (error?: Error, exitCode?: number | null): void => {
+            if (finished) return
+            finished = true
+            clearTimeout(timer)
+            try { verify() } catch (connectionError) { reject(connectionError); return }
+            if (error) { reject(error); return }
+            if (exitCode !== 0) {
+              reject(new Error(Buffer.concat(errors).toString('utf8').trim() || `远程 Git 退出码：${exitCode ?? '未知'}`))
+              return
+            }
+            resolve(Buffer.concat(chunks).toString('utf8'))
+          }
+          const timer = setTimeout(() => {
+            try { channel?.close() } catch { /* channel already gone */ }
+            done(new Error('远程 Git 命令超过 60 秒。'))
+          }, 60000)
+          client.exec(command, (error, stream) => {
+            if (finished) { try { stream?.close() } catch { /* already gone */ }; return }
+            if (error || !stream) { done(error || new Error('无法打开远程 Git 通道。')); return }
+            channel = stream
+            const collect = (chunk: Buffer, target: Buffer[]): void => {
+              bytes += chunk.length
+              if (bytes > 32 * 1024 * 1024) {
+                try { stream.close() } catch { /* already gone */ }
+                done(new Error('远程 Git 输出超过 32 MiB。'))
+              } else target.push(chunk)
+            }
+            stream.on('data', (chunk: Buffer) => collect(chunk, chunks))
+            stream.stderr.on('data', (chunk: Buffer) => collect(chunk, errors))
+            stream.once('error', (streamError: Error) => done(streamError))
+            stream.once('close', (code: number | null) => done(undefined, code))
+          })
+        })
+      },
+      readWorkingFile: async (cwd, path) => {
+        verify()
+        if (!cwd.startsWith('/') || posix.isAbsolute(path) || path.split('/').includes('..')) {
+          throw new Error('远程 Git 文件路径无效。')
+        }
+        const bytes = await this.readFileForModel(posix.join(cwd, path), hostId, 4 * 1024 * 1024, new AbortController().signal)
+        verify()
+        return bytes.toString('utf8')
+      }
+    }
+  }
   /** List one remote directory over SFTP for the file manager. */
   async readFileForModel(remotePath: string, expectedHostId: string, maxBytes: number, signal: AbortSignal): Promise<Buffer> {
     signal.throwIfAborted()

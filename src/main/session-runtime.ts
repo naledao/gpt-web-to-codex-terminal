@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createConnection } from 'mysql2/promise'
+import { formatMysqlCell } from './mysql-field-value'
 import type { Connection } from 'mysql2/promise'
 import { BrowserWindow, Notification, safeStorage } from 'electron'
 import {
@@ -32,6 +33,7 @@ import type {
   MysqlTableData,
   MysqlRowKey,
   MysqlRowDeleteResult,
+  MysqlSqlExecutionResult,
   MysqlTableDdl,
   MysqlTableList,
   MysqlSaveResult,
@@ -177,6 +179,7 @@ export interface SessionRuntimeOptions {
   onSummaryChanged: () => void
   onTransfersChanged: () => void
   onTerminalNotesSaved: (owner: TerminalNotesOwner) => void
+  onTaskCompleted: (id: string) => void
   onActivate: (id: string) => void
   /**
    * The ACTIVE platform's view loaded its page for the first time.
@@ -1350,13 +1353,7 @@ export class SessionRuntime {
       }
       const columnComments = columns.map((column) => comments.get(column) ?? '')
       const cells = page.map((row) =>
-        columns.map((column) => {
-          const value = row[column]
-          if (value === null || value === undefined) return null
-          if (Buffer.isBuffer(value)) return '<' + value.length + ' bytes>'
-          if (typeof value === 'object') return JSON.stringify(value)
-          return String(value)
-        })
+        columns.map((column, columnIndex) => formatMysqlCell(row[column], fields?.[columnIndex]))
       )
       return { ok: true, sql: executedSql, columns, columnComments, columnCommentsMessage, rows: cells, rowKeys, rowDeleteMessage, truncated, message: '' }
     } catch (error) {
@@ -1382,6 +1379,82 @@ export class SessionRuntime {
       return await deleteMysqlRowWithConnection(connection, db, target, key)
     } catch (error) {
       return { ok: false, affectedRows: 0, message: `删除操作失败，请刷新表数据确认当前状态：${mysqlErrorMessage(error)}` }
+    } finally {
+      if (connection) await connection.end().catch(() => undefined)
+    }
+  }
+
+  /** Run one SQL statement against the selected database and return a bounded result preview. */
+  async executeMysqlSql(draft: MysqlConnectionDraft, database: string, sql: string): Promise<MysqlSqlExecutionResult> {
+    const empty = { columns: [], rows: [], affectedRows: null, truncated: false }
+    const host = String(draft?.host ?? '').trim()
+    const db = String(database ?? '').trim()
+    const statement = String(sql ?? '').trim()
+    if (!host) return { ...empty, ok: false, message: '请先填写主机地址。' }
+    if (!db) return { ...empty, ok: false, message: '请先选择数据库。' }
+    if (!statement) return { ...empty, ok: false, message: '请输入要执行的 SQL。' }
+    if (statement.length > 100000) return { ...empty, ok: false, message: 'SQL 语句超过 100000 字符的长度限制。' }
+    const rawPort = Number(draft?.port)
+    const port = Number.isFinite(rawPort) && rawPort > 0 ? Math.trunc(rawPort) : 3306
+    let connection: Connection | null = null
+    try {
+      connection = await createConnection({
+        host,
+        port,
+        user: String(draft?.username ?? '').trim(),
+        password: this.mysqlPasswordFor(draft),
+        database: db,
+        dateStrings: true,
+        supportBigNumbers: true,
+        bigNumberStrings: true,
+        connectTimeout: 8000,
+        multipleStatements: false
+      })
+      const [result, fields] = await connection.query({ sql: statement, timeout: 15000 })
+      if (!Array.isArray(result)) {
+        const affectedRows = typeof (result as { affectedRows?: unknown }).affectedRows === 'number'
+          ? (result as { affectedRows: number }).affectedRows : 0
+        return { ...empty, ok: true, affectedRows, message: '' }
+      }
+      const columns = (fields ?? []).map((field) => field.name)
+      const limit = 200
+      const truncated = result.length > limit
+      const rows = (result as Array<Record<string, unknown>>).slice(0, limit).map((record) =>
+        columns.map((column, columnIndex) => formatMysqlCell(record[column], fields?.[columnIndex]))
+      )
+      return { ok: true, columns, rows, affectedRows: null, truncated, message: '' }
+    } catch (error) {
+      return { ...empty, ok: false, message: mysqlErrorMessage(error) }
+    } finally {
+      if (connection) await connection.end().catch(() => undefined)
+    }
+  }
+
+  /** Execute one CREATE TABLE statement on the selected MySQL database. */
+  async createMysqlTable(draft: MysqlConnectionDraft, database: string, sql: string): Promise<{ ok: boolean; message: string }> {
+    const host = String(draft?.host ?? '').trim()
+    const db = String(database ?? '').trim()
+    const statement = String(sql ?? '').trim()
+    if (host === '') return { ok: false, message: '请先填写主机地址。' }
+    if (db === '') return { ok: false, message: '请先选择默认数据库。' }
+    if (!/^CREATE\s+TABLE\b/i.test(statement)) return { ok: false, message: '这里只能执行 CREATE TABLE 建表语句。' }
+    const rawPort = Number(draft?.port)
+    const port = Number.isFinite(rawPort) && rawPort > 0 ? Math.trunc(rawPort) : 3306
+    let connection: Connection | null = null
+    try {
+      connection = await createConnection({
+        host,
+        port,
+        user: String(draft?.username ?? '').trim(),
+        password: this.mysqlPasswordFor(draft),
+        database: db,
+        connectTimeout: 8000,
+        multipleStatements: false
+      })
+      await connection.query({ sql: statement, timeout: 15000 })
+      return { ok: true, message: '' }
+    } catch (error) {
+      return { ok: false, message: mysqlErrorMessage(error) }
     } finally {
       if (connection) await connection.end().catch(() => undefined)
     }
@@ -1706,6 +1779,7 @@ export class SessionRuntime {
 
   private notifyTaskCompleted(body: string): void {
     const window = this.window
+    this.options.onTaskCompleted(this.id)
     if (this.active && window && !window.isDestroyed() && window.isFocused()) return
     if (!Notification.isSupported()) return
     const notification = new Notification({ title: 'GPT Web to Codex Terminal', body })

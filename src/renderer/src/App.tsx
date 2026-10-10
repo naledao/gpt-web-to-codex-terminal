@@ -390,7 +390,7 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
   const [durationNow, setDurationNow] = useState(() => Date.now())
   const [address, setAddress] = useState('')
   const [editing, setEditing] = useState(false)
-  const [terminalWidth, setTerminalWidth] = useState(() => readStoredNumber(STORAGE_TERMINAL_WIDTH, TERMINAL_DEFAULT_WIDTH))
+  const [terminalWidth, setTerminalWidth] = useState(() => readStoredNumber(`${STORAGE_TERMINAL_WIDTH}.${sessionId}`, readStoredNumber(STORAGE_TERMINAL_WIDTH, TERMINAL_DEFAULT_WIDTH)))
   const [terminalCollapsed, setTerminalCollapsed] = useState(() => readStoredBool(STORAGE_TERMINAL_COLLAPSED, false))
   const [panelWidth, setPanelWidth] = useState(() => readStoredNumber(STORAGE_PANEL_WIDTH, PANEL_DEFAULT_WIDTH))
   const [panelCollapsed, setPanelCollapsed] = useState(() => readStoredBool(STORAGE_PANEL_COLLAPSED, false))
@@ -562,14 +562,14 @@ export default function App({ sessionId, sessionKind, initialSshDialogOpen = fal
   // by session id), so without this the terminal width would snap back to default.
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_TERMINAL_WIDTH, String(terminalWidth))
+      window.localStorage.setItem(`${STORAGE_TERMINAL_WIDTH}.${sessionId}`, String(terminalWidth))
       window.localStorage.setItem(STORAGE_TERMINAL_COLLAPSED, terminalCollapsed ? '1' : '0')
       window.localStorage.setItem(STORAGE_PANEL_WIDTH, String(panelWidth))
       window.localStorage.setItem(STORAGE_PANEL_COLLAPSED, panelCollapsed ? '1' : '0')
     } catch {
       /* storage unavailable; the sizes just will not persist */
     }
-  }, [terminalWidth, terminalCollapsed, panelWidth, panelCollapsed])
+  }, [sessionId, terminalWidth, terminalCollapsed, panelWidth, panelCollapsed])
 
   const conversationId = embed.conversationId
   const transcriptScrollKey = conversationScrollKey(sessionId, platformId, conversationId)
@@ -2379,6 +2379,7 @@ ${conversation.url}`}
 
       <section ref={toolboxPaneRef} className={terminalCollapsed ? 'terminal-pane terminal-pane--collapsed' : 'terminal-pane'}>
         <div className={!terminalCollapsed && remoteTerminal ? `terminal-pane__head terminal-pane__head--${web2termActive ? 'web2term' : 'ssh'}` : 'terminal-pane__head'}>
+          <span className="terminal-pane__identity">
           <span className="panel__title">终端</span>
           <span
             className={
@@ -2398,7 +2399,6 @@ ${conversation.url}`}
             }
             title={terminal?.transport?.message}
           />
-          <span className="panel__spacer" />
           {terminalCollapsed ? null : (
             <span className="panel__delay">
               <input
@@ -2421,6 +2421,8 @@ ${conversation.url}`}
               <span className="panel__delay-unit">秒</span>
             </span>
           )}
+          </span>
+          {terminalCollapsed ? <span className="panel__spacer" /> : null}
           {terminalCollapsed ? null : (
             <button
               type="button"
@@ -3861,7 +3863,7 @@ ${record.command}`
       <MysqlDialog open={mysqlDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setMysqlDialogOpen(false)} />
       <RedisDialog open={redisDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setRedisDialogOpen(false)} />
       <NacosDialog open={nacosDialogOpen} theme={settings?.theme ?? 'light'} onClose={() => setNacosDialogOpen(false)} />
-      <GitDialog open={gitDialogOpen} cwd={terminal?.cwd ?? ""} theme={settings?.theme ?? "light"} onClose={() => setGitDialogOpen(false)} />
+      <GitDialog open={gitDialogOpen} cwd={ssh?.attached ? (ssh.ptyCwd || ssh.modelCwd) : (terminal?.cwd ?? "")} theme={settings?.theme ?? "light"} onClose={() => setGitDialogOpen(false)} />
     </div>
   )
 }

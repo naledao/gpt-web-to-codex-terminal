@@ -105,6 +105,15 @@ function runGit(cwd: string, args: string[]): Promise<string> {
   })
 }
 
+export interface GitBackend {
+  runGit(cwd: string, args: string[]): Promise<string>
+  readWorkingFile(cwd: string, path: string): Promise<string>
+}
+
+const LOCAL_GIT_BACKEND: GitBackend = {
+  runGit,
+  readWorkingFile: (cwd, path) => readFile(join(cwd, path.split('/').join(sep)), 'utf8')
+}
 /**
  * Git on Windows emits CRLF. Every consumer below splits on LF alone, so a
  * stray carriage return would end up glued to the end of each line and stop
@@ -186,10 +195,9 @@ function kindFromCode(code: string): GitChangeKind {
 }
 
 /** Count lines of an untracked file so its row can still show a size. */
-async function countUntracked(cwd: string, path: string): Promise<number> {
+async function countUntracked(cwd: string, path: string, backend: GitBackend): Promise<number> {
   try {
-    const full = path.split('/').join(sep)
-    const text = await readFile(join(cwd, full), 'utf8')
+    const text = await backend.readWorkingFile(cwd, path)
     if (!text) return 0
     const lines = toLf(text).split('\n')
     return lines.length - (lines[lines.length - 1] === '' ? 1 : 0)
@@ -198,7 +206,7 @@ async function countUntracked(cwd: string, path: string): Promise<number> {
   }
 }
 
-async function parseStatus(cwd: string, porcelain: string, numstat: string): Promise<GitFileChange[]> {
+async function parseStatus(cwd: string, porcelain: string, numstat: string, backend: GitBackend): Promise<GitFileChange[]> {
   const counts = parseNumstat(numstat)
   const files: GitFileChange[] = []
 
@@ -215,7 +223,7 @@ async function parseStatus(cwd: string, porcelain: string, numstat: string): Pro
 
     const kind = kindFromCode(code)
     const count = counts.get(path)
-    const additions = count ? count.additions : kind === 'untracked' ? await countUntracked(cwd, path) : 0
+    const additions = count ? count.additions : kind === 'untracked' ? await countUntracked(cwd, path, backend) : 0
     const deletions = count ? count.deletions : 0
 
     files.push({ path, oldPath, kind, code: code.trim(), additions, deletions })
@@ -311,17 +319,16 @@ function languageOf(path: string): string {
 }
 
 /** Read a file from the working tree, returning an empty string when missing. */
-async function readWorkingFile(cwd: string, path: string): Promise<string> {
+async function readWorkingFile(cwd: string, path: string, backend: GitBackend): Promise<string> {
   try {
-    const full = path.split('/').join(sep)
-    return await readFile(join(cwd, full), 'utf8')
+    return await backend.readWorkingFile(cwd, path)
   } catch {
     return ''
   }
 }
 
 /** Read the history, index and changed files of the repository containing `cwd`. */
-export async function readGitLog(cwd: string): Promise<GitLogResult> {
+export async function readGitLog(cwd: string, backend: GitBackend = LOCAL_GIT_BACKEND): Promise<GitLogResult> {
   const empty: GitLogResult = {
     isRepo: false,
     currentBranch: '',
@@ -332,7 +339,7 @@ export async function readGitLog(cwd: string): Promise<GitLogResult> {
   if (!cwd) return empty
 
   try {
-    const inside = await runGit(cwd, ['rev-parse', '--is-inside-work-tree'])
+    const inside = await backend.runGit(cwd, ['rev-parse', '--is-inside-work-tree'])
     if (inside.trim() !== 'true') return empty
   } catch {
     return empty
@@ -340,7 +347,7 @@ export async function readGitLog(cwd: string): Promise<GitLogResult> {
 
   let currentBranch = ''
   try {
-    currentBranch = (await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    currentBranch = (await backend.runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   } catch {
     /* unborn or detached HEAD */
   }
@@ -356,7 +363,7 @@ export async function readGitLog(cwd: string): Promise<GitLogResult> {
 
   try {
     const format = ['%H', '%P', '%an', '%ae', '%aI', '%cI', '%s', '%D'].join(FIELD) + RECORD
-    const out = await runGit(cwd, [
+    const out = await backend.runGit(cwd, [
       'log',
       '--all',
       '--date=iso-strict',
@@ -370,14 +377,14 @@ export async function readGitLog(cwd: string): Promise<GitLogResult> {
   }
 
   try {
-    const porcelain = await runGit(cwd, ['status', '--porcelain'])
+    const porcelain = await backend.runGit(cwd, ['status', '--porcelain'])
     let numstat = ''
     try {
-      numstat = await runGit(cwd, ['diff', 'HEAD', '--numstat'])
+      numstat = await backend.runGit(cwd, ['diff', 'HEAD', '--numstat'])
     } catch {
       /* an unborn HEAD has nothing to diff against */
     }
-    result.files = await parseStatus(cwd, porcelain, numstat)
+    result.files = await parseStatus(cwd, porcelain, numstat, backend)
     result.indexStatus = summarise(result.files)
   } catch {
     /* status is best-effort */
@@ -392,7 +399,7 @@ export async function readGitLog(cwd: string): Promise<GitLogResult> {
  * Both file revisions come back in full because the highlighter tokenises whole
  * files; the hunks then say which parts actually changed.
  */
-export async function readGitDiff(cwd: string, path: string): Promise<GitFileDiff> {
+export async function readGitDiff(cwd: string, path: string, backend: GitBackend = LOCAL_GIT_BACKEND): Promise<GitFileDiff> {
   const empty: GitFileDiff = {
     path,
     binary: false,
@@ -407,11 +414,11 @@ export async function readGitDiff(cwd: string, path: string): Promise<GitFileDif
   if (!cwd || !path) return empty
 
   const lang = languageOf(path)
-  const newContent = await readWorkingFile(cwd, path)
+  const newContent = await readWorkingFile(cwd, path, backend)
 
   let output = ''
   try {
-    output = await runGit(cwd, ['diff', 'HEAD', '--', path])
+    output = await backend.runGit(cwd, ['diff', 'HEAD', '--', path])
   } catch {
     return { ...empty, lang, newContent }
   }
@@ -452,7 +459,7 @@ export async function readGitDiff(cwd: string, path: string): Promise<GitFileDif
   // Recover the previous revision so the left pane can be tokenised too.
   let oldContent = ''
   try {
-    oldContent = await runGit(cwd, ['show', 'HEAD:' + path])
+    oldContent = await backend.runGit(cwd, ['show', 'HEAD:' + path])
   } catch {
     /* the file did not exist at HEAD */
   }

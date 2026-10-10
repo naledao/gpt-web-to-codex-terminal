@@ -1107,6 +1107,14 @@ body {
   flex-wrap: wrap;
 }
 
+.terminal-pane__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  white-space: nowrap;
+}
+
 .workspace:not(.workspace--manager) .terminal-pane__head .terminal__dot.terminal__dot--disconnected {
   background: var(--text-muted);
   box-shadow: none;
@@ -7398,6 +7406,14 @@ body {
 }
 
 /* Terminal pane - align to the sidebar control-panel palette */
+.workspace:not(.workspace--manager) .terminal-pane__head {
+  column-gap: 8px;
+}
+.workspace:not(.workspace--manager) .terminal-pane__head .panel__sync {
+  padding-inline: 9px;
+}
+
+
 .workspace:not(.workspace--manager) .terminal-pane {
   border-color: #dce4ef;
   border-radius: 14px;
@@ -14773,3 +14789,117 @@ body {
   background: currentColor;
   opacity: .7;
 }
+
+/* MySQL create-table SQL dialog */
+.mysql-page__create-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .52);
+  backdrop-filter: blur(3px);
+}
+.mysql-page__create-dialog {
+  width: min(640px, 100%);
+  max-height: min(760px, 90vh);
+  overflow-y: auto;
+  border: 1px solid #e1e7ef;
+  border-radius: 16px;
+  background: #fff;
+  color: #273244;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, .25);
+}
+.mysql-page__create-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid #edf0f4;
+}
+.mysql-page__create-header h3 { margin: 0; font-size: 18px; font-weight: 650; }
+.mysql-page__create-header p { margin: 6px 0 0; color: #788396; font-size: 12px; }
+.mysql-page__create-close {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #788396;
+  font-size: 24px;
+  cursor: pointer;
+}
+.mysql-page__create-close:hover:not(:disabled) { background: #f1f5f9; }
+.mysql-page__create-body { padding: 20px 24px; }
+.mysql-page__create-target {
+  margin-bottom: 18px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #eff8fa;
+  color: #54717d;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mysql-page__create-target strong { color: #00758f; }
+.mysql-page__create-label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+.mysql-page__create-sql {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 230px;
+  padding: 14px 16px;
+  resize: vertical;
+  border: 1px solid #d7dee9;
+  border-radius: 10px;
+  outline: none;
+  background: #fbfcfe;
+  color: #243246;
+  font: 13px/1.7 Consolas, 'Courier New', monospace;
+  tab-size: 2;
+}
+.mysql-page__create-sql:focus { border-color: #0095ac; box-shadow: 0 0 0 3px rgba(0, 149, 172, .13); }
+.mysql-page__create-tip { margin: 10px 0 0; color: #7c8799; font-size: 12px; }
+.mysql-page__create-error { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: #fff0f0; color: #c53333; font-size: 12px; overflow-wrap: anywhere; }
+.mysql-page__create-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px 20px; border-top: 1px solid #edf0f4; }
+.workspace[data-theme='dark'] .mysql-page__create-dialog { background: #202734; border-color: #384455; color: #edf3fa; }
+.workspace[data-theme='dark'] .mysql-page__create-header, .workspace[data-theme='dark'] .mysql-page__create-footer { border-color: #384455; }
+.workspace[data-theme='dark'] .mysql-page__create-header p, .workspace[data-theme='dark'] .mysql-page__create-tip { color: #9caabd; }
+.workspace[data-theme='dark'] .mysql-page__create-target { background: #163540; color: #a5bcca; }
+.workspace[data-theme='dark'] .mysql-page__create-target strong { color: #65d8ed; }
+.workspace[data-theme='dark'] .mysql-page__create-sql { background: #151d29; border-color: #405064; color: #e3ecf7; }
+.workspace[data-theme='dark'] .mysql-page__create-close { color: #bac6d6; }
+.workspace[data-theme='dark'] .mysql-page__create-close:hover:not(:disabled) { background: #364154; }
+.workspace[data-theme='dark'] .mysql-page__create-error { background: #49262b; color: #ffb5b5; }
+@media (max-width: 600px) {
+  .mysql-page__create-overlay { padding: 12px; }
+  .mysql-page__create-header { padding: 18px 16px 14px; }
+  .mysql-page__create-body { padding: 16px; }
+  .mysql-page__create-footer { padding: 14px 16px; }
+}
+/* Table SQL execution panel */
+.mysql-page__sql-panel { margin: 16px 0 18px; padding: 18px; border: 1px solid #dce5ee; border-radius: 14px; background: #f8fafc; }
+.mysql-page__sql-panel-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.mysql-page__sql-panel-head > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.mysql-page__sql-panel-head strong { font-size: 14px; color: #273549; }
+.mysql-page__sql-panel-head span, .mysql-page__sql-shortcut { font-size: 12px; color: #758399; }
+.mysql-page__sql-editor { display: block; box-sizing: border-box; width: 100%; min-height: 144px; padding: 13px 15px; resize: vertical; border: 1px solid #cfd9e5; border-radius: 10px; outline: none; background: #fff; color: #243246; font: 13px/1.7 Consolas, 'Courier New', monospace; tab-size: 2; }
+.mysql-page__sql-editor:focus { border-color: #0095ac; box-shadow: 0 0 0 3px rgba(0,149,172,.12); }
+.mysql-page__sql-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.mysql-page__sql-actions > span { color: #758399; font-size: 12px; }
+.mysql-page__sql-output { margin-top: 16px; border-top: 1px solid #dce5ee; padding-top: 12px; }
+.mysql-page__sql-status { margin: 0 0 10px; color: #08765c; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.mysql-page__sql-status--error { color: #c33a3a; }
+.mysql-page__sql-result-scroll { max-height: 290px; overflow: auto; border: 1px solid #dce5ee; border-radius: 9px; background: #fff; }
+.mysql-page__sql-notice { margin: 10px 0 0; color: #758399; font-size: 12px; }
+.workspace[data-theme='dark'] .mysql-page__sql-panel { background: #1c2633; border-color: #39495b; }
+.workspace[data-theme='dark'] .mysql-page__sql-panel-head strong { color: #edf3fb; }
+.workspace[data-theme='dark'] .mysql-page__sql-panel-head span, .workspace[data-theme='dark'] .mysql-page__sql-shortcut, .workspace[data-theme='dark'] .mysql-page__sql-actions > span, .workspace[data-theme='dark'] .mysql-page__sql-notice { color: #9dadbf; }
+.workspace[data-theme='dark'] .mysql-page__sql-editor { background: #131c29; border-color: #405165; color: #edf3fb; }
+.workspace[data-theme='dark'] .mysql-page__sql-output { border-color: #39495b; }
+.workspace[data-theme='dark'] .mysql-page__sql-result-scroll { background: #202a37; border-color: #39495b; }
+.workspace[data-theme='dark'] .mysql-page__sql-status { color: #69d6b0; }
+.workspace[data-theme='dark'] .mysql-page__sql-status--error { color: #ffa7a7; }
+@media (max-width: 600px) { .mysql-page__sql-panel { padding: 12px; } .mysql-page__sql-actions .mysql-page__btn { width: 100%; } }
