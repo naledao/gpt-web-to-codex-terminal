@@ -110,8 +110,17 @@ jobs:
       - name: Run macOS terminal regressions
         run: npm run test:mac
 
-      - name: Build unsigned Apple Silicon DMG
+      - name: Build ad-hoc signed Apple Silicon DMG
         run: npm run dist:mac
+
+      - name: Check macOS package integrity
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          app_path="release/mac-arm64/GPT Web to Codex Terminal.app"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign --display --verbose=4 "$app_path"
+          hdiutil verify "release/GPT-Web-to-Codex-Terminal-Setup-${VERSION}.dmg"
 
       - name: Prepare stable macOS download alias
         env:
@@ -162,6 +171,7 @@ jobs:
           git push origin "$tag"
           gh release create "$tag" \
             --title "$title" \
+            --notes-file build/macos-installation.md \
             --generate-notes \
             release-assets/*
 

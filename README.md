@@ -6,6 +6,8 @@
 
 GPT Web to Codex Terminal 是一个桌面工作区：把 ChatGPT、DeepSeek、Claude 或 Gemini 的对话，本机、SSH 或 Web2Term 设备终端，以及 Git、数据库和服务控制台工具放在同一个 Electron 窗口里。模型负责理解目标和生成命令，应用负责在选定的机器上执行命令并把结果回传到当前对话。
 
+macOS 安装包适用于 Apple Silicon，使用 ad-hoc 签名且未经 Apple 公证；首次打开遇到系统拦截时，请参阅 [macOS 安装说明](build/macos-installation.md)。
+
 ### 界面预览
 
 ![GPT Web to Codex Terminal 工作区](docs/screenshots/workspace.png)
@@ -130,6 +132,8 @@ MIT
 ## English
 
 GPT Web to Codex Terminal is a desktop workspace that keeps a ChatGPT, DeepSeek, Claude, or Gemini conversation, a local, SSH, or Web2Term device terminal, and Git, database, and service-console tools in one Electron window. The model interprets the goal and proposes commands; the app runs them on the selected machine and returns the exit code, output, and status to the conversation.
+
+The macOS installer supports Apple Silicon and is ad-hoc signed without Apple notarization. If macOS blocks the first launch, see the [macOS installation guide](build/macos-installation.md).
 
 ### Interface preview
 

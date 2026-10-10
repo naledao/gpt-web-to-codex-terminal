@@ -43,9 +43,14 @@ nsis:
   createStartMenuShortcut: true
 
 mac:
-  # This project intentionally ships unsigned macOS builds and does not use
-  # Apple Developer credentials. Keep signing disabled explicitly.
-  identity: null
+  # Re-sign the final bundle, including helpers and frameworks, without an
+  # Apple Developer certificate. null would skip signing after packaging.
+  # Ad-hoc signing does not provide Gatekeeper trust or Apple notarization.
+  identity: '-'
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: false
   target:
     - target: dmg
       arch:
