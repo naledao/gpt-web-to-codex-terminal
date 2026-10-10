@@ -1,4 +1,4 @@
-﻿appId: com.example.gptweb2codexterminal
+appId: com.example.gptweb2codexterminal
 productName: GPT Web to Codex Terminal
 
 # Pin the artifact name so the file on disk, the path recorded in latest.yml,
@@ -43,8 +43,13 @@ nsis:
   createStartMenuShortcut: true
 
 mac:
+  # This project intentionally ships unsigned macOS builds and does not use
+  # Apple Developer credentials. Keep signing disabled explicitly.
+  identity: null
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - arm64
   category: public.app-category.developer-tools
 
 linux:

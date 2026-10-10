@@ -1,0 +1,178 @@
+name: Build and Release Desktop
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-main
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Bump patch version
+        id: version
+        run: |
+          npm version patch --no-git-tag-version
+          version="$(node -p "require('./package.json').version")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to v${version} [skip ci]"
+          git push origin HEAD:main
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    needs: prepare-release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.commit }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Prepare stable Windows download alias
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          Copy-Item `
+            "release/GPT-Web-to-Codex-Terminal-Setup-$env:VERSION.exe" `
+            "release/GPT-Web-to-Codex-Terminal-Setup.exe"
+
+      - name: Upload Windows release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          if-no-files-found: error
+          path: |
+            release/GPT-Web-to-Codex-Terminal-Setup-${{ needs.prepare-release.outputs.version }}.exe
+            release/GPT-Web-to-Codex-Terminal-Setup-${{ needs.prepare-release.outputs.version }}.exe.blockmap
+            release/GPT-Web-to-Codex-Terminal-Setup.exe
+            release/latest.yml
+
+  build-macos:
+    needs: prepare-release
+    runs-on: macos-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.commit }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run macOS terminal regressions
+        run: npm run test:mac
+
+      - name: Build unsigned Apple Silicon DMG
+        run: npm run dist:mac
+
+      - name: Prepare stable macOS download alias
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: cp "release/GPT-Web-to-Codex-Terminal-Setup-${VERSION}.dmg" "release/GPT-Web-to-Codex-Terminal.dmg"
+
+      - name: Upload macOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-assets
+          if-no-files-found: error
+          path: |
+            release/GPT-Web-to-Codex-Terminal-Setup-${{ needs.prepare-release.outputs.version }}.dmg
+            release/GPT-Web-to-Codex-Terminal-Setup-${{ needs.prepare-release.outputs.version }}.dmg.blockmap
+            release/GPT-Web-to-Codex-Terminal.dmg
+
+  publish-release:
+    needs:
+      - prepare-release
+      - build-windows
+      - build-macos
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.commit }}
+          fetch-depth: 0
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-release-assets'
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          COMMIT: ${{ needs.prepare-release.outputs.commit }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          tag="v${VERSION}"
+          title="GPT Web to Codex Terminal v${VERSION} (build ${RUN_NUMBER})"
+          git tag "$tag" "$COMMIT"
+          git push origin "$tag"
+          gh release create "$tag" \
+            --title "$title" \
+            --generate-notes \
+            release-assets/*
+
+      - name: Keep only latest 3 releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' |
+          while IFS= read -r old_tag; do
+            [ -n "$old_tag" ] || continue
+            echo "Deleting old release $old_tag"
+            gh release delete "$old_tag" --yes
+          done
