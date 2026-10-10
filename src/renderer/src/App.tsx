@@ -3585,7 +3585,7 @@ ${record.command}`
                   })}
 
                   <div className="settings-proxy-row settings-proxy-row--with-hint">
-                    <label className="settings-proxy-row__label">SSH 代理 <span className="settings-help">?</span><small>留空 = 直连</small></label>
+                    <label className="settings-proxy-row__label">SSH 代理 <span className="settings-help">?</span></label>
                     <input className="address__input settings-input" value={sshProxyDraft} spellCheck={false} placeholder="http://127.0.0.1:7897" onChange={(event) => setSshProxyDraft(event.target.value)} />
                     <span className={`settings-state ${sshProxyDraft.trim() ? 'settings-state--ok' : ''}`}><i />{sshProxyDraft.trim() ? '已配置' : '未配置'}</span>
                     <button type="button" className="settings-copy" aria-label="复制 SSH 代理" disabled={!sshProxyDraft.trim()} onClick={() => void navigator.clipboard.writeText(sshProxyDraft)}>⧉</button>
