@@ -34,7 +34,7 @@ Users work inside a desktop workspace with sessions, embedded ChatGPT / DeepSeek
 - Project file browsing, Git views, prompt tools, settings, diagnostics, and update checks are part of the desktop product.
 - The marketing surface should explain the product without claiming unverified benchmarks, customers, pricing, or security guarantees.
 - The current repository builds with `npm run build`; the existing Electron product must remain intact.
-- Current distribution is Windows only; the public download source is the repository's latest GitHub Release.
+- Current desktop installers support Windows x64 and macOS Apple Silicon (arm64); the public download source is the repository's latest GitHub Release. The macOS DMG is ad-hoc signed without Developer ID signing or Apple notarization, and updates use manual DMG replacement. No Intel Mac installer is currently published.
 
 ## Brand Commitments
 

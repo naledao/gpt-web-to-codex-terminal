@@ -6,7 +6,29 @@
 
 GPT Web to Codex Terminal 是一个桌面工作区：把 ChatGPT、DeepSeek、Claude 或 Gemini 的对话，本机、SSH 或 Web2Term 设备终端，以及 Git、数据库和服务控制台工具放在同一个 Electron 窗口里。模型负责理解目标和生成命令，应用负责在选定的机器上执行命令并把结果回传到当前对话。
 
-macOS 安装包适用于 Apple Silicon，使用 ad-hoc 签名且未经 Apple 公证；首次打开遇到系统拦截时，请参阅 [macOS 安装说明](build/macos-installation.md)。
+支持 Windows 本机 PowerShell 和 macOS 本机 zsh，也可通过 SSH 或 Web2Term 连接远程机器。安装包可从 [GitHub Releases](https://github.com/naledao/gpt-web-to-codex-terminal/releases/latest) 下载。
+
+### macOS 支持与安装
+
+| 项目 | 当前支持 |
+| --- | --- |
+| 安装包 | Apple Silicon（M 系列芯片、arm64）DMG；当前发布流程未提供 Intel Mac 安装包。 |
+| 本机终端 | 使用系统自带的 `/bin/zsh`，以持久的登录 Shell 执行命令；当前目录、变量和函数在同一终端会话内保留。 |
+| 环境与提示词 | 自动读取 macOS 版本、架构和 Shell 信息，生成适用于 macOS / zsh 的终端提示词，并提示模型使用 BSD 工具参数、先检查 Homebrew 是否可用。 |
+| 远程与工具箱 | 可使用 SSH、Web2Term、Git、MySQL、Redis 和 Nacos；数据库及控制台连接从运行应用的 Mac 发起。 |
+| 更新 | 应用内检查 GitHub Release；点击下载会打开浏览器，下载 DMG 后手动覆盖安装。 |
+
+安装步骤：
+
+1. 下载 [Apple Silicon DMG](https://github.com/naledao/gpt-web-to-codex-terminal/releases/latest/download/GPT-Web-to-Codex-Terminal.dmg)，或在 Release 页面选择 `GPT-Web-to-Codex-Terminal-Setup-<版本号>.dmg`。
+2. 打开 DMG，将 **GPT Web to Codex Terminal.app** 拖入“应用程序”目录，然后从“应用程序”打开。
+3. 当前安装包使用 **ad-hoc 签名**，没有 Developer ID 签名或 Apple 公证。首次打开若提示无法验证开发者，请按 [macOS 安装说明](build/macos-installation.md) 处理；该文档也包含“已损坏，无法打开”提示的处理步骤。
+
+使用安装包无需另装 Node.js、npm 或 PowerShell。要执行 `git`、`brew` 等外部命令，仍需在 Mac 本机安装相应工具，并确保它们在终端的 `PATH` 中。
+
+本机 zsh 是**非交互的登录 Shell**，命令执行时标准输入为空。仅写在 `~/.zshrc` 中的交互配置不能保证被加载；额外的 `PATH` 建议放在登录配置 `~/.zprofile` 中，修改后重置终端。需要输入密码的 `sudo` 或交互式程序，应在系统“终端”中手动运行。
+
+更新时退出应用，再将新 DMG 中的应用拖入“应用程序”并覆盖旧版本。
 
 ### 界面预览
 
@@ -21,7 +43,7 @@ macOS 安装包适用于 Apple Silicon，使用 ad-hoc 签名且未经 Apple 公
 | 多会话 | 为本机、SSH 主机或 Web2Term 设备创建独立会话；会话名称、当前模型、对话地址和设备绑定会持久化。 |
 | 多模型页面 | 在同一个会话中切换 ChatGPT、DeepSeek、Claude 与 Gemini；各平台分别保留登录态和对话。 |
 | 终端循环 | 支持手动执行和自动执行。模型一次提出一条命令，应用执行后把退出码、输出和状态回传。 |
-| 三种连接方式 | Windows 本机使用持久 PowerShell；SSH 使用交互终端和独立的模型命令通道；Web2Term 经后端连接 Linux 设备，无需设备运行 sshd。 |
+| 三种连接方式 | 本机使用持久 Shell：Windows 为 PowerShell，macOS 为 zsh；SSH 使用交互终端和独立的模型命令通道；Web2Term 经后端连接 Linux 设备，无需设备运行 sshd。 |
 | 工具箱 | Git 管理、MySQL 连接、Redis 只读浏览和嵌入式 Nacos 控制台。 |
 | SSH 文件传输 | 浏览远程目录、上传和下载文件；底部统一显示各会话的传输进度，并支持取消任务。 |
 | 设置与诊断 | 主题、后端地址与邮箱验证码登录、ChatGPT/SSH/更新代理、发送延迟、会话导入、更新检查，以及可选的运行日志。 |
@@ -32,7 +54,7 @@ macOS 安装包适用于 Apple Silicon，使用 ad-hoc 签名且未经 Apple 公
 flowchart LR
   U[用户目标] --> C[模型网页]
   C --> J[一条结构化命令]
-  J --> E[本机 PowerShell / SSH / Web2Term]
+  J --> E[本机 PowerShell 或 zsh / SSH / Web2Term]
   E --> O[退出码与输出]
   O --> C
 ```
@@ -72,7 +94,7 @@ flowchart LR
 - **断线与登录**：断线后需重新创建终端，原 Shell 状态不会恢复。设备端后台进程会对可恢复的网络故障尝试重连；桌面端通过“重新连接”恢复。更换后端、账号或登录凭据会断开当前桌面端连接；重新打开已有设备会话需登录创建它时的后端和账号。设备端更新地址或凭据后需先 `web2term stop`，再 `web2term run`。
 - **文件能力**：Web2Term 当前支持终端命令，尚未接入远程文件浏览、上传、下载、`read_files` 和 Git 面板。读取文件或操作 Git 可以在设备终端中执行相应命令。
 
-设备未出现时，先确认两端使用相同后端和账号，并用 `web2term status` 检查设备端状态；仅看到 `run` 启动成功还不能证明设备在线。登录过期需重新登录；提示设备已被占用时，应先断开已有客户端再连接。桌面端登录与连接诊断日志位于 `%TEMP%/gpt-login-diag/`，设备端日志路径可通过 `web2term status` 查看。
+设备未出现时，先确认两端使用相同后端和账号，并用 `web2term status` 检查设备端状态；仅看到 `run` 启动成功还不能证明设备在线。登录过期需重新登录；提示设备已被占用时，应先断开已有客户端再连接。桌面端登录与连接诊断日志位于系统临时目录下的 `gpt-login-diag/`：Windows 为 `%TEMP%/gpt-login-diag/`，macOS 通常为 `$TMPDIR/gpt-login-diag/`（未设置 `TMPDIR` 时通常为 `/tmp/gpt-login-diag/`）；连接错误界面会显示具体日志路径。设备端日志路径可通过 `web2term status` 查看。
 
 设备端安装、构建和详细说明见 [web2term Linux 工具](agents/linux/README.md)，消息格式见 [终端协议 v1](agents/linux/docs/terminal_protocol.md)。
 
@@ -83,13 +105,32 @@ flowchart LR
 | 工具 | 当前功能 |
 | --- | --- |
 | Git 管理 | 查看当前分支、提交记录、文件改动和增删行数；按目录或改动类型浏览文件，使用统一或并排视图查看 diff。面板用于只读查看，提交、切分支等操作通过终端执行。 |
-| MySQL 连接 | 保存多个连接并用标签页打开；选择数据库，搜索表名或表注释，查看表/视图数据、字段注释和建表 DDL。数据预览最多显示 200 行，并展示实际执行的 SQL；当前未提供任意 SQL 执行或数据编辑。 |
+| MySQL 连接 | 保存多个连接并用标签页打开；选择数据库，搜索表名或表注释，查看表/视图数据、字段注释和建表 DDL。数据预览最多显示 200 行，并展示实际执行的 SQL；支持按主键删除记录，以及在表标签页内编写并执行单条 SQL。 |
 | Redis 连接 | 保存多个单机 Redis 连接，支持用户名、密码、DB 编号及 TLS，提供测试连接、键名搜索、分批加载和 TTL 查看；支持 String、Hash、List、Set、ZSet、Stream 数据的只读浏览。 |
 | Nacos 连接 | 保存多个控制台地址、名称及可选命名空间，在标签页中打开实际 Nacos 网页；提供地址栏、后退、前进、刷新和停止加载。登录及控制台操作由 Nacos 网页提供。 |
 
 MySQL、Redis 和 Nacos 的连接配置保存在本机，并按当前工作环境区分；MySQL/Redis 密码使用系统加密保存。**这些工具的网络请求从桌面端发出，不经过 SSH 隧道或 Web2Term 设备。** 因此，即使当前会话连接远程机器，填写 `127.0.0.1` 仍指向运行桌面应用的电脑，需要填写桌面端可访问的服务地址。
 
 Git 面板当前读取桌面端本机目录，SSH 远端仓库需在 SSH 终端中操作；Web2Term 会话禁用 Git 面板。SSH 的“文件”和“上传”入口位于终端目录栏，传输任务集中显示在窗口底部。Nacos 使用独立持久网页分区保留登录态，与模型网页账号分开。
+
+### 源码开发与构建
+
+开发环境建议使用 Node.js 22 和 npm，与发布工作流保持一致。在项目根目录安装依赖并启动：
+
+```bash
+npm ci
+npm run dev
+```
+
+| 命令 | 用途 |
+| --- | --- |
+| `npm run dev` | 启动 Vite 开发服务器和 Electron，支持热更新。 |
+| `npm run build` | 执行类型检查并构建主进程、preload 和渲染层，输出到 `out/`。 |
+| `npm run dist:mac` | 在 macOS 上构建 Apple Silicon DMG，安装包输出到 `release/`。 |
+| `npm run dist:win` | 构建 Windows x64 安装包，输出到 `release/`。 |
+| `npm run test:mac` | 在 Mac 上运行本机终端回归测试，不启动 Electron 或访问模型网站。 |
+
+Mac 打包后，应用目录为 `release/mac-arm64/GPT Web to Codex Terminal.app`，DMG 文件名为 `GPT-Web-to-Codex-Terminal-Setup-<版本号>.dmg`。当前打包配置使用 ad-hoc 签名，无需 Developer ID 证书，也不执行 Apple 公证。构建通过不代表真实网页登录或完整工作流程已经测试通过；这些行为需在目标 Mac 上实际测试。
 
 ### 核心技术
 
@@ -133,7 +174,29 @@ MIT
 
 GPT Web to Codex Terminal is a desktop workspace that keeps a ChatGPT, DeepSeek, Claude, or Gemini conversation, a local, SSH, or Web2Term device terminal, and Git, database, and service-console tools in one Electron window. The model interprets the goal and proposes commands; the app runs them on the selected machine and returns the exit code, output, and status to the conversation.
 
-The macOS installer supports Apple Silicon and is ad-hoc signed without Apple notarization. If macOS blocks the first launch, see the [macOS installation guide](build/macos-installation.md).
+Local terminals use PowerShell on Windows and zsh on macOS. SSH and Web2Term connect to remote machines. Download installers from [GitHub Releases](https://github.com/naledao/gpt-web-to-codex-terminal/releases/latest).
+
+### macOS support and installation
+
+| Item | Current support |
+| --- | --- |
+| Installer | An Apple Silicon (M-series, arm64) DMG. The current release workflow does not provide an Intel Mac installer. |
+| Local terminal | The system `/bin/zsh` runs as a persistent login Shell. The working directory, variables, and functions survive commands within the same terminal session. |
+| Environment and prompts | Detects the macOS version, architecture, and Shell, then builds a macOS / zsh terminal prompt that directs the model to use BSD tool options and check Homebrew availability first. |
+| Remote connections and toolbox | SSH, Web2Term, Git, MySQL, Redis, and Nacos are available. Database and console connections originate from the Mac running the app. |
+| Updates | Checks GitHub Releases in the app. Download opens the browser; install the downloaded DMG by replacing the existing app manually. |
+
+Installation:
+
+1. Download the [Apple Silicon DMG](https://github.com/naledao/gpt-web-to-codex-terminal/releases/latest/download/GPT-Web-to-Codex-Terminal.dmg), or select `GPT-Web-to-Codex-Terminal-Setup-<version>.dmg` on the Release page.
+2. Open the DMG, drag **GPT Web to Codex Terminal.app** into **Applications**, and open it from there.
+3. The installer is **ad-hoc signed**, without a Developer ID certificate or Apple notarization. If macOS cannot verify the developer, follow the [macOS installation guide](build/macos-installation.md), which also covers the “app is damaged” message.
+
+The packaged app does not require a separate Node.js, npm, or PowerShell installation. External commands such as `git` and `brew` still need their corresponding tools installed on the Mac and available on the terminal's `PATH`.
+
+Local zsh is a **non-interactive login Shell**, and command execution receives empty standard input. Interactive configuration in `~/.zshrc` is not guaranteed to load; put additional `PATH` configuration in the login profile `~/.zprofile` and reset the terminal after changes. Run password-prompting `sudo` commands and interactive programs manually in the system Terminal.
+
+To update, quit the app, then drag the new copy from the DMG into Applications and replace the old version.
 
 ### Interface preview
 
@@ -148,7 +211,7 @@ The image shows the workspace page with the session list on the left, the termin
 | Multiple sessions | Create independent sessions for the local machine, SSH hosts, or Web2Term devices; names, model choice, conversation URLs, and device bindings persist. |
 | Multiple model sites | Switch between ChatGPT, DeepSeek, Claude, and Gemini inside one session. Each site keeps its own page, account, cookie jar, and conversation. |
 | Terminal loop | Manual and automatic execution modes. The model proposes one command at a time; the app returns output, exit code, and execution state. |
-| Three connection methods | Persistent PowerShell on Windows; an interactive SSH terminal and a separate model command channel; or a Linux device terminal relayed through the Web2Term backend without a device-side sshd. |
+| Three connection methods | A persistent local Shell: PowerShell on Windows or zsh on macOS; an interactive SSH terminal and a separate model command channel; or a Linux device terminal relayed through the Web2Term backend without a device-side sshd. |
 | Toolbox | Git inspection, MySQL connections, a read-only Redis browser, and an embedded Nacos console. |
 | SSH file transfers | Remote directory browsing, uploads, downloads, and a shared transfer bar with progress and cancellation across sessions. |
 | Settings and diagnostics | Theme, backend address and email-code login, separate ChatGPT/SSH/update proxies, send delay, session import, update checks, and opt-in runtime logs. |
@@ -159,7 +222,7 @@ The image shows the workspace page with the session list on the left, the termin
 flowchart LR
   U[User goal] --> C[Model page]
   C --> J[One structured command]
-  J --> E[PowerShell / SSH / Web2Term]
+  J --> E[Local PowerShell or zsh / SSH / Web2Term]
   E --> O[Exit code and output]
   O --> C
 ```
@@ -199,7 +262,7 @@ The backend address must start with `http://` or `https://` and may include a po
 - **Disconnections and login**: disconnected terminals must be recreated, and their previous Shell state is not restored. A running device agent retries recoverable network failures; use Reconnect on the desktop app. Changing the backend, account, or login credentials disconnects the desktop connection. Existing device sessions require the backend and account used to create them. After changing the agent's address or credentials, run `web2term stop`, then `web2term run`.
 - **File features**: Web2Term currently supports terminal commands. Remote file browsing, upload/download, `read_files`, and the Git panel are not connected to this transport yet. Use commands in the device terminal to read files or work with Git.
 
-If a device is missing, confirm that both ends use the same backend and account, then inspect `web2term status`; a successful `run` launch alone does not prove the device is online. Sign in again after login expiry. If the device is occupied, disconnect the existing client before retrying. Desktop login and connection diagnostic logs are under `%TEMP%/gpt-login-diag/`; `web2term status` displays the device-side log paths.
+If a device is missing, confirm that both ends use the same backend and account, then inspect `web2term status`; a successful `run` launch alone does not prove the device is online. Sign in again after login expiry. If the device is occupied, disconnect the existing client before retrying. Desktop login and connection diagnostic logs are in the system temporary directory under `gpt-login-diag/`: `%TEMP%/gpt-login-diag/` on Windows, usually `$TMPDIR/gpt-login-diag/` on macOS (typically `/tmp/gpt-login-diag/` if `TMPDIR` is unset). Connection error views show the actual log path. `web2term status` displays device-side log paths.
 
 See the [web2term Linux agent guide](agents/linux/README.md) for installation and build instructions, and [Terminal protocol v1](agents/linux/docs/terminal_protocol.md) for message formats.
 
@@ -210,13 +273,32 @@ Click **工具箱** (Toolbox) at the top of the expanded terminal panel to open 
 | Tool | Current functionality |
 | --- | --- |
 | Git management | Inspect the current branch, commit history, changed files, and added/deleted line counts. Browse by directory or change type and view unified or side-by-side diffs. The panel is read-only; use the terminal for commits, branch changes, and other writes. |
-| MySQL connections | Save multiple connections and open them in tabs. Select a database, search table names/comments, preview table/view data and column comments, and inspect CREATE TABLE DDL. Data previews display up to 200 rows and the SQL used to fetch them; arbitrary SQL execution and data editing are not provided. |
+| MySQL connections | Save multiple connections and open them in tabs. Select a database, search table names/comments, preview table/view data and column comments, and inspect CREATE TABLE DDL. Data previews display up to 200 rows and the SQL used to fetch them. Delete records by primary key, or write and execute a single SQL statement inside a table tab. |
 | Redis connections | Save multiple standalone Redis connections with username, password, DB index, and TLS options. Test connections, search keys, load additional batches, inspect TTLs, and browse String, Hash, List, Set, ZSet, and Stream values in read-only mode. |
 | Nacos connections | Save multiple console addresses, names, and optional namespaces; open the actual Nacos site in a console tab with an address bar, back/forward navigation, refresh, and stop-loading controls. Authentication and console actions are provided by the Nacos site itself. |
 
 MySQL, Redis, and Nacos connection profiles are stored locally and grouped by the current work environment; MySQL/Redis passwords use system encryption. **These tools make network requests from the desktop app, without an SSH tunnel or Web2Term relay.** Even in a remote session, `127.0.0.1` refers to the computer running the desktop app, so use an address reachable from that computer.
 
 The Git panel currently reads directories on the desktop computer. Use the SSH terminal for remote repositories; the Git panel is disabled in Web2Term sessions. SSH file browsing and upload buttons are in the terminal's directory bar, with transfers listed at the bottom of the window. Nacos retains login state in a separate persistent web partition, apart from model-site accounts.
+
+### Development and builds
+
+Use Node.js 22 and npm to match the release workflow. From the project root, install dependencies and start the development app:
+
+```bash
+npm ci
+npm run dev
+```
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Starts the Vite development server and Electron with hot reload. |
+| `npm run build` | Typechecks and builds the main process, preload, and renderer into `out/`. |
+| `npm run dist:mac` | Builds an Apple Silicon DMG on macOS and writes the installer to `release/`. |
+| `npm run dist:win` | Builds a Windows x64 installer in `release/`. |
+| `npm run test:mac` | Runs local terminal regression tests on a Mac without starting Electron or accessing model websites. |
+
+Mac packaging produces `release/mac-arm64/GPT Web to Codex Terminal.app` and `GPT-Web-to-Codex-Terminal-Setup-<version>.dmg`. The current configuration uses ad-hoc signing without a Developer ID certificate or Apple notarization. A successful build does not verify real website login or the complete workflow; test those on the target Mac.
 
 ### Core technology
 

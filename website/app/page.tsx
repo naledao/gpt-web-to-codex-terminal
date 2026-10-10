@@ -1,7 +1,16 @@
 'use client'
 
 import { useState } from 'react'
-import { assetPath, LATEST_RELEASE_URL, WINDOWS_DOWNLOAD_URL, LINUX_AGENT_DOWNLOAD_URL, WEB2TERM_GUIDE_URL, LINUX_AGENT_GUIDE_URL } from './site-config'
+import {
+  assetPath,
+  LATEST_RELEASE_URL,
+  WINDOWS_DOWNLOAD_URL,
+  MACOS_DOWNLOAD_URL,
+  MACOS_INSTALLATION_GUIDE_URL,
+  LINUX_AGENT_DOWNLOAD_URL,
+  WEB2TERM_GUIDE_URL,
+  LINUX_AGENT_GUIDE_URL,
+} from './site-config'
 
 type Step = {
   eyebrow: string
@@ -47,7 +56,7 @@ const features = [
   },
   {
     title: '本机、SSH、web2term，选择执行环境',
-    body: '在本机 PowerShell、SSH 主机或 web2term 设备上执行命令。每个会话绑定自己的环境，对话与结果继续留在一起。',
+    body: '本机使用 Windows PowerShell 或 macOS zsh，也可连接 SSH 主机或 web2term 设备。每个会话绑定自己的环境，对话与结果继续留在一起。',
     tag: 'LOCAL + REMOTE',
   },
   {
@@ -239,6 +248,7 @@ export default function Home() {
         <nav id="site-navigation" className={menuOpen ? 'site-nav site-nav--open' : 'site-nav'} aria-label="主导航">
           <button onClick={() => scrollTo('models')}>AI 平台</button>
           <button onClick={() => scrollTo('workflow')}>工作流</button>
+          <button onClick={() => scrollTo('macos')}>macOS</button>
           <button onClick={() => scrollTo('web2term')}>web2term</button>
           <button onClick={() => scrollTo('toolbox')}>工具箱</button>
           <button onClick={() => scrollTo('download')}>下载</button>
@@ -254,10 +264,11 @@ export default function Home() {
           <h1>让对话<br /><em>抵达终端。</em></h1>
           <p className="hero-lede">GPT Web to Codex Terminal 把模型对话与本机、SSH、web2term 设备上的命令执行放进同一个工作区。代码、数据和配置，也有随手可用的工具箱。</p>
           <div className="hero-actions">
-            <a className="button button--primary" href={WINDOWS_DOWNLOAD_URL} download>下载最新 Windows 版 <DownloadIcon /></a>
+            <a className="button button--primary" href={WINDOWS_DOWNLOAD_URL} download>下载 Windows 版 <DownloadIcon /></a>
+            <a className="button button--secondary" href={MACOS_DOWNLOAD_URL} download>下载 macOS 版 <DownloadIcon /></a>
             <button className="text-link" onClick={() => scrollTo('workflow')}>先看它怎么工作 <ArrowIcon /></button>
           </div>
-          <div className="platform-note"><span>Windows</span><small>· 当前仅提供 Windows 版本</small></div>
+          <div className="platform-note"><span>Windows x64</span><i aria-hidden="true" /><span>macOS Apple Silicon</span><small>· GitHub 最新 Release</small></div>
         </div>
 
         <div className="hero-demo" aria-label="对话到终端的工作流演示">
@@ -320,11 +331,54 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="connections macos-support section" id="macos" aria-labelledby="macos-title">
+        <div className="connections-intro">
+          <p className="section-mark">MACOS / APPLE SILICON</p>
+          <h2 id="macos-title">在 Mac 上，<br /><span>继续同一个工作流。</span></h2>
+          <p>用 Mac 自带的 zsh 执行命令，把模型对话、终端结果和常用工具留在一个工作区。当前 DMG 适用于 Apple Silicon（M 系列芯片）。</p>
+          <dl className="macos-features">
+            <div><dt>持久的本机终端</dt><dd>当前目录、变量与函数在同一终端会话中保留，下一条命令接着上一步继续。</dd></div>
+            <div><dt>适配 macOS 的命令</dt><dd>识别系统与 Shell 环境，按 macOS 命令语法生成提示词；使用 Homebrew 前先检查是否已安装。</dd></div>
+            <div><dt>远程与工具箱，继续可用</dt><dd>连接 SSH 或 web2term 设备，使用 Git、MySQL、Redis 与 Nacos。数据库和控制台地址需可从这台 Mac 访问。</dd></div>
+          </dl>
+          <div className="connection-actions">
+            <a className="button button--primary" href={MACOS_DOWNLOAD_URL} download>下载 macOS · Apple Silicon <DownloadIcon /></a>
+            <a className="text-link" href={MACOS_INSTALLATION_GUIDE_URL} target="_blank" rel="noreferrer">完整安装说明 <ArrowIcon /></a>
+          </div>
+          <details className="connection-notes">
+            <summary>系统终端能运行，工作区却找不到命令？</summary>
+            <ul>
+              <li>应用本机终端使用非交互的 zsh 登录会话，标准输入为空。外部命令需已安装并在这个会话的 PATH 中。</li>
+              <li>仅在 <code>~/.zshrc</code> 中设置的交互配置不保证加载。可将 PATH 配置放在 <code>~/.zprofile</code> 中，修改后重置终端。</li>
+              <li>需要输入密码的 sudo 或交互式程序，请在系统“终端”中手动运行。</li>
+            </ul>
+          </details>
+        </div>
+        <div className="connection-guide">
+          <ol className="connection-steps">
+            <li>
+              <h3>下载 Apple Silicon 安装包</h3>
+              <p>适用于 M 系列芯片的 Mac，选择 DMG 安装包。当前发布流程尚未提供 Intel Mac 版本。</p>
+            </li>
+            <li>
+              <h3>拖入“应用程序”</h3>
+              <p>打开 DMG，将 <strong>GPT Web to Codex Terminal.app</strong> 拖入“应用程序”，然后从这里打开。使用安装包无需另装 Node.js、npm 或 PowerShell。</p>
+            </li>
+            <li>
+              <h3>首次打开，按系统提示处理</h3>
+              <p>当前应用使用 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证。若提示无法验证开发者，可按安装说明在“系统设置 → 隐私与安全性”中选择“仍要打开”。</p>
+              <div className="connection-actions"><a className="text-link" href={MACOS_INSTALLATION_GUIDE_URL} target="_blank" rel="noreferrer">查看首次打开与“已损坏”提示的处理步骤 <ArrowIcon /></a></div>
+            </li>
+          </ol>
+          <p className="connection-scope"><strong>后续更新：</strong>应用内可检查新版本，点击下载会在浏览器中打开最新 DMG。下载后退出应用，再将新版本拖入“应用程序”覆盖旧版本。</p>
+        </div>
+      </section>
+
       <section className="connections section" id="web2term" aria-labelledby="web2term-title">
         <div className="connections-intro">
           <h2 id="web2term-title">你的 Linux 设备，<br /><span>接进同一段对话。</span></h2>
           <p>通过 web2term 连接账号下的设备，继续在原来的会话里输入命令、让模型执行并接收结果。设备端提供终端，无需运行 SSH 服务。</p>
-          <p className="connections-platform">Windows 桌面端 + Linux x86_64 设备工具</p>
+          <p className="connections-platform">Windows / macOS 桌面端 + Linux x86_64 设备工具</p>
           <a className="text-link" href={WEB2TERM_GUIDE_URL} target="_blank" rel="noreferrer">查看桌面连接指南 <ArrowIcon /></a>
           <details className="connection-notes">
             <summary>连接前要知道</summary>
@@ -387,11 +441,22 @@ export default function Home() {
 
       <section className="download section" id="download">
         <div className="download-orbit" aria-hidden="true"><span /><span /><span /></div>
-        <div className="download-copy"><p className="section-mark">YOUR NEXT SESSION</p><h2>把下一次<br /><span>工作跑起来。</span></h2><p>下载 Windows 桌面版，登录你已经在用的模型，选择本机、SSH 或 web2term 设备。需要连接 Linux 设备时，再安装配套的 web2term 工具。</p><div className="download-actions"><a className="button button--primary" href={WINDOWS_DOWNLOAD_URL} download>下载最新 Windows 版 <DownloadIcon /></a><a className="button button--secondary" href={LATEST_RELEASE_URL} target="_blank" rel="noreferrer">查看 Release 说明 <ArrowIcon /></a><a className="text-link" href={LINUX_AGENT_DOWNLOAD_URL} download>下载 web2term · Linux x86_64 <DownloadIcon /></a></div><small>桌面端：Windows · 设备工具：Linux x86_64 · 下载源：GitHub 最新 Release</small></div>
-        <div className="download-terminal"><div className="download-terminal__head"><span>SESSION SETUP</span><span>工作区入口</span></div><dl className="download-environments"><div><dt>执行环境</dt><dd>本机 / SSH / web2term</dd></div><div><dt>工具箱</dt><dd>Git / MySQL / Redis / Nacos</dd></div><div><dt>模型</dt><dd>ChatGPT / Claude / Gemini / DeepSeek</dd></div></dl></div>
+        <div className="download-copy">
+          <p className="section-mark">YOUR NEXT SESSION</p>
+          <h2>把下一次<br /><span>工作跑起来。</span></h2>
+          <p>下载 Windows 或 macOS 桌面版，登录你已经在用的模型，选择本机、SSH 或 web2term 设备。需要连接 Linux 设备时，再安装配套的 web2term 工具。</p>
+          <div className="download-actions">
+            <a className="button button--primary" href={WINDOWS_DOWNLOAD_URL} download>下载 Windows 版 <DownloadIcon /></a>
+            <a className="button button--secondary" href={MACOS_DOWNLOAD_URL} download>下载 macOS · Apple Silicon <DownloadIcon /></a>
+            <a className="text-link" href={LATEST_RELEASE_URL} target="_blank" rel="noreferrer">查看 Release 说明 <ArrowIcon /></a>
+            <a className="text-link" href={LINUX_AGENT_DOWNLOAD_URL} download>下载 web2term · Linux x86_64 <DownloadIcon /></a>
+          </div>
+          <small>桌面端：Windows x64 / macOS arm64 · 设备工具：Linux x86_64 · 下载源：GitHub 最新 Release</small>
+        </div>
+        <div className="download-terminal"><div className="download-terminal__head"><span>SESSION SETUP</span><span>工作区入口</span></div><dl className="download-environments"><div><dt>本机终端</dt><dd>Windows · PowerShell / macOS · zsh</dd></div><div><dt>远程连接</dt><dd>SSH / web2term</dd></div><div><dt>工具箱</dt><dd>Git / MySQL / Redis / Nacos</dd></div><div><dt>模型</dt><dd>ChatGPT / Claude / Gemini / DeepSeek</dd></div></dl></div>
       </section>
 
-      <footer className="site-footer"><div className="footer-brand"><Mark /><div><strong>GPT → Codex Terminal</strong><span>CONVERSATION, MEET EXECUTION.</span></div></div><div className="footer-links"><button onClick={() => scrollTo('models')}>AI 平台</button><button onClick={() => scrollTo('workflow')}>工作流</button><button onClick={() => scrollTo('web2term')}>web2term</button><button onClick={() => scrollTo('toolbox')}>工具箱</button><button onClick={() => scrollTo('download')}>下载</button><a href={WINDOWS_DOWNLOAD_URL} download>Windows 下载 <ArrowIcon /></a></div><span className="footer-note">© 2026 · Built for the next command.</span></footer>
+      <footer className="site-footer"><div className="footer-brand"><Mark /><div><strong>GPT → Codex Terminal</strong><span>CONVERSATION, MEET EXECUTION.</span></div></div><div className="footer-links"><button onClick={() => scrollTo('models')}>AI 平台</button><button onClick={() => scrollTo('workflow')}>工作流</button><button onClick={() => scrollTo('macos')}>macOS 安装</button><button onClick={() => scrollTo('web2term')}>web2term</button><button onClick={() => scrollTo('toolbox')}>工具箱</button><button onClick={() => scrollTo('download')}>下载</button><a href={WINDOWS_DOWNLOAD_URL} download>Windows 下载 <ArrowIcon /></a><a href={MACOS_DOWNLOAD_URL} download>macOS 下载 <ArrowIcon /></a></div><span className="footer-note">© 2026 · Built for the next command.</span></footer>
     </main>
   )
 }
