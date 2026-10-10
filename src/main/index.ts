@@ -890,11 +890,29 @@ function registerIpcHandlers(): void {
   const fromManager = (event: IpcMainEvent | IpcMainInvokeEvent): boolean =>
     managerWindow !== null && !managerWindow.isDestroyed() && event.sender === managerWindow.webContents
 
-  ipcMain.handle(IpcChannels.gitLog, async (_event, cwd: string): Promise<GitLogResult> => readGitLog(cwd))
+  ipcMain.handle(IpcChannels.gitLog, async (event, cwd: string): Promise<GitLogResult> => {
+    const ssh = runtimeForEvent(event)?.ssh
+    if (ssh?.getState().attached) {
+      const state = ssh.getState()
+      const remoteCwd = state.ptyCwd || state.modelCwd
+      if (!remoteCwd) throw new Error('SSH 工作目录尚未确定。')
+      return readGitLog(remoteCwd, ssh.gitBackend())
+    }
+    return readGitLog(cwd)
+  })
 
   ipcMain.handle(
     IpcChannels.gitDiff,
-    async (_event, cwd: string, path: string): Promise<GitFileDiff> => readGitDiff(cwd, path)
+    async (event, cwd: string, path: string): Promise<GitFileDiff> => {
+      const ssh = runtimeForEvent(event)?.ssh
+      if (ssh?.getState().attached) {
+        const state = ssh.getState()
+        const remoteCwd = state.ptyCwd || state.modelCwd
+        if (!remoteCwd) throw new Error('SSH 工作目录尚未确定。')
+        return readGitDiff(remoteCwd, path, ssh.gitBackend())
+      }
+      return readGitDiff(cwd, path)
+    }
   )
 
   ipcMain.handle(IpcChannels.getAppInfo, (): AppInfo => ({

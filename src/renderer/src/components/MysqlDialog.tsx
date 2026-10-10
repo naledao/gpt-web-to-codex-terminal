@@ -110,7 +110,7 @@ interface PendingRowDelete {
   draft: MysqlConnectionDraft
   database: string
   table: string
-  rowKey: MysqlRowKey
+  rowKeys: MysqlRowKey[]
 }
 
 const EMPTY_FORM: ConnectionForm = {
@@ -236,6 +236,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [state, setState] = useState<MysqlConnectionsState | null>(null)
   const [tabs, setTabs] = useState<MysqlTab[]>([])
   const [activeKey, setActiveKey] = useState('')
+  const [cellDetail, setCellDetail] = useState<{ column: string; value: string; copyStatus: 'idle' | 'copied' | 'error' } | null>(null)
   const [tableVisits, setTableVisits] = useState<MysqlTableVisitHistory>(() => readMysqlTableVisitHistory() ?? {})
   const tableVisitsRef = useRef(tableVisits)
   const tableVisitsStorageAvailableRef = useRef(true)
@@ -282,6 +283,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [pendingDelete, setPendingDelete] = useState<MysqlConnection | null>(null)
   const [pendingRowDelete, setPendingRowDelete] = useState<PendingRowDelete | null>(null)
   const [deletingRow, setDeletingRow] = useState(false)
+  const [rowSelection, setRowSelection] = useState<{ tabKey: string; data: MysqlTableData; indices: number[] } | null>(null)
   const deletingRowRef = useRef(false)
   /** The database picker: whether it is open, what it is fetching, and what came back. */
   const [createTableOpen, setCreateTableOpen] = useState(false)
@@ -293,8 +295,26 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
   const [dbResult, setDbResult] = useState<MysqlDatabaseList | null>(null)
   const dbBoxRef = useRef<HTMLSpanElement>(null)
 
+  useEffect(() => { setCellDetail(null) }, [activeKey, open])
+  useEffect(() => { setRowSelection(null) }, [activeKey, open])
+  useEffect(() => {
+    if (cellDetail === null) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        setCellDetail(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [cellDetail])
+
   const connections = state?.connections ?? []
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null
+  const selectedRowIndices = activeTab?.kind === 'table' && rowSelection?.tabKey === activeTab.key && rowSelection.data === activeTab.data
+    ? rowSelection.indices : []
+  const selectableRowIndices = activeTab?.kind === 'table'
+    ? (activeTab.data?.rowKeys ?? []).flatMap((key, index) => key?.length ? [index] : []) : []
   const activeConnection = activeTab !== null && activeTab.kind === 'connection' ? activeTab : null
   const activeForm = activeConnection?.form ?? null
   const activeConnectionId = activeTab === null ? '' : activeTab.kind === 'connection' ? activeTab.form.id : activeTab.connectionId
@@ -592,19 +612,30 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
       ))
     }
     showResult('', false)
+    let deleted = 0
+    let failure = ''
     try {
-      const result = await window.api.deleteMysqlTableRow(target.draft, target.database, target.table, target.rowKey)
-      showResult(result.message, !result.ok)
-      if (result.ok) await loadTable(target.tabKey, target.draft, target.database, target.table)
+      for (const rowKey of target.rowKeys) {
+        try {
+          const result = await window.api.deleteMysqlTableRow(target.draft, target.database, target.table, rowKey)
+          if (!result.ok) { failure = result.message; break }
+          deleted += 1
+        } catch {
+          failure = '删除结果未确认，请刷新表数据后检查。'
+          break
+        }
+      }
+      if (deleted > 0) await loadTable(target.tabKey, target.draft, target.database, target.table)
+      showResult(failure ? `已删除 ${deleted} 条，后续操作已停止：${failure}` : `已删除 ${deleted} 条记录。`, failure !== '')
+      setRowSelection(null)
     } catch {
-      showResult('删除结果未确认，请刷新表数据后检查。', true)
+      showResult('删除后刷新失败，请手动刷新并核对数据。', true)
     } finally {
       deletingRowRef.current = false
       setDeletingRow(false)
       setPendingRowDelete(null)
     }
   }, [pendingRowDelete, loadTable])
-
   /**
    * Open one table in its own tab and read its first page.
    *
@@ -1122,11 +1153,46 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                   <p className="mysql-page__hint">这张表没有数据。</p>
                 ) : (
                   <>
+                    <div className="mysql-page__selection-bar">
+                      <span className="mysql-page__selection-status" role="status">
+                        {selectedRowIndices.length > 0 ? `已选 ${selectedRowIndices.length} 条记录` : '勾选记录后可批量删除'}
+                      </span>
+                      <button
+                        type="button"
+                        className="mysql-page__bulk-delete"
+                        disabled={deletingRow || selectedRowIndices.length === 0}
+                        onClick={() => {
+                          const rowKeys: MysqlRowKey[] = selectedRowIndices.flatMap((index) => {
+                            const key = activeTab.data?.rowKeys[index]
+                            return key?.length ? [key.map((part) => ({ ...part }))] : []
+                          })
+                          if (deletingRowRef.current || rowKeys.length === 0) return
+                          setPendingRowDelete({
+                            tabKey: activeTab.key, draft: { ...activeTab.draft },
+                            database: activeTab.database, table: activeTab.table, rowKeys
+                          })
+                        }}
+                      >批量删除{selectedRowIndices.length > 0 ? ` (${selectedRowIndices.length})` : ''}</button>
+                    </div>
                     <Tooltip.Provider delay={200}>
                       <div className="mysql-page__table-scroll">
                         <table className="mysql-page__grid-table">
                           <thead>
                             <tr>
+                              <th scope="col" className="mysql-page__row-select">
+                                <input
+                                  type="checkbox"
+                                  aria-label="全选当前表中可删除的记录"
+                                  title="全选具有完整主键的记录"
+                                  checked={selectableRowIndices.length > 0 && selectedRowIndices.length === selectableRowIndices.length}
+                                  ref={(element) => { if (element) element.indeterminate = selectedRowIndices.length > 0 && selectedRowIndices.length < selectableRowIndices.length }}
+                                  disabled={deletingRow || selectableRowIndices.length === 0}
+                                  onChange={(event) => setRowSelection({
+                                    tabKey: activeTab.key, data: activeTab.data!,
+                                    indices: event.currentTarget.checked ? [...selectableRowIndices] : []
+                                  })}
+                                />
+                              </th>
                               {activeTab.data.columns.map((column, columnIndex) => (
                                 <th key={column} scope="col">
                                   <Tooltip.Root>
@@ -1149,13 +1215,40 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                           </thead>
                           <tbody>
                             {activeTab.data.rows.length === 0 ? (
-                              <tr><td colSpan={activeTab.data.columns.length + 1} className="mysql-page__empty-cell">这张表没有数据。</td></tr>
+                              <tr><td colSpan={activeTab.data.columns.length + 2} className="mysql-page__empty-cell">这张表没有数据。</td></tr>
                             ) : null}
                             {activeTab.data.rows.map((row, rowIndex) => (
-                              <tr key={rowIndex}>
+                              <tr key={rowIndex} className={selectedRowIndices.includes(rowIndex) ? 'mysql-page__selected-row' : undefined}>
+                                <td className="mysql-page__row-select">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`选择第 ${rowIndex + 1} 行记录`}
+                                    checked={selectedRowIndices.includes(rowIndex)}
+                                    disabled={deletingRow || !activeTab.data?.rowKeys[rowIndex]?.length}
+                                    title={activeTab.data?.rowKeys[rowIndex]?.length ? '选择这条记录' : activeTab.data?.rowDeleteMessage || '缺少完整主键，无法删除'}
+                                    onChange={(event) => {
+                                      const checked = event.currentTarget.checked
+                                      setRowSelection((current) => {
+                                        const indices = current?.tabKey === activeTab.key && current.data === activeTab.data ? current.indices : []
+                                        return {
+                                          tabKey: activeTab.key, data: activeTab.data!,
+                                          indices: checked ? [...indices.filter((index) => index !== rowIndex), rowIndex] : indices.filter((index) => index !== rowIndex)
+                                        }
+                                      })
+                                    }}
+                                  />
+                                </td>
                                 {row.map((cell, cellIndex) => (
                                   <td key={cellIndex}>
-                                    {cell === null ? <span className="mysql-page__null">NULL</span> : cell}
+                                    {cell === null ? <span className="mysql-page__null">NULL</span> : (
+                                      <button
+                                        type="button"
+                                        className="mysql-page__cell-value"
+                                        title="点击查看完整内容"
+                                        aria-label={`查看字段 ${activeTab.data?.columns[cellIndex] ?? cellIndex + 1} 的完整内容`}
+                                        onClick={() => setCellDetail({ column: activeTab.data?.columns[cellIndex] ?? `第 ${cellIndex + 1} 列`, value: cell, copyStatus: 'idle' })}
+                                      >{cell}</button>
+                                    )}
                                   </td>
                                 ))}
                                 <td className="mysql-page__row-actions">
@@ -1170,7 +1263,7 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
                                       if (deletingRowRef.current || !rowKey?.length) return
                                       setPendingRowDelete({
                                         tabKey: activeTab.key, draft: { ...activeTab.draft }, database: activeTab.database,
-                                        table: activeTab.table, rowKey: rowKey.map((part) => ({ ...part }))
+                                        table: activeTab.table, rowKeys: [rowKey.map((part) => ({ ...part }))]
                                       })
                                     }}
                                   >删除</button>
@@ -1525,6 +1618,36 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
           </div>
         </div>
       ) : null}
+      {cellDetail !== null ? (
+        <div className="mysql-page__cell-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCellDetail(null) }}>
+          <section className="mysql-page__cell-dialog" role="dialog" aria-modal="true" aria-labelledby="mysql-cell-dialog-title">
+            <div className="mysql-page__cell-dialog-head">
+              <div className="mysql-page__cell-dialog-heading">
+                <span className="mysql-page__cell-dialog-kicker">单元格完整内容</span>
+                <h3 id="mysql-cell-dialog-title">{cellDetail.column}</h3>
+              </div>
+              <button type="button" className="mysql-page__cell-dialog-close" aria-label="关闭完整内容" autoFocus onClick={() => setCellDetail(null)}>×</button>
+            </div>
+            <pre className="mysql-page__cell-dialog-content">{cellDetail.value}</pre>
+            <div className="mysql-page__cell-dialog-footer">
+              <span>{cellDetail.value.length.toLocaleString()} 字符</span>
+              <button
+                type="button"
+                className="mysql-page__btn mysql-page__btn--primary"
+                onClick={async () => {
+                  const value = cellDetail.value
+                  try {
+                    await navigator.clipboard.writeText(value)
+                    setCellDetail((current) => current?.value === value ? { ...current, copyStatus: 'copied' } : current)
+                  } catch {
+                    setCellDetail((current) => current?.value === value ? { ...current, copyStatus: 'error' } : current)
+                  }
+                }}
+              >{cellDetail.copyStatus === 'copied' ? '已复制' : cellDetail.copyStatus === 'error' ? '复制失败，请重试' : '复制全文'}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       <ConfirmDialog
         open={pendingDelete !== null}
         danger
@@ -1555,15 +1678,15 @@ export default function MysqlDialog({ open, theme, onClose }: MysqlDialogProps):
         danger
         icon='🗑'
         title='删除记录'
-        description='确认从数据库中删除这条记录？此操作会直接删除数据。'
+        description={pendingRowDelete?.rowKeys.length === 1 ? '确认从数据库中删除这条记录？此操作会直接删除数据。' : '确认永久删除所选记录？此操作不可撤销。'}
         busy={deletingRow}
         items={pendingRowDelete === null ? [] : [
           { icon: '🗄', label: '数据库', value: pendingRowDelete.database },
           { icon: '▤', label: '数据表', value: pendingRowDelete.table },
-          ...pendingRowDelete.rowKey.map((part) => ({
+          ...(pendingRowDelete.rowKeys.length === 1 ? pendingRowDelete.rowKeys[0].map((part) => ({
             icon: '🔑', label: part.column, value: part.encoding === 'hex' ? `0x${part.value}` : part.value,
             tone: 'danger' as const
-          }))
+          })) : [{ icon: '▤', label: '删除数量', value: String(pendingRowDelete.rowKeys.length), tone: 'danger' as const }])
         ]}
         confirmLabel='确认删除'
         onConfirm={() => void confirmDeleteRow()}
